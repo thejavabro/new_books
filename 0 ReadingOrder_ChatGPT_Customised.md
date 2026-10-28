@@ -1,248 +1,178 @@
-# Updated Reading Order 2
-## Software Architecture, Distributed Systems, Agentic AI, DevOps, and Enterprise Leadership
+# Reading Order for Software Architecture, Distributed Systems, and Agentic AI
 
-**Purpose:** A prioritized reading plan for progressing from an experienced Java/microservices engineer toward Agentic SDLC Engineering, Agentic AI Architecture, and enterprise AI leadership.
+**Updated roadmap based on the latest book list**
 
-**How to use this plan:** Read the core books carefully, skim material that overlaps with your experience, and build projects alongside the books. AI engineering and agentic SDLC are the specialization priorities; architecture, distributed systems, security, and operations provide the production foundation.
+## How to use this roadmap
+This is a prioritized roadmap, not a requirement to read every book cover to cover. Read the core books in sequence, use specialist books when a project or knowledge gap calls for them, and build production-oriented projects alongside the reading. It is tailored to an experienced Java/Spring Boot engineer progressing toward Lead Agentic SDLC Engineer, Agentic AI Architect, and enterprise AI leadership.
 
-## At a glance: recommended order
-
-1. **Software architecture foundation:** *Fundamentals of Software Architecture* → *The Pragmatic Programmer* → *Refactoring* → *Clean Architecture*.
-2. **Distributed systems:** *Designing Data-Intensive Applications* → *Designing Distributed Systems* → *Microservices Patterns* → *Building Event-Driven Microservices*.
+## Recommended high-level sequence
+1. **Architecture foundations:** *Fundamentals of Software Architecture* → *The Pragmatic Programmer* → *Refactoring* → *Clean Architecture*.
+2. **Distributed systems and data:** *Designing Data-Intensive Applications* → *Designing Distributed Systems* → *Software Architecture: The Hard Parts* → *Building Evolutionary Architectures*.
 3. **Production engineering:** *Release It!* → *Building Secure and Reliable Systems* → *Continuous Delivery* → *Accelerate*.
-4. **AI foundations:** *Visualizing Generative AI* → *AI Engineering* → *An Illustrated Guide to AI Agents*.
-5. **Building agents:** *AI Agents in Action* → *Building Applications with AI Agents* → *AI Agents: The Definitive Guide*.
-6. **Agentic SDLC and AI architecture:** *AI-Native Software Engineering* → *Architecting AI Software Systems* → *Building Distributed Systems in the Age of AI*.
-7. **Advanced and enterprise agentic systems:** *Multi-Agent AI Engineering* → *Building the Agentic Enterprise* → *Transformation Enterprise Architecture with Agentic AI*.
-8. **Platform and enterprise architecture:** *Platform Engineering* → *Team Topologies* → *Mastering the TOGAF Standard*.
-9. **Leadership:** *Leading Effective Engineering Teams* → *Think Like a Software Engineering Manager* → *The Engineering Executive Primer*.
+4. **AI engineering foundations:** *Visualizing Generative AI* → *AI Engineering* (Chip Huyen) → *An Illustrated Guide to AI Agents*.
+5. **Agent building:** *AI Agents in Action* → *Building Applications with AI Agents* → *AI Agents: The Definitive Guide*.
+6. **Agentic architecture:** *Agentic AI for Engineers: Architecting Goal-Driven Systems* → *Agentic Architectural Patterns for Building Multi-Agent Systems* → *Architecting AI Software Systems* → *Building Distributed Systems in the Age of AI*.
+7. **Enterprise agentic systems:** *Multi-Agent AI Engineering* → *Building the Agentic Enterprise* → *Transformation Enterprise Architecture with Agentic AI*.
+8. **Platform, cloud, and infrastructure:** *Platform Engineering* → *Team Topologies* → *Terraform Up and Running* → *Mastering the TOGAF Standard*.
+9. **Specialist tracks:** Kafka/event-driven systems; Java performance/concurrency; AWS system design; engineering leadership.
 
-This is a sequence of priorities, not a rule that you must finish each phase before starting the next. Begin building AI applications once you have a basic grasp of AI Engineering; study operations and architecture in parallel.
+## Category A — Software engineering and architecture foundations
+**Read in this order**
+1. *Fundamentals of Software Architecture* — architecture characteristics, styles, trade-offs, and decision-making.
+2. *The Pragmatic Programmer* — engineering judgment and sustainable practices.
+3. *Refactoring* — safely improving existing code.
+4. *Clean Architecture* — dependency direction and separation of concerns.
+5. *Software Architecture: The Hard Parts* — distributed architectural trade-offs.
+6. *Building Evolutionary Architectures* — fitness functions and architecture that can evolve.
+7. *The Software Architect Elevator* — connecting implementation decisions to business outcomes.
+8. *Cloud Application Architecture Patterns* — patterns for cloud-hosted applications.
+9. *Building Microservices* — service boundaries, deployment, and operational consequences.
+10. *Software Engineering at Google* — engineering practices at scale.
+11. *The Effective Software Engineer* — personal effectiveness and engineering habits.
 
----
+## Category B — Distributed systems, data, and system design
+1. *Designing Data-Intensive Applications* — primary foundation for data systems and distributed-system reasoning.
+2. *Designing Distributed Systems* — common distributed-system patterns.
+3. *Software Architecture: The Hard Parts* — revisit for service decomposition and trade-offs.
+4. *Microservices Patterns* — transactional, integration, and operational patterns.
+5. *Building Event-Driven Microservices* — event-driven design and consistency concerns.
+6. *Building Distributed Systems in the Age of AI* — connect distributed-system principles to AI-era workloads.
+7. *Database Internals* — deeper storage-engine and database internals study.
+8. *Latency: Reduce Delay in Software Systems* — performance measurement and latency reduction.
+9. *System Design on AWS* — AWS-specific architecture; read when AWS systems or interviews make it relevant.
 
-## Category A — Software Engineering Fundamentals and Architecture
+## Category C — Messaging and Kafka
+1. *Building Event-Driven Microservices* — application-level event-driven design.
+2. *Kafka for Architects* — architecture choices and platform-level trade-offs.
+3. *Kafka: The Definitive Guide* — comprehensive Kafka reference.
+4. *Apache Kafka in Action* — implementation-oriented reinforcement or an alternative practical route.
 
-**Goal:** Make sound architectural decisions, improve legacy code safely, and create maintainable systems that AI coding agents can navigate.
+Do not read all three Kafka-specific books cover to cover at once. Choose *Kafka for Architects* for architecture-first learning, then consult *Kafka: The Definitive Guide* or *Apache Kafka in Action* for system-specific details.
 
-1. **Fundamentals of Software Architecture** — Core architecture characteristics, styles, modularity, fitness functions, and trade-offs. Read carefully.
-2. **The Pragmatic Programmer** — Professional engineering habits, maintainability, automation, and ownership. Read or skim based on experience.
-3. **Refactoring** — Code smells, safe structural change, tests, and legacy-code improvement. Read selectively but practice the techniques.
-4. **Clean Architecture** — Dependency inversion, boundaries, testability, and separation of business rules from infrastructure.
-5. **Building Evolutionary Architectures** — Fitness functions and keeping architecture aligned with changing requirements.
-6. **Software Architecture: The Hard Parts** — Decomposition, service boundaries, distributed transactions, data ownership, and difficult trade-offs.
-7. **The Software Architect Elevator** — Connect technical choices to business outcomes and communicate across organizational levels.
-8. **Cloud Application Architecture Patterns** — Reference book for cloud patterns, integration, resilience, and application design.
-9. **Building Microservices** — Service boundaries, deployment, integration, observability, security, and evolution. Given your experience, focus on gaps rather than reading every chapter.
-10. **Java Concurrency in Practice** — Thread safety, synchronization, executors, shared mutable state, and concurrency failure modes; prioritize if relevant to your work.
-11. **Software Engineering at Google** — Code review, testing, large codebases, technical debt, and sustainable engineering practices.
-12. **The Effective Software Engineer** — Engineering effectiveness, prioritization, learning, and decision-making; optional/skim if familiar.
+## Category D — Reliability, DevOps, SRE, and delivery
+1. *Release It!* — resilience patterns and production failure modes.
+2. *Building Secure and Reliable Systems* — security and reliability as system properties.
+3. *Continuous Delivery* — reliable software delivery.
+4. *Accelerate* — delivery performance and organizational measures.
+5. *The DevOps Handbook* — practices for improving flow and feedback.
+6. *Seeking SRE* — reliability practices and SRE perspectives.
+7. *The Phoenix Project* — narrative introduction to flow and operations.
+8. *The DevOps Solutions Handbook* — practical solutions and operational improvement.
+9. *Platform Engineering* — internal platforms and developer experience.
+10. *Team Topologies* — team boundaries and interaction models that support delivery.
 
-**Suggested order:** Fundamentals of Software Architecture → The Pragmatic Programmer → Refactoring → Clean Architecture → Building Evolutionary Architectures → Software Architecture: The Hard Parts → Building Microservices → The Software Architect Elevator → Software Engineering at Google. Use the cloud and Java-specific books when relevant.
+## Category E — AI engineering foundations and visual learning
+1. *Visualizing Generative AI* — visual orientation to generative AI concepts.
+2. *AI Engineering* (Chip Huyen) — core engineering-oriented AI book.
+3. *An Illustrated Guide to AI Agents* — visual introduction to agent concepts.
+4. *AI Agents in Action* — practical agent development.
+5. *Head First Python* — optional if Python is a bottleneck; otherwise learn Python just in time.
 
-## Category B — Algorithms, Data Structures, Logic, and Debugging
+*ChatGPT Visual Bible*, *Claude Visual Bible*, and *Claude Code Visual Bible* are tool-specific companions, not foundational textbooks. Product workflows change quickly, so verify that the material matches the tools and versions you use.
 
-**Goal:** Strengthen problem-solving and diagnostic skills without letting interview-oriented material distract from the main AI-architecture goal.
+## Category F — Agent implementation and multi-agent systems
+1. *AI Agents in Action* — practical starting point.
+2. *Building Applications with AI Agents* — application construction and integration.
+3. *AI Agents: The Definitive Guide* — broaden and consolidate agent concepts.
+4. *Agentic AI for Engineers: Architecting Goal-Driven Systems* — goal-driven system design after basic agents.
+5. *Agentic Architectural Patterns for Building Multi-Agent Systems* — coordination patterns and trade-offs.
+6. *Multi-Agent AI Engineering* — advanced multi-agent engineering.
 
-1. **Head First Algorithms and Data Structures** — A visual, approachable foundation. Start here if you want a refresher.
-2. **Fabulous Adventures in Data Structures and Algorithms** — Use as a second explanatory treatment if it suits your learning style; do not read it cover to cover if the first book already gives you enough practice.
-3. **The Book of Debugging** — Read alongside real debugging work; focus on forming hypotheses, isolating causes, and systematically investigating failures.
-4. **Logic as a Tool** — Optional deeper study for formal logic and rigorous reasoning. Useful intellectually, but not a prerequisite for agent engineering.
+These books may overlap. Use them to compare architecture, implementation, evaluation, security, and operational approaches rather than assuming each is strictly more advanced than the previous one.
 
-**Suggested order:** Head First Algorithms and Data Structures → The Book of Debugging → selected chapters from Fabulous Adventures in Data Structures and Algorithms. Read *Logic as a Tool* only if you want deeper formal foundations.
+## Category G — Agentic SDLC and AI software architecture
+1. *AI Native Software Engineering* — AI embedded in the software development lifecycle.
+2. *Architecting AI Software Systems* — architecture of AI-enabled software systems.
+3. *Building Distributed Systems in the Age of AI* — reliability and distributed-system design for AI-era systems.
+4. *Building the Agentic Enterprise* — enterprise operating models and adoption.
+5. *Transformation Enterprise Architecture with Agentic AI* — connect agentic capabilities to enterprise architecture and transformation.
 
-## Category C — Distributed Systems, Data, and Performance
+For each major concept, build a small example, record trade-offs, and test failure paths rather than relying on summaries alone.
 
-**Goal:** Understand consistency, storage, messaging, failure handling, and performance in enterprise systems.
+## Category H — Java performance, concurrency, and implementation
+1. *Java Concurrency in Practice* — foundational concurrency concepts; pair older examples with current Java documentation.
+2. *Virtual Threads, Structured Concurrency, and Scoped Values: Explore Java New Threading Model* — newer Java concurrency mechanisms.
+3. *Java Performance* — profiling, runtime behavior, and performance tuning.
+4. *Java Coding Problems — Second Edition* — targeted exercises.
+5. *Grokking Algorithms* and *Head First Algorithms and Data Structures* — optional algorithm refreshers.
 
-1. **Designing Data-Intensive Applications (DDIA)** — The main textbook for data models, storage, replication, partitioning, transactions, consistency, consensus, and stream processing. Read carefully; use the edition you already own rather than delaying.
-2. **Database Internals** — Storage engines, indexing, query execution, transactions, and database internals. Read selectively after DDIA.
-3. **Designing Distributed Systems** — Practical distributed-system patterns and trade-offs.
-4. **Microservices Patterns** — Sagas, transactional outbox, CQRS, API composition, and distributed consistency.
-5. **Building Event-Driven Microservices** — Event design, schema evolution, asynchronous communication, and duplicate-event handling.
-6. **Release It!** — Timeouts, retries, bulkheads, circuit breakers, resource exhaustion, and production stability.
-7. **Latency: Reduce Delay in Software Systems** — Measurement, latency diagnosis, memory and concurrency effects, and performance optimization. Read after you have the fundamentals; apply it to a real service.
-8. **Building Secure and Reliable Systems** — Threat modeling, access control, reliability, resilience, and risk management.
+Given an established Java background, prioritize concurrency and performance when a current service, throughput issue, resource constraint, or interview target makes them immediately useful.
 
-**Suggested order:** DDIA → Designing Distributed Systems → Microservices Patterns → Building Event-Driven Microservices → Release It! → Building Secure and Reliable Systems. Read *Database Internals* and *Latency* as focused deep dives.
+## Category I — Platform engineering, cloud, and enterprise architecture
+1. *Platform Engineering*.
+2. *Team Topologies*.
+3. *Terraform Up and Running* — practical infrastructure-as-code skills.
+4. *System Design on AWS* — AWS-specific architecture patterns.
+5. *Visualizing Google Cloud* — visual refresher for GCP concepts.
+6. *Mastering the TOGAF Standard* — enterprise architecture framework and governance.
 
-## Category D — DevOps, SRE, and Platform Engineering
+Move TOGAF earlier only if the target role explicitly includes enterprise architecture governance, capability maps, architecture repositories, or formal EA practice.
 
-**Goal:** Make software delivery measurable and reliable, and create safe environments for teams and agents.
+## Category J — Engineering leadership
+1. *Leading Effective Engineering Teams*.
+2. *Think Like a Software Engineering Manager*.
+3. *Become an Effective Software Engineering Manager*.
+4. *The Engineering Executive Primer*.
+5. Revisit *The Software Architect Elevator* to connect technical decisions to business outcomes.
 
-1. **The Phoenix Project** — Accessible introduction to bottlenecks, work in progress, feedback, and DevOps collaboration. Optional if already familiar.
-2. **The DevOps Handbook** — Delivery flow, automation, feedback loops, and reducing batch sizes.
-3. **Continuous Delivery** — Deployment pipelines, automated tests, repeatable releases, and reducing deployment risk.
-4. **Accelerate** — Delivery metrics including lead time, deployment frequency, change failure rate, and recovery time.
-5. **Seeking SRE** — Reliability practices, service-level objectives, incident response, and learning from failures.
-6. **Platform Engineering** — Internal developer platforms, self-service infrastructure, golden paths, developer experience, and governance.
-7. **Team Topologies** — Stream-aligned and platform teams, enabling teams, interaction modes, and cognitive load.
-8. **The DevOps Solutions Handbook** — Reference for specific delivery and operations problems; lower priority than the core books.
+If the immediate goal is technical architecture rather than people management, defer most leadership reading until the architecture and agent-building core is underway.
 
-**Suggested order:** The DevOps Handbook → Continuous Delivery → Accelerate → Seeking SRE → Platform Engineering → Team Topologies. Read *The Phoenix Project* for a narrative introduction and use *The DevOps Solutions Handbook* as a reference.
+## Category K — Algorithms, debugging, logic, and decision-making
+- *Grokking Algorithms* — accessible refresher.
+- *Head First Algorithms and Data Structures* — visual reinforcement.
+- *Fabulous Adventures in Data Structures and Algorithms* — additional depth and exercises.
+- *The Book of Debugging* — consult when improving debugging technique.
+- *Logic as a Tool* — optional formal reasoning.
+- *Framed! Solve an Intriguing Mystery and Master How to Make Smart Choices* — optional decision-making and reasoning practice.
 
-## Category E — AI Foundations and Visual Learning
+These are supporting books; do not let them displace the main architecture and agent engineering sequence unless you identify a specific gap.
 
-**Goal:** Build an intuitive model of generative AI before diving into implementation and agent architecture.
+## Category L — Visual communication and tool-specific references
+- *Art of Visual Notetaking* and *Visual Language for Designers* — optional for diagrams, notes, and communicating architecture.
+- *Storytelling with You* — optional communication practice.
+- *ChatGPT Visual Bible*, *Claude Visual Bible*, and *Claude Code Visual Bible* — tool-specific references; verify that editions match current product behavior.
+- *Visualizing Generative AI* and *Visualizing Google Cloud* — more directly relevant to the technical learning path.
 
-1. **Visualizing Generative AI** — Start here if you prefer diagrams and visual explanations. Use it to understand the GenAI landscape, applications, and agentic systems.
-2. **AI Engineering — Chip Huyen** — Core AI application-engineering book: model selection, prompting, RAG, evaluation, data pipelines, deployment, and maintenance. Read carefully.
-3. **Head First Python** — Read before implementation-heavy AI books if Python is not comfortable. Focus on functions, classes, modules, APIs, JSON, and tests.
-4. **An Illustrated Guide to AI Agents** — Visual introduction to agent components and architectures; read before or alongside the agent-building books.
-5. **Visualizing Google Cloud** — Optional visual refresher for GCP concepts. Consult when useful; not a prerequisite for agent architecture.
+## Priority tiers
 
-**Suggested order:** Visualizing Generative AI → AI Engineering. Read Head First Python as needed before coding. Then read An Illustrated Guide to AI Agents. Use Visualizing Google Cloud selectively.
+### Tier 1 — Core books
+Read these first, in roughly this order:
+1. *Fundamentals of Software Architecture*
+2. *Designing Data-Intensive Applications*
+3. *AI Engineering*
+4. *AI Native Software Engineering*
+5. *AI Agents in Action*
+6. *Building Applications with AI Agents*
+7. *Agentic AI for Engineers: Architecting Goal-Driven Systems*
+8. *Agentic Architectural Patterns for Building Multi-Agent Systems*
+9. *Building Distributed Systems in the Age of AI*
+10. *Building Secure and Reliable Systems*
+11. *Accelerate*
+12. *Platform Engineering*
+13. *Building the Agentic Enterprise*
+14. *Team Topologies*
 
-## Category F — Agent Engineering and Multi-Agent Systems
+### Tier 2 — Read selectively or as a second pass
+*The Pragmatic Programmer; Refactoring; Clean Architecture; Software Architecture: The Hard Parts; Building Evolutionary Architectures; Building Microservices; Microservices Patterns; Building Event-Driven Microservices; Designing Distributed Systems; Database Internals; Release It!; Continuous Delivery; The DevOps Handbook; Seeking SRE; Latency: Reduce Delay in Software Systems; Architecting AI Software Systems; An Illustrated Guide to AI Agents; AI Agents: The Definitive Guide; Multi-Agent AI Engineering; Kafka for Architects; Kafka: The Definitive Guide; Terraform Up and Running; Java Performance; Virtual Threads, Structured Concurrency, and Scoped Values; Software Engineering at Google; The Software Architect Elevator; Mastering the TOGAF Standard.*
 
-**Goal:** Build agents that can use tools, manage state, retrieve knowledge, be evaluated, and run safely in production.
+### Tier 3 — Optional or driven by a specific need
+Algorithm/data-structure books, *Logic as a Tool*, *The Book of Debugging*, *Head First Python*, AWS/GCP visual references, visual communication books, tool-specific visual bibles, *The Phoenix Project*, *The DevOps Solutions Handbook*, *The Effective Software Engineer*, and most management books until leadership becomes an immediate responsibility.
 
-1. **AI Agents in Action** — Practical agent implementation, MCP, tool use, planning, memory/RAG, evaluation, deployment, security, and multi-agent patterns. Read carefully. If your copy is the second edition, use that as the primary edition.
-2. **Building Applications with AI Agents** — Agent design, tools, memory, orchestration, reliability, monitoring, security, and human-agent collaboration. Use for implementation and production practices.
-3. **AI Agents: The Definitive Guide** — Use to deepen understanding of agent patterns, state, planning, orchestration, and reactive behavior. Some overlap with the previous two; focus on distinct material.
-4. **Multi-Agent AI Engineering** — Advanced coordination, delegation, communication, shared state, and failure handling. Read after building at least one useful single-agent workflow.
+## Four portfolio projects to pair with the reading
+1. **AI-assisted Java change workflow:** take a realistic Spring Boot change from requirements to tests, review, and deployment checklist. Track AI suggestions accepted, rejected, or corrected.
+2. **Production-oriented agent:** build an agent with bounded tools, structured inputs/outputs, evaluation tests, tracing, cost limits, timeouts, retries, and authorization.
+3. **Agentic distributed workflow:** combine durable state, messaging, idempotency, retries, dead-letter handling, auditability, and human approval for consequential actions.
+4. **Internal agent platform blueprint:** define approved tools, identity and access controls, secrets handling, observability, evaluation gates, versioning, deployment controls, and cost reporting.
 
-**Suggested order:** AI Agents in Action → Building Applications with AI Agents → AI Agents: The Definitive Guide → Multi-Agent AI Engineering.
+## Recommended first 12 weeks
+- **Weeks 1–2:** *Fundamentals of Software Architecture*; document architecture decisions from a service you know.
+- **Weeks 3–4:** *Designing Data-Intensive Applications*; focus on replication, partitioning, transactions, consistency, and stream processing.
+- **Weeks 5–6:** *AI Engineering*; implement a small AI feature and define evaluation criteria.
+- **Weeks 7–8:** *AI Native Software Engineering*; establish a repeatable AI-assisted change workflow.
+- **Weeks 9–10:** *AI Agents in Action*; build a tool-using agent with explicit limits and tests.
+- **Weeks 11–12:** *Building Applications with AI Agents*; add persistence, evaluation, tracing, failure handling, and security.
 
-**Design principle:** Do not assume multi-agent is automatically better. Prefer the simplest workflow that meets reliability, latency, cost, and governance requirements.
-
-## Category G — Agentic SDLC and AI Software Architecture
-
-**Goal:** Transform AI-assisted coding into a repeatable engineering process and design AI-enabled software systems.
-
-1. **AI-Native Software Engineering** — Highest priority for agentic SDLC. Focus on context engineering, MCP, specification-driven development, planning, verification, quality gates, and adoption across engineering teams.
-2. **Architecting AI Software Systems** — AI system architecture, infrastructure, application components, and architectural patterns. Read after AI Engineering and basic agent implementation.
-3. **Building Distributed Systems in the Age of AI** — Connect distributed systems to agentic workflows, messaging, streaming, observability, MCP, and AI-era software development.
-4. **Building the Agentic Enterprise** — Production adoption, governance, evaluation, AgentOps/EvalOps, security, and organization-wide agent capabilities.
-5. **Transformation Enterprise Architecture with Agentic AI** — Enterprise architecture, target-state planning, runtime architecture, governance, identity/access, integration, and transformation roadmaps.
-
-**Suggested order:** AI-Native Software Engineering → Architecting AI Software Systems → Building Distributed Systems in the Age of AI → Building the Agentic Enterprise → Transformation Enterprise Architecture with Agentic AI.
-
-**Practical exercise:** Have an AI coding agent inspect a Java/Spring Boot service without changing it; ask for a system map, change specification, implementation plan, tests, and risk assessment. Only then allow a bounded implementation. Require automated checks and human approval for sensitive operations.
-
-## Category H — Enterprise Architecture and TOGAF
-
-**Goal:** Learn to communicate architecture in an enterprise-wide framework when moving toward architect or enterprise AI leadership roles.
-
-1. **Mastering the TOGAF® Standard: A Practical Translation of the World's Leading Architecture Framework** — Read after you understand software and AI system architecture. Focus on architecture development, governance, capability, repositories, and translating the framework into practical work.
-
-This is a large book. Do not make it an early prerequisite for building systems. Prioritize it when enterprise architecture responsibilities or TOGAF-based roles make it valuable.
-
-## Category I — Engineering Leadership
-
-**Goal:** Develop the people, organizational, and strategic skills needed to lead engineering teams and enterprise AI adoption.
-
-1. **Become an Effective Software Engineering Manager** — Management responsibilities, feedback, prioritization, and people development.
-2. **Think Like a Software Engineering Manager** — Decision-making, ambiguity, prioritization, and trade-offs.
-3. **Leading Effective Engineering Teams** — Team effectiveness, communication, culture, and business alignment.
-4. **The Engineering Executive Primer** — Engineering strategy, organizational effectiveness, investment choices, performance, and executive communication.
-5. **The Software Architect Elevator** — Revisit for communication between technical and business levels.
-
-Study these alongside technical work, and move them earlier if you take on formal management responsibilities.
-
-## Visual and non-technical titles
-
-These titles are useful supplements but are not core technical prerequisites for your stated career goal:
-
-- **Art of Visual Notetaking** — Optional learning and note-taking aid.
-- **ChatGPT Visual Bible** — Tool-specific visual reference; consult only if it matches your current ChatGPT workflow.
-- **Claude Code Visual Bible** — Tool-specific reference; use only if you work with Claude Code.
-- **Claude Visual Bible** — Tool-specific reference; optional.
-- **Visual Language for Designers** — Optional visual communication reference.
-- **Storytelling with You** — Non-technical communication/presentation aid; optional.
-- **Framed! Solve an Intriguing Mystery and Master How to Make Smart Choices** — General decision-making book, not a technical prerequisite.
-
-These are not included in the main technical sequence. They can be read at any time based on interest or immediate need.
-
-## Tiered priority
-
-### Tier 1 — Read carefully first
-
-1. Fundamentals of Software Architecture
-2. Designing Data-Intensive Applications
-3. AI Engineering — Chip Huyen
-4. AI-Native Software Engineering
-5. AI Agents in Action
-6. Building Applications with AI Agents
-7. Building Distributed Systems in the Age of AI
-8. Software Architecture: The Hard Parts
-9. Building Secure and Reliable Systems
-10. Accelerate
-11. Platform Engineering
-12. Building the Agentic Enterprise
-13. Team Topologies
-
-### Tier 2 — Read selectively or use as references
-
-- The Pragmatic Programmer
-- Refactoring
-- Clean Architecture
-- Building Evolutionary Architectures
-- Building Microservices
-- Microservices Patterns
-- Building Event-Driven Microservices
-- Designing Distributed Systems
-- Database Internals
-- Release It!
-- Continuous Delivery
-- The DevOps Handbook
-- Seeking SRE
-- Latency: Reduce Delay in Software Systems
-- Architecting AI Software Systems
-- An Illustrated Guide to AI Agents
-- AI Agents: The Definitive Guide
-- Multi-Agent AI Engineering
-- The Software Architect Elevator
-- Software Engineering at Google
-- Mastering the TOGAF Standard
-
-### Tier 3 — Optional, tool-specific, or need-dependent
-
-- Head First Python — essential only if Python needs refreshing.
-- Head First Algorithms and Data Structures.
-- Fabulous Adventures in Data Structures and Algorithms.
-- The Book of Debugging.
-- Logic as a Tool.
-- Visualizing Generative AI — move to Tier 1 if visual learning is especially effective for you.
-- Visualizing Google Cloud.
-- Cloud Application Architecture Patterns.
-- Java Concurrency in Practice.
-- The Phoenix Project.
-- The DevOps Solutions Handbook.
-- The Effective Software Engineer.
-- Seeking SRE (move up if reliability is central to your role).
-- Mastering the TOGAF Standard (move up for enterprise-architecture roles).
-- Management books (move up when formal leadership becomes an immediate goal).
-
-## Four practical projects to pair with the reading
-
-### Project 1 — AI-assisted Java service change
-Use AI-Native Software Engineering, Refactoring, and Software Engineering at Google. Build a workflow for repository exploration, specification, plan, implementation, tests, static analysis, review, and human approval.
-
-### Project 2 — Production-oriented AI agent
-Use AI Engineering and AI Agents in Action. Build an agent with approved tools, structured output, evaluation tests, logs/traces, cost controls, timeouts, and explicit permission boundaries.
-
-### Project 3 — Agentic workflow across services
-Use DDIA, Microservices Patterns, Release It!, and Building Distributed Systems in the Age of AI. Include durable state, asynchronous messaging, idempotency, retries, failure recovery, observability, and authorization.
-
-### Project 4 — Internal agent platform
-Use Platform Engineering, Building the Agentic Enterprise, and Team Topologies. Design reusable templates, approved tool integrations, identity and access controls, evaluation pipelines, audit trails, deployment gates, and cost monitoring.
+Then continue with the two agentic architecture books and *Building Distributed Systems in the Age of AI*. Do not wait to finish the whole reading list before building.
 
 ## Final recommendation
-
-Start with this short sequence:
-
-1. Fundamentals of Software Architecture
-2. Designing Data-Intensive Applications
-3. AI Engineering — Chip Huyen
-4. AI-Native Software Engineering
-5. AI Agents in Action
-6. Building Applications with AI Agents
-7. Building Distributed Systems in the Age of AI
-8. Building Secure and Reliable Systems
-9. Platform Engineering
-10. Building the Agentic Enterprise
-
-Start implementing after books 3–5; do not wait until you finish the list. Add the other books when a project, knowledge gap, or career responsibility makes them useful.
-
-**Success measure:** Be able to design, implement, evaluate, secure, operate, and lead enterprise-grade agentic systems—not merely finish a long reading list.
+Start with **Fundamentals of Software Architecture → Designing Data-Intensive Applications → AI Engineering → AI Native Software Engineering → AI Agents in Action**. Build alongside the reading. Then move into application-level agents, goal-driven and multi-agent architecture, and finally enterprise/platform architecture. Keep Kafka, Java performance, Terraform, AWS, TOGAF, algorithms, and leadership as parallel specialist tracks based on immediate project needs.
