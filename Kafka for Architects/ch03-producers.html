@@ -1,0 +1,497 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kafka Clients and Message Production</title>
+<meta name="description" content="A producer is a small machine of buffers, batches and retries. Its settings decide where each record lands, how fast it travels and whether it can ever be lost or duplicated.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<script>try{var t=JSON.parse(localStorage.getItem('kfa:theme'));if(t)document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
+<style>
+/* Shared base for the Accelerate companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+button.tag{cursor:pointer}
+button.tag:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{font-family:var(--mono);font-size:.84rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:0;overflow-x:auto;white-space:pre}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--pencil)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+.field{border:1px dashed var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:6px;background:var(--surface)}
+.field .eyebrow{color:var(--pencil)}
+.missing{border:2px solid var(--bad);background:var(--bad-soft);color:var(--bad);border-radius:10px;padding:12px 16px}
+
+/* page */
+
+.calc{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:640px){.calc{grid-template-columns:1fr}}
+.lst{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+@media (max-width:640px){.lst{grid-template-columns:1fr}}
+.lst button{border:1.5px solid var(--line);background:var(--surface);border-radius:10px;padding:12px;text-align:left;display:flex;flex-direction:column;gap:4px}
+.lst button b{font-family:var(--mono);font-size:.85rem}
+.lst button span{font-size:.85rem;color:var(--muted)}
+.lst button[aria-pressed="true"]{border-color:var(--blue);background:var(--blue-soft)}
+.acks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+@media (max-width:640px){.acks{grid-template-columns:1fr}}
+.acks>div{border:1.5px solid var(--line);border-radius:10px;padding:12px;background:var(--surface);display:flex;flex-direction:column;gap:6px}
+.acks h4{margin:0;font-family:var(--mono)}
+.meter{height:10px;border-radius:5px;background:var(--paper);border:1px solid var(--line);overflow:hidden}
+.meter i{display:block;height:100%;transition:width .5s}
+.res{font-size:.9rem;padding:6px 8px;border-radius:6px}
+.res.ok{background:var(--ok-soft);color:var(--ok)} .res.bad{background:var(--bad-soft);color:var(--bad)} .res.mid{background:var(--mid-soft);color:var(--mid)}
+.bytes{font-family:var(--mono);font-size:.78rem;overflow-wrap:anywhere;background:var(--paper);border:1px solid var(--line);border-radius:6px;padding:8px}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Kafka for Architects · visual companion</a><span class="tag">Part I · Chapter 3 of 12</span><button class="tag themebtn" id="themeBtn" type="button" aria-label="Toggle light or dark theme">Theme</button></div>
+  <h1>Kafka Clients and Message Production</h1>
+  <p class="lede">A producer is a small machine of buffers, batches and retries. Its settings decide where each record lands, how fast it travels and whether it can ever be lost or duplicated.</p>
+  <nav class="toc" aria-label="Sections"><a href="#pipeline">Producer pipeline</a><a href="#listeners">Connecting</a><a href="#serde">Serialization</a><a href="#quotas">Quotas</a><a href="#partitioner">Partitioning</a><a href="#acks">Acknowledgments</a><a href="#batching">Batches & timeouts</a><a href="#pitfalls">Pitfalls</a><a href="#recap">Recap and quiz</a></nav>
+</header>
+
+<section id="pipeline" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>What happens when you call send()</h2></div>
+  <p>At Northwind, when a customer profile is created or changed, a profile service validates it, saves it locally and must also publish it to Kafka. Calling <code>send()</code> looks instant, but the client library runs a small pipeline behind it. Step through it.</p>
+  <div class="sheet stepper" id="pipe">
+    <div class="svgbox fit"><svg id="pipeSvg" viewBox="0 0 640 200" role="img" aria-label="Serializer, partitioner, accumulator, sender thread and broker"></svg></div>
+  </div>
+  <p>Kafka speaks its own binary protocol over TCP, and official or community client libraries exist for most languages. They hide batching, retries and leader discovery, which means behaviour is driven almost entirely by <b>configuration</b>. Good practice: keep that configuration outside the code, so the same build behaves predictably in every environment.</p>
+</section>
+
+<section id="listeners" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Listeners: one cluster, several doors</h2></div>
+  <p>Brokers carry two kinds of traffic: client requests and replication between brokers. Both use the same mechanism, <b>listeners</b>, each with its own name, host, port and security setting. The book's example uses three. Tap one.</p>
+  <div class="sheet">
+    <div class="lst" id="lst"></div>
+    <pre class="code" id="lstCode"></pre>
+    <p class="small">Clients start from a short <code>bootstrap.servers</code> list, ask any broker for metadata, and receive the addresses in <code>advertised.listeners</code>. If those are addresses the client cannot reach (an internal IP behind a load balancer, say), the first connection works and every later one fails: a classic setup bug.</p>
+  </div>
+</section>
+
+<section id="serde" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Serializers: both sides must agree</h2></div>
+  <p>Brokers only move bytes. The producer's <b>serializer</b> turns an object into bytes and the consumer's <b>deserializer</b> turns them back. Keys and values have separate serializers. Nothing in the broker checks that they match, so the contract lives in configuration and, later, in a schema registry (chapter 6).</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Consumer deserializer"><button data-d="json" aria-pressed="true">Consumer uses JSON</button><button data-d="avro" aria-pressed="false">Consumer expects Avro</button></div></div>
+    <div class="two"><div class="stack"><span class="eyebrow">Producer object</span><div class="bytes">{ id: "C-17", name: "Ana", tier: "gold" }</div><span class="eyebrow">Bytes on the wire (JSON string serializer)</span><div class="bytes" id="wire"></div></div>
+    <div class="stack"><span class="eyebrow">Consumer sees</span><div class="bytes" id="cons"></div><p class="small" id="serTxt"></p></div></div>
+  </div>
+</section>
+
+<section id="quotas" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Quotas: sharing the cluster fairly</h2></div>
+  <p>A shared cluster needs guard rails. <b>Quotas</b> cap produce and fetch byte rates and the share of broker request threads a client may use. A client over its quota is not rejected; the broker <b>delays its responses</b> (throttling) until its average rate falls back under the limit.</p>
+  <div class="sheet">
+    <div class="calc">
+      <label class="rng"><span>Client sends: <b id="qsV"></b> MB/s</span><input type="range" id="qs" min="1" max="50" value="30"></label>
+      <label class="rng"><span>Quota: <b id="qqV"></b> MB/s per broker</span><input type="range" id="qq" min="1" max="50" value="20"></label>
+      <div><span class="big" id="qOut"></span><p class="small" id="qTxt"></p></div>
+    </div>
+  </div>
+  <p>Quotas are attached to a <b>user principal</b> (preferred, since it comes from authentication) or to a <code>client.id</code> (any string, easy to fake or auto-generate). Even without quotas, give every producer a meaningful <code>client.id</code> prefix: it makes monitoring readable.</p>
+</section>
+
+<section id="partitioner" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Choosing a partition</h2></div>
+  <p>Which partition gets each record? By default, a record <b>with a key</b> goes to <code>hash(key) mod partitions</code>, so the same key always lands in the same place. A record <b>without a key</b> uses the sticky partitioner: fill a batch for one partition, then switch, which gives big efficient batches but no per-key order. You can instead configure a round-robin partitioner, pass a partition explicitly, or write a custom one for skewed keys, at the cost of per-key ordering.</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Strategy"><button data-p="key" aria-pressed="true">Key hash</button><button data-p="sticky" aria-pressed="false">No key: sticky</button><button data-p="rr" aria-pressed="false">Round-robin</button></div><button class="btn primary" id="pSend">Send 12 records</button></div>
+    <div class="svgbox fit"><svg id="pSvg" viewBox="0 0 640 210" role="img" aria-label="Records distributed over four partitions"></svg></div>
+    <p id="pTxt" class="small" aria-live="polite"></p>
+  </div>
+  <div class="field"><span class="eyebrow">Field notes</span><p>The Customer 360 team keys <code>CUSTOMER_PROFILES</code> by customer ID because the order of updates matters, and keys transactions by their own identifiers. Entity IDs as keys become their default rule.</p></div>
+</section>
+
+<section id="acks" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>acks: latency versus durability</h2></div>
+  <p>What counts as "delivered" is the producer's choice, set per producer with <code>acks</code>. Pick a failure and see what each setting does with it.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Scenario"><button data-s="ok" aria-pressed="true">Everything healthy</button><button data-s="leader" aria-pressed="false">Leader crashes right after writing</button><button data-s="net" aria-pressed="false">Request lost on the network</button></div>
+    <div class="acks" id="acks"></div>
+  </div>
+  <div class="callout"><b class="h">acks=all is only as strong as min.insync.replicas</b><span>"All" means all <i>in-sync</i> replicas, and the leader counts as one. With the default min ISR of 1, a lone leader can acknowledge on its own, which behaves like acks=1. For critical data set min ISR to RF minus one. Since Kafka 3.0, acks=all with idempotence is the default.</span></div>
+  <div class="field"><span class="eyebrow">Field notes</span><p>Customer data is business critical and a few extra milliseconds are acceptable, so Northwind uses <code>acks=all</code> for the ODS producers.</p></div>
+</section>
+
+<section id="batching" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Batching, linger and retries</h2></div>
+  <p>Batches are built per partition in client memory (<code>buffer.memory</code>) and sent by a background thread. A batch goes when it reaches <code>batch.size</code> (16 KB default) or when <code>linger.ms</code> expires (0 by default, so "as soon as the sender is free"). The broker acknowledges a whole batch; if no acknowledgment comes, the whole batch is retried. A few milliseconds of linger often buys much larger batches and far fewer requests.</p>
+  <div class="sheet">
+    <div class="calc">
+      <label class="rng"><span>Records per second: <b id="brV"></b></span><input type="range" id="br" min="100" max="50000" step="100" value="5000"></label>
+      <label class="rng"><span>linger.ms: <b id="blV"></b></span><input type="range" id="bl" min="0" max="100" value="5"></label>
+      <label class="rng"><span>batch.size: <b id="bbV"></b> KB</span><input type="range" id="bb" min="4" max="256" step="4" value="16"></label>
+    </div>
+    <p class="small">Assume 1 KB records on one partition, and that a request takes about 2 ms of sender time.</p>
+    <div class="bars" id="bBars"></div>
+  </div>
+  <p>Retries default to effectively infinite; what really bounds them is time. Three timeouts work together:</p>
+  <div class="svgbox fit"><svg id="tSvg" viewBox="0 0 640 150" role="img" aria-label="delivery.timeout.ms spans the whole send, request.timeout.ms each attempt"></svg></div>
+  <p class="small"><code>max.block.ms</code> is separate: how long <code>send()</code> itself may block when the buffer is full or metadata is unavailable before throwing.</p>
+</section>
+
+<section id="pitfalls" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Common producer challenges</h2></div>
+  <div class="cardgrid" id="pitCards"></div>
+<pre class="code"><span class="c"># a sensible baseline for critical data (illustrative)</span>
+<span class="k">acks</span>=all
+<span class="k">enable.idempotence</span>=true          <span class="c"># no duplicates from retries, order kept</span>
+<span class="k">max.in.flight.requests.per.connection</span>=5
+<span class="k">delivery.timeout.ms</span>=120000
+<span class="k">linger.ms</span>=5
+<span class="k">client.id</span>=c360-profile-svc-01</pre>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Recap and quick check</h2></div>
+  <div class="recap">
+    <div><b>Pipeline</b><span>Serialize, partition, batch, send, await ack, retry.</span></div>
+    <div><b>Listeners</b><span>Separate doors with separate security; advertise reachable addresses.</span></div>
+    <div><b>Keys</b><span>Same key, same partition, same order. No key: sticky batches.</span></div>
+    <div><b>acks=all + min ISR</b><span>The only combination that survives leader loss.</span></div>
+    <div><b>Batching</b><span>linger.ms and batch.size trade a little latency for big throughput gains.</span></div>
+  </div>
+  <div class="sheet"><div class="row between"><h3>Quick check</h3><span class="score" id="qScore"></span></div><div class="quiz" id="quiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Kafka for Architects: Event-driven architecture, logs, microservices, real-time event processing</i> by Katya Gorshkova (Manning, 2026). Explanations, examples, code snippets and drawings are original summaries, not copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch02-cluster-data-architecture.html"><span>Previous · Chapter 2</span><b>Kafka Cluster Data Architecture</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch04-consumers.html"><span>Next · Chapter 4</span><b>Creating Consumer Applications</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('kfa:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('acc:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: cycles auto -> light -> dark */
+(function(){const r=document.documentElement;let t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+ const b=document.getElementById('themeBtn');if(!b)return;
+ function lab(){b.textContent='Theme: '+(r.getAttribute('data-theme')||'auto')}lab();
+ b.addEventListener('click',()=>{const c=r.getAttribute('data-theme');const n=c==null?'light':c==='light'?'dark':null;
+  if(n)r.setAttribute('data-theme',n);else r.removeAttribute('data-theme');store.set('theme',n);lab()});})();
+
+
+function bx(s,x,y,w,h,t,col,fill){s.appendChild(el('rect',{x,y,width:w,height:h,rx:7,fill:fill||'var(--surface)',stroke:col||'var(--blue)','stroke-width':1.6}));t.split('\n').forEach((l,i,a)=>s.appendChild(el('text',{x:x+w/2,y:y+h/2+4+(i-(a.length-1)/2)*14,'text-anchor':'middle','font-size':12,'font-weight':600,fill:'var(--ink)'},l)))}
+function ar(s,x1,y1,x2,y2,col,fl){const L=el('line',{x1,y1,x2,y2,stroke:col||'var(--muted)','stroke-width':2});if(fl)L.setAttribute('class','flow');s.appendChild(L);const a=Math.atan2(y2-y1,x2-x1);s.appendChild(el('polygon',{points:`${x2},${y2} ${x2-9*Math.cos(a-.4)},${y2-9*Math.sin(a-.4)} ${x2-9*Math.cos(a+.4)},${y2-9*Math.sin(a+.4)}`,fill:col||'var(--muted)'}))}
+/* pipeline */
+const PS=['Your code calls send(record) with a topic, an optional key, a value and optional headers.','Serializers turn the key and value into byte arrays. The broker will never look inside them.','The partitioner picks a partition: hash of the key, or a sticky choice if there is no key. It needs cluster metadata to know how many partitions exist.','The record joins an in-memory batch for that partition in the record accumulator, and send() returns immediately with a future.','A background sender thread ships ready batches to the leader broker of each partition.','The broker answers. On success the future completes with the offset. On a retriable error (such as "not leader" after a leadership change) the library refreshes metadata and resends the batch by itself.'];
+const pg=$('#pipeSvg');
+function drawPipe(i){pg.innerHTML='';const N=[['send()',10],['Serializer',115],['Partitioner',220],['Accumulator\n(batches)',325],['Sender\nthread',430],['Leader\nbroker',535]];
+  N.forEach(([t,x],k)=>{const on=k<=i;bx(pg,x,70,95,56,t,on?(k===i?'var(--pencil)':'var(--blue)'):'var(--line)',k===i?'var(--pencil-soft)':'var(--surface)');if(k<5)ar(pg,x+95,98,x+113,98,k<i?'var(--blue)':'var(--line)',k===i-1)});
+  if(i>=3){for(let p=0;p<3;p++){pg.appendChild(el('rect',{x:335,y:140+p*14,width:20+p*20,height:10,rx:2,fill:'var(--blue-soft)',stroke:'var(--blue)'}));pg.appendChild(el('text',{x:400,y:149+p*14,'font-size':9,class:'s-muted t-mono'},'P'+p))}}
+  if(i===5){ar(pg,580,66,175,40,'var(--ok)',true);pg.appendChild(el('text',{x:380,y:38,'text-anchor':'middle','font-size':12,fill:'var(--ok)','font-weight':700},'ack with offset, or retriable error → resend'))}}
+$('#pipe').insertAdjacentHTML('beforeend',stepHTML());stepper('#pipe',PS,drawPipe);
+
+/* listeners */
+const LS=[['INTERBROKER','10.0.0.2:9094','Replication between brokers on a private network. In the example: no TLS, no authentication.'],['INTERNAL','broker1:9093','Trusted clients inside the company network: authentication and authorization, no encryption.'],['EXTERNAL','broker1.example.com:9092','Less trusted clients from outside: encryption plus authentication and authorization.']];
+$('#lst').innerHTML=LS.map((l,i)=>`<button data-i="${i}" aria-pressed="${i===2}"><b>${l[0]}</b><span>${l[2]}</span></button>`).join('');
+function showL(i){$('#lstCode').innerHTML=`<span class="k">listeners</span>=${LS.map((l,k)=>k===i?`<span class="s">${l[0]}://${l[1]}</span>`:`${l[0]}://${l[1]}`).join(',\n          ')}\n<span class="c"># format: NAME://HOST:PORT; each name maps to a security protocol</span>`}
+seg('#lst button',b=>showL(+b.dataset.i));showL(2);
+
+/* serde */
+const txt='{"id":"C-17","name":"Ana","tier":"gold"}';$('#wire').textContent=[...txt].map(c=>c.charCodeAt(0).toString(16).padStart(2,'0')).join(' ');
+seg('[data-d]',b=>sd(b.dataset.d));function sd(d){if(d==='json'){$('#cons').textContent='{ id: "C-17", name: "Ana", tier: "gold" }';$('#serTxt').innerHTML='<b class="okc">Matching serializer pair.</b> The bytes round-trip to the same object.'}else{$('#cons').textContent='SerializationException: unknown magic byte!';$('#serTxt').innerHTML='<b class="badc">Mismatch.</b> The broker accepted the bytes happily; the failure only appears in the consumer, possibly much later and in another team.'}}sd('json');
+
+/* quotas */
+function q(){const s=+$('#qs').value,l=+$('#qq').value;$('#qsV').textContent=s;$('#qqV').textContent=l;
+  if(s<=l){$('#qOut').textContent='0 ms';$('#qOut').className='big okc';$('#qTxt').textContent='Under quota: no throttling.'}
+  else{const d=Math.round((s/l-1)*1000);$('#qOut').textContent='~'+d+' ms';$('#qOut').className='big badc';$('#qTxt').textContent=`Over quota by ${(s/l*100-100).toFixed(0)}%. The broker holds each response (illustratively about ${d} ms per second of traffic) so the client's effective rate drops to ${l} MB/s.`}}
+['#qs','#qq'].forEach(i=>$(i).addEventListener('input',q));q();
+
+/* partitioner */
+let ps='key';const keys=['C-1','C-2','C-3','C-1','C-4','C-2','C-1','C-5','C-3','C-1','C-6','C-2'];
+function hash(k){let h=7;for(const c of k)h=(h*31+c.charCodeAt(0))%9973;return h}
+function drawP(run){const s=$('#pSvg');s.innerHTML='';const cnt=[0,0,0,0];
+  for(let p=0;p<4;p++){s.appendChild(el('rect',{x:10,y:10+p*50,width:620,height:40,rx:6,fill:'var(--paper)',stroke:'var(--line)'}));s.appendChild(el('text',{x:20,y:35+p*50,'font-size':12,class:'t-mono s-muted'},'P'+p))}
+  if(!run){$('#pTxt').textContent='Press send. Colours show customer IDs.';return}
+  const col={'C-1':'var(--d1)','C-2':'var(--d2)','C-3':'var(--d3)','C-4':'var(--d4)','C-5':'var(--d5)','C-6':'var(--pencil)'};
+  keys.forEach((k,i)=>{const p=ps==='key'?hash(k)%4:ps==='rr'?i%4:Math.floor(i/4)%4;const x=50+cnt[p]*48;cnt[p]++;
+    s.appendChild(el('rect',{x,y:16+p*50,width:42,height:28,rx:4,fill:'var(--surface)',stroke:col[k],'stroke-width':2}));
+    s.appendChild(el('text',{x:x+21,y:34+p*50,'text-anchor':'middle','font-size':10.5,class:'t-mono s-ink'},ps==='key'?k:(ps==='rr'?'#'+i:'#'+i)))});
+  $('#pTxt').textContent=ps==='key'?`Every record for the same customer shares a partition, so per-customer order holds. Distribution is uneven (${cnt.join(', ')}) because a few keys are busy: hot keys mean hot partitions.`:ps==='rr'?`Perfectly even (${cnt.join(', ')}), but a customer's updates are spread over partitions, so no ordering per customer.`:`Sticky: whole batches go to one partition before switching (${cnt.join(', ')}). Efficient and balanced over time, but no key semantics.`}
+seg('[data-p]',b=>{ps=b.dataset.p;drawP(false)});$('#pSend').onclick=()=>drawP(true);drawP(false);
+
+/* acks */
+const AK={ok:[['Fastest: no wait at all','ok','Delivered (probably). Offset unknown.'],['Waits for leader write','ok','Delivered.'],['Waits for all in-sync replicas','ok','Delivered, on min ISR replicas.']],
+ leader:[['Fastest','bad','Lost if not yet replicated, and the producer believes it was sent.'],['Leader acked before replicating','bad','Lost: acknowledged, then the leader died before followers copied it. A new leader without the record is elected.'],['Ack only after followers had it','ok','Safe: a follower that has the record becomes leader.']],
+ net:[['Never retried','bad','Lost silently: with acks=0 the producer never learns of the failure.'],['No ack, so it retries','ok','Delivered after retry (idempotence prevents duplicates if the first copy did arrive).'],['No ack, so it retries','ok','Delivered after retry, with the same duplicate protection.']]};
+const lat=[10,40,85];
+function drawA(s){$('#acks').innerHTML=['acks=0','acks=1','acks=all'].map((t,i)=>{const r=AK[s][i];return `<div><h4>${t}</h4><span class="small">latency</span><div class="meter"><i style="width:${lat[i]}%;background:var(--d${i+1})"></i></div><span class="small">${r[0]}</span><div class="res ${r[1]}">${r[2]}</div></div>`}).join('')}
+seg('[data-s]',b=>drawA(b.dataset.s));drawA('ok');
+
+/* batching */
+function drawB(){const r=+$('#br').value,l=+$('#bl').value,b=+$('#bb').value;$('#brV').textContent=r.toLocaleString();$('#blV').textContent=l;$('#bbV').textContent=b;
+  const svc=2;const wait=Math.max(l,svc);let per=Math.max(1,Math.min(b,Math.round(r*wait/1000)));const req=Math.min(r,r/per);
+  const added=per>=b?Math.min(l,b/r*1000):l;
+  bars('#bBars',[{l:'Records per batch',v:per,c:'d1',txt:Math.round(per)},{l:'Requests / second',v:req,c:'pencil',txt:Math.round(req).toLocaleString()},{l:'Added latency',v:added,c:'d3',txt:added.toFixed(1)+' ms'}].map((d,i)=>({...d,v:i===0?d.v/b*100:i===1?d.v/r*100:d.v})),100)}
+['#br','#bl','#bb'].forEach(i=>$(i).addEventListener('input',drawB));drawB();
+const ts=$('#tSvg');
+bx(ts,10,20,620,32,'delivery.timeout.ms: whole budget from send() to success or final failure','var(--pencil)','var(--pencil-soft)');
+[[10,170,'attempt 1'],[230,170,'retry'],[450,140,'retry']].forEach(([x,w,t],i)=>{bx(ts,x,70,w,30,'request.timeout.ms ('+t+')','var(--blue)','var(--blue-soft)');if(i<2)ts.appendChild(el('text',{x:x+w+25,y:90,'text-anchor':'middle','font-size':11,class:'s-muted'},'backoff'))});
+ts.appendChild(el('text',{x:320,y:132,'text-anchor':'middle','font-size':12,class:'s-muted'},'linger + waiting in the buffer + every attempt must fit inside the outer budget'));
+
+cards('#pitCards',[
+ {t:'Wrong partitioning',d:'Need order? Key by the entity whose order matters. Don\'t need it? Spread evenly. Hot keys skew load onto one partition.',c:'d1'},
+ {t:'Not enough memory',d:'Unacknowledged batches stay in buffer.memory. Size it with batch.size and expected throughput, and respect the maximum message size, or send() blocks and then fails.',c:'d2'},
+ {t:'Bad timestamps',d:'A skewed producer clock breaks time-based retention and compaction. With LogAppendTime the broker stamps a whole batch with one time. Agree on one timestamp source.',c:'d3'},
+ {t:'Many producers, one topic',d:'Interleaved writes have no global order, and Kafka does not record who wrote a message. Put a producer identifier in a header.',c:'d4'},
+ {t:'Database plus Kafka',d:'Write to the DB then Kafka, or the reverse? Either can half-fail, and Kafka has no distributed transactions. The transactional outbox (chapter 7) solves it.',c:'d5'},
+ {t:'Crashes lose the buffer',d:'Records still in client memory are gone if the app dies. Treat a record as delivered only when its acknowledgment arrives.',c:'pencil'}]);
+
+quiz('#quiz','#qScore',[
+ {q:'With no key and default settings, which partitioner is used?',o:['Hash','Sticky','Round-robin'],a:1,why:'The default partitioner fills a batch for one partition and then switches.'},
+ {q:'acks=1: the leader acknowledges and crashes before followers copy the record. Is it lost?',o:['Yes','No'],a:0,why:'The producer was told it succeeded, but no surviving replica has the record.'},
+ {q:'What actually bounds retries in modern producers?',o:['retries count','delivery.timeout.ms'],a:1,why:'retries defaults to a huge number; the delivery timeout caps the whole attempt.'},
+ {q:'Over its quota, what does the broker do to a client?',o:['Reject requests','Delay responses'],a:1,why:'Quota enforcement is throttling, not rejection.'},
+ {q:'Raising linger.ms from 0 to 5 under steady load usually...',o:['Increases batch size and throughput','Disables batching'],a:0,why:'Waiting a few ms lets more records join each batch, cutting request count.'}]);
+
+})();
+</script>
+</body>
+</html>

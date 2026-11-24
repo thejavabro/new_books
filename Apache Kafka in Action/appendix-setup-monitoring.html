@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Test Environment and Monitoring Setup</title>
+<meta name="description" content="The two appendices are hands-on recipes: start a small KRaft cluster on one machine, then wire it into a Prometheus and Grafana monitoring stack.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Apache Kafka in Action companion (adapted from the Accelerate companion). Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* theme toggle */
+.themebtn{position:absolute;top:6px;right:max(10px,env(safe-area-inset-right,0px));z-index:5;font-family:var(--mono);font-size:.72rem;padding:5px 10px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--muted)}
+.themebtn:hover{border-color:var(--blue);color:var(--blue)}
+/* code */
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+pre.code code{border:0;padding:0;background:none}
+.missing{border-left:4px solid var(--bad);background:var(--bad-soft);padding:12px 16px;border-radius:0 8px 8px 0}
+
+/* page */
+
+.term{background:#0f1720;color:#d6e2ee;border-radius:10px;padding:12px;font-family:var(--mono);font-size:.78rem;min-height:150px;white-space:pre-wrap;overflow-wrap:anywhere}
+.term .p{color:#7cc4ff}.term .m{color:#9aa7b4}.term .w{color:#ffcf70}.term .ok{color:#7ee2a8}
+.states{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.states>div{border:2px solid var(--line);border-radius:10px;padding:8px;text-align:center;font-weight:700}
+.states>div.on{border-color:var(--blue);background:var(--blue-soft)}
+.states>div.on.firing{border-color:var(--bad);background:var(--bad-soft)}
+.states>div.on.pending{border-color:var(--mid);background:var(--mid-soft)}
+.alist{display:flex;flex-direction:column;gap:6px}
+.alist div{border:1.5px solid var(--line);border-radius:8px;padding:6px 10px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.alist div.sent{border-color:var(--bad);background:var(--bad-soft)}
+.alist div.inh{opacity:.5;text-decoration:line-through}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Apache Kafka in Action · visual companion</a><span class="tag">Appendices A–B</span></div>
+  <h1>Test Environment and Monitoring Setup</h1>
+  <p class="lede">The two appendices are hands-on recipes: start a small KRaft cluster on one machine, then wire it into a Prometheus and Grafana monitoring stack.</p>
+  <nav class="toc" aria-label="Sections"><a href="#lab">The test lab</a><a href="#config">Configuration</a><a href="#run">Run it</a><a href="#prom">Prometheus</a><a href="#alerts">Alert states</a><a href="#grafana">Grafana</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="lab" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>A three-broker lab on one laptop</h2></div>
+  <p>Appendix A builds the environment used throughout the book: three brokers on one machine, never for production, but enough to watch Kafka survive failures. Each runs in KRaft <b>dual mode</b> (broker and controller in one process), so each needs two listeners. Appendix B adds Prometheus, exporters, Alertmanager and Grafana, each on its own port. Hover or tap a port:</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="pSvg" viewBox="0 0 700 250" role="img" aria-label="Ports used by brokers, controllers and monitoring"></svg></div>
+    <p id="pTxt" aria-live="polite"></p>
+  </div>
+  <p>Kafka runs on the JVM, so any major OS works; the authors tested macOS on Apple Silicon and Ubuntu 24.04, and recommend WSL on Windows. The book's examples use Kafka 3.9.0 (download names like <code>kafka_2.13-3.9.0.tgz</code>: Scala 2.13, Kafka 3.9.0) while covering 4.0 features such as KRaft-only operation, queues and the new rebalance protocol.</p>
+</section>
+
+<section id="config" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Three nearly identical config files</h2></div>
+  <p>Only the ID, data directory and ports differ between the brokers. Pick one:</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Broker"><button data-b="1" aria-pressed="true">kafka1.properties</button><button data-b="2" aria-pressed="false">kafka2.properties</button><button data-b="3" aria-pressed="false">kafka3.properties</button></div>
+    <pre class="code"><code id="cfg"></code></pre>
+    <div class="cardgrid" id="cfgCards"></div>
+  </div>
+</section>
+
+<section id="run" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Format, start, check, stop</h2></div>
+  <p>Step through the setup in a simulated terminal. Note how the first broker complains until a quorum of controllers is reachable.</p>
+  <div class="sheet">
+    <div class="term" id="term" aria-live="polite"></div>
+    <div class="stepper" id="rStep"></div>
+  </div>
+  <div class="sheet">
+    <span class="eyebrow">Which brokers answer?</span>
+    <div class="row" id="bToggles"></div>
+    <div class="term" id="chk" style="min-height:90px"></div>
+  </div>
+</section>
+
+<section id="prom" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Prometheus and exporters</h2></div>
+  <p><b>Prometheus</b> scrapes metric endpoints on a schedule and stores time series with labels; you query them with PromQL and define alerts in rule files. Kafka exposes metrics via JMX, so each broker gets the <b>Prometheus JMX Exporter</b> as a Java agent (set through <code>KAFKA_OPTS</code>), serving HTTP on 9101–9103. Metric names depend on the exporter configuration. Click the components:</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="mSvg" viewBox="0 0 700 260" role="img" aria-label="Monitoring stack"></svg></div>
+    <p id="mTxt" aria-live="polite"></p>
+  </div>
+  <pre class="code"><code>scrape_configs:
+  - job_name: "kafka"
+    static_configs:
+      - targets: ["localhost:9101","localhost:9102","localhost:9103"]
+# rules.yml
+groups:
+  - name: Kafka
+    rules:
+      - alert: Kafka Metrics Not Reachable
+        expr: up{job="kafka"} == 0
+        for: 1m</code></pre>
+</section>
+
+<section id="alerts" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Inactive, pending, firing</h2></div>
+  <p>That rule needs its expression to stay true for <code>for: 1m</code> before it fires. Prometheus evaluates every 15 s here. Stop a broker's exporter and advance time:</p>
+  <div class="sheet">
+    <div class="row"><button class="btn" id="aDown">Stop broker 2</button><button class="btn" id="aUp">Start broker 2</button><button class="btn primary" id="aTick">+15 s</button><span class="mono small" id="aClock"></span></div>
+    <div class="states" id="aStates"></div>
+    <p id="aTxt" aria-live="polite"></p>
+  </div>
+  <p>The <b>Alertmanager</b> (started on 9095, since 9093/9094 belong to brokers) groups alerts, routes them to recipients, can be <b>silenced</b> during maintenance, and supports <b>inhibit rules</b> that suppress secondary alerts while a root cause is firing, chosen carefully so nothing important is hidden.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn primary" id="iHost">Host of broker 2 goes down</button><label class="row small"><input type="checkbox" id="iRule" checked> inhibit rule: suppress alerts on a host that is down</label><label class="row small"><input type="checkbox" id="iSil"> silence (maintenance window)</label></div>
+    <div class="alist" id="iList"></div>
+    <p class="small" id="iTxt"></p>
+  </div>
+</section>
+
+<section id="grafana" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Dashboards with Grafana</h2></div>
+  <p>The Prometheus UI is for quick queries; <b>Grafana</b> builds dashboards from many data sources, with variables to switch between clusters or brokers, permissions, its own alerting and plugins. The Strimzi community's Kafka dashboards are an excellent start, but don't adopt them blindly, and get to know them before the night you need them. Good dashboards are the basis for good alerts and the first stop in an incident.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Broker variable"><button data-g="all" aria-pressed="true">$broker = All</button><button data-g="1" aria-pressed="false">1</button><button data-g="2" aria-pressed="false">2</button><button data-g="3" aria-pressed="false">3</button></div>
+    <div class="svgbox"><svg id="gSvg" viewBox="0 0 700 200" role="img" aria-label="Mock dashboard panels"></svg></div>
+  </div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Recap and quick check</h2></div>
+  <div class="recap">
+    <div><b class="blue">Lab</b><span>Three dual-mode brokers: 9092–9094, controllers 9192–9194.</span></div>
+    <div><b>Format</b><span>One random cluster ID, kafka-storage.sh format per broker.</span></div>
+    <div><b class="pencil">Check</b><span>kafka-broker-api-versions.sh shows which brokers answer.</span></div>
+    <div><b>Prometheus</b><span>JMX exporter agents on 9101–9103; Node and Blackbox exporters.</span></div>
+    <div><b class="okc">Alerts</b><span>Inactive → pending → firing; Alertmanager groups, silences, inhibits.</span></div>
+    <div><b>Grafana</b><span>Dashboards with variables; start from Strimzi's.</span></div>
+  </div>
+  <div class="sheet"><div class="row between"><h3>Quick check</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Apache Kafka in Action: From basics to production</i> by Anatoly Zelenin and Alexander Kropp (Manning, 2025). Explanations, examples, code snippets and drawings are original summaries; the figures are redrawn ideas, not copies.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch18-enterprise-architectures.html"><span>Previous · Chapter 18</span><b>Kafka in Modern Enterprise Architectures</b></a><a class="home" href="index.html">All chapters</a><span></span></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){if(!group)return;group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('kia:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('kia:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* light/dark toggle: follows the system until the reader picks one */
+(function(){const r=document.documentElement;const t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+  const b=document.createElement('button');b.className='themebtn';b.type='button';
+  function lab(){const d=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');b.textContent=d==='dark'?'Light theme':'Dark theme';b.setAttribute('aria-label','Switch to '+(d==='dark'?'light':'dark')+' theme')}
+  b.addEventListener('click',()=>{const d=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');const n=d==='dark'?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n);lab()});
+  lab();document.body.appendChild(b)})();
+
+
+/* ports */
+const PT=[[1,'9092','Broker 1 client listener (PLAINTEXT).'],[1,'9192','Broker 1 controller listener (CONTROLLER).'],[1,'9101','Broker 1 JMX exporter, scraped by Prometheus.'],[2,'9093','Broker 2 client listener.'],[2,'9193','Broker 2 controller listener.'],[2,'9102','Broker 2 JMX exporter.'],[3,'9094','Broker 3 client listener.'],[3,'9194','Broker 3 controller listener.'],[3,'9103','Broker 3 JMX exporter.'],[0,'9090','Prometheus web UI and API.'],[0,'9095','Alertmanager (moved from its default 9093, which broker 2 uses).']];
+function drawP(k){const s=$('#pSvg');s.innerHTML='';[1,2,3].forEach((b,i)=>{const x=20+i*170;s.appendChild(el('rect',{x,y:20,width:150,height:150,rx:12,fill:'var(--surface)',stroke:'var(--blue)','stroke-width':1.8}));s.appendChild(el('text',{x:x+75,y:42,'text-anchor':'middle','font-size':12.5,'font-weight':700,fill:'var(--ink)'},'Broker '+b+' (dual)'))});
+  s.appendChild(el('rect',{x:530,y:20,width:150,height:150,rx:12,fill:'var(--surface)',stroke:'var(--pencil)','stroke-width':1.8}));s.appendChild(el('text',{x:605,y:42,'text-anchor':'middle','font-size':12.5,'font-weight':700,fill:'var(--ink)'},'Monitoring'));
+  const cnt={0:0,1:0,2:0,3:0};PT.forEach((p,i)=>{const [b,port]=p;const x=b?20+(b-1)*170+20:550,y=56+cnt[b]++*36;const on=i===k;const g=el('g',{style:'cursor:pointer',tabindex:0,role:'button','aria-label':'port '+port});g.appendChild(el('rect',{x,y,width:110,height:28,rx:14,fill:on?'var(--blue)':'var(--paper)',stroke:'var(--line)'}));g.appendChild(el('text',{x:x+55,y:y+19,'text-anchor':'middle','font-size':12,'font-weight':700,fill:on?'#fff':'var(--ink)',class:'t-mono'},':'+port));
+    ['click','mouseenter'].forEach(ev=>g.addEventListener(ev,()=>drawP(i)));g.addEventListener('keydown',e=>{if(e.key==='Enter')drawP(i)});s.appendChild(g)});
+  s.appendChild(el('text',{x:350,y:205,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},'controller.quorum.voters=1@localhost:9192,2@localhost:9193,3@localhost:9194'));
+  $('#pTxt').textContent=k!=null?PT[k][2]:'Tap a port.'}
+drawP(null);
+
+/* config */
+function drawCfg(b){$('#cfg').textContent=`broker.id=${b}
+log.dirs=<your-home>/kafka/data/kafka${b}
+listeners=PLAINTEXT://:${9091+b},CONTROLLER://:${9191+b}
+process.roles=broker,controller
+controller.quorum.voters=1@localhost:9192,2@localhost:9193,3@localhost:9194
+controller.listener.names=CONTROLLER
+listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT`}
+seg('[data-b]',x=>drawCfg(+x.dataset.b));drawCfg(1);
+cards('#cfgCards',[{t:'process.roles',c:'d1',d:'broker,controller = dual mode. Fine for a lab; production separates controllers.'},{t:'controller.quorum.voters',c:'d2',d:'Every node lists all controllers (id@host:port).'},{t:'listener names',c:'d3',d:'Names are free-form; the protocol map says which security protocol each uses. No TLS in the lab.'}]);
+
+/* terminal stepper */
+const TS=[['<span class="p">$ wget …/kafka/3.9.0/kafka_2.13-3.9.0.tgz && tar xfz kafka_2.13-3.9.0.tgz && mv kafka_2.13-3.9.0/ ~/kafka</span>\n<span class="p">$ export PATH=~/kafka/bin:"$PATH"</span>\n<span class="m">~/kafka: bin/ config/ libs/ site-docs/ LICENSE NOTICE</span>','Download, unpack to ~/kafka, and put bin on the PATH (add it to your shell profile).'],
+ ['<span class="p">$ mkdir -p ~/kafka/data/kafka1 ~/kafka/data/kafka2 ~/kafka/data/kafka3</span>\n<span class="p">$ export KAFKA_CLUSTER_ID="$(kafka-storage.sh random-uuid)"</span>\n<span class="p">$ kafka-storage.sh format -t $KAFKA_CLUSTER_ID -c ~/kafka/config/kafka1.properties</span>\n<span class="m">Formatting metadata directory …/kafka/data/kafka1 with metadata.version 3.9-IV0.</span>\n<span class="m">(repeat for kafka2 and kafka3)</span>','Create data directories and format each with the same random cluster ID, so a directory can never be mixed into another cluster.'],
+ ['<span class="p">$ kafka-server-start.sh ~/kafka/config/kafka1.properties</span>\n<span class="w">WARN [RaftManager nodeId=1] Connection to node 2 (localhost/127.0.0.1:9193) could not be established.</span>\n<span class="w">WARN [RaftManager nodeId=1] Connection to node 3 … could not be established.</span>','Start broker 1 in the foreground. If it exits immediately, the config is wrong. Complaints about nodes 2 and 3 are expected.'],
+ ['<span class="p">$ kafka-server-start.sh ~/kafka/config/kafka2.properties</span>\n<span class="ok">[KafkaRaftServer nodeId=2] Kafka Server started</span>\n<span class="w">WARN … node 3 could not be established.</span>','In a second terminal, start broker 2. Two of three controllers form a majority, so the server starts; node 3 is still missing.'],
+ ['<span class="p">$ kafka-server-start.sh ~/kafka/config/kafka3.properties</span>\n<span class="ok">[KafkaRaftServer nodeId=3] Kafka Server started</span>\n<span class="m">(warnings stop)</span>','Start broker 3; the complaints stop.'],
+ ['<span class="m"># Ctrl-C each broker, then:</span>\n<span class="p">$ kafka-server-start.sh -daemon ~/kafka/config/kafka1.properties</span>\n<span class="p">$ kafka-server-start.sh -daemon ~/kafka/config/kafka2.properties</span>\n<span class="p">$ kafka-server-start.sh -daemon ~/kafka/config/kafka3.properties</span>','Optionally restart them as background daemons: no logs on screen, but no three terminals either.'],
+ ['<span class="p">$ kafka-server-stop.sh</span>   <span class="m"># stops ALL brokers</span>\n<span class="p">$ kafka-broker-stop.sh 1</span>   <span class="m"># small helper script: finds the java process started with kafka1.properties and sends SIGTERM</span>','To stop just one broker (to test failures), the authors write a tiny script that greps the process list for kafkaN.properties.']];
+$('#rStep').innerHTML=stepHTML();stepper('#rStep',TS.map(t=>t[1]),i=>{$('#term').innerHTML=TS[i][0]});
+const up={1:true,2:true,3:true};
+function drawChk(){$('#bToggles').innerHTML=[1,2,3].map(b=>`<button class="btn" data-t="${b}">${up[b]?'Stop':'Start'} broker ${b}</button>`).join('');$$('[data-t]').forEach(x=>x.addEventListener('click',()=>{up[x.dataset.t]=!up[x.dataset.t];drawChk()}));
+  $('#chk').innerHTML='<span class="p">$ kafka-broker-api-versions.sh --bootstrap-server localhost:9092,localhost:9093,localhost:9094</span>\n'+[1,2,3].map(b=>up[b]?`localhost:${9091+b} (id: ${b} rack: null) -&gt; ( <span class="m">…API versions…</span> )`:`<span class="w">Connection to node -${b} (localhost/127.0.0.1:${9091+b}) could not be established. Broker may not be available.</span>`).join('\n')}
+drawChk();
+
+/* monitoring stack */
+const MC=[['jmx','JMX Exporter ×3',30,30,'d1','A Java agent inside each broker converting JMX MBeans into Prometheus format on :9101–9103, configured with the exporter\'s Kafka KRaft example file.'],['node','Node Exporter',30,110,'d2','Host metrics: CPU, memory, network, filesystem. Its textfile collector can expose custom metrics from files.'],['bb','Blackbox Exporter',30,190,'d3','Probes endpoints from outside (TCP, HTTP(S)…) and reports probe_success and timings: end-to-end availability.'],['prom','Prometheus :9090',270,110,'blue','Scrapes every 15 s, stores labeled time series, evaluates rules, offers PromQL and a basic UI.'],['am','Alertmanager :9095',500,40,'bad','Groups and routes alerts, silences, inhibit rules.'],['gr','Grafana',500,180,'d4','Dashboards across data sources, variables, permissions, alerting, plugins.']];
+function drawM(k){const s=$('#mSvg');s.innerHTML='';[[200,52,270,125],[200,132,270,132],[200,212,270,140],[430,120,500,65],[430,140,500,200]].forEach(([a,b,c,d])=>s.appendChild(el('line',{x1:a,y1:b,x2:c,y2:d,stroke:'var(--muted)','stroke-width':1.6,class:'flow'})));
+  s.appendChild(el('text',{x:235,y:100,'text-anchor':'middle','font-size':10,fill:'var(--muted)'},'scrape'));
+  MC.forEach(([id,t,x,y,c])=>{const on=id===k;const g=el('g',{style:'cursor:pointer',tabindex:0,role:'button','aria-label':t});g.appendChild(el('rect',{x,y,width:id==='prom'?160:170,height:44,rx:10,fill:on?`var(--${c})`:'var(--surface)',stroke:`var(--${c})`,'stroke-width':2}));g.appendChild(el('text',{x:x+(id==='prom'?80:85),y:y+27,'text-anchor':'middle','font-size':12,'font-weight':700,fill:on?'#fff':'var(--ink)'},t));g.addEventListener('click',()=>drawM(id));g.addEventListener('keydown',e=>{if(e.key==='Enter')drawM(id)});s.appendChild(g)});
+  const L=MC.find(x=>x[0]===k);$('#mTxt').innerHTML=L?`<b>${L[1]}.</b> ${L[5]}`:'Click a component.'}
+drawM(null);
+
+/* alert states */
+let aT=0,aDown=null;
+function drawA(){const pending=aDown!=null&&aT-aDown<60,firing=aDown!=null&&aT-aDown>=60;const st=firing?'firing':pending?'pending':'inactive';
+  $('#aStates').innerHTML=[['inactive','Inactive'],['pending','Pending'],['firing','Firing']].map(([k,l])=>`<div class="${k===st?'on '+k:''}">${l}</div>`).join('');$('#aClock').textContent=`t = ${aT}s`+(aDown!=null?` · up{instance="localhost:9102"} = 0 for ${aT-aDown}s`:'');
+  $('#aTxt').textContent={inactive:'Expression false: every target reports up = 1.',pending:'Expression true, but not yet for a full minute. A quick restart would clear it without paging anyone.',firing:'True for at least 1 minute: the alert fires and goes to the Alertmanager.'}[st]}
+$('#aDown').addEventListener('click',()=>{if(aDown==null)aDown=aT;drawA()});$('#aUp').addEventListener('click',()=>{aDown=null;drawA()});$('#aTick').addEventListener('click',()=>{aT+=15;drawA()});drawA();
+
+/* inhibit */
+let iOn=false;
+function drawI(){const rule=$('#iRule').checked,sil=$('#iSil').checked;const al=iOn?[['HostDown','host-2',true],['KafkaMetricsNotReachable','broker 2',false],['UnderReplicatedPartitions','cluster',false],['ConsumerLagHigh','billing group',false]]:[];
+  $('#iList').innerHTML=al.length?al.map(([n,t,root])=>{const inh=rule&&!root&&t!=='billing group';const sent=!sil&&!inh;return `<div class="${sent?'sent':''} ${inh||sil?'inh':''}"><span><b>${n}</b> <span class="small">${t}</span></span><span class="small">${sil?'silenced':inh?'inhibited':'notified'}</span></div>`}).join(''):'<span class="small">No alerts.</span>';
+  const n=al.filter(([n,t,root])=>!sil&&!(rule&&!root&&t!=='billing group')).length;
+  $('#iTxt').textContent=!iOn?'':sil?'During a planned maintenance window, a silence mutes everything: no 3 a.m. pages for intended work.':rule?`${n} notifications: the root cause, plus an unrelated-looking lag alert that the rule deliberately doesn't cover. Secondary alerts no longer bury the real problem.`:`${n} notifications at once for one root cause: the real problem drowns.`}
+$('#iHost').addEventListener('click',()=>{iOn=true;drawI()});['iRule','iSil'].forEach(i=>$('#'+i).addEventListener('change',drawI));drawI();
+
+/* grafana mock */
+function drawG(v){const s=$('#gSvg');s.innerHTML='';const bs=v==='all'?[1,2,3]:[+v];const cols=['var(--d1)','var(--d2)','var(--d3)'];
+  [['Messages in / s',0],['Under-replicated partitions',1],['Network processor idle',2]].forEach(([t,k],i)=>{const x=10+i*230;s.appendChild(el('rect',{x,y:10,width:220,height:180,rx:8,fill:'var(--surface)',stroke:'var(--line)'}));s.appendChild(el('text',{x:x+10,y:30,'font-size':11.5,'font-weight':700,fill:'var(--ink)'},t));
+    bs.forEach(b=>{const pts=[];for(let j=0;j<20;j++){let y;if(k===0)y=60+30*Math.sin(j/3+b)+b*8;else if(k===1)y=(b===2&&j>12)?20:0;else y=0.7-0.05*b+0.05*Math.sin(j/2+b);const Y=k===0?170-y:k===1?170-y*5:170-y*130;pts.push((x+12+j*10.3)+','+Y)}s.appendChild(el('polyline',{points:pts.join(' '),fill:'none',stroke:cols[b-1],'stroke-width':1.8}))});
+    bs.forEach((b,j)=>{s.appendChild(el('rect',{x:x+12+j*60,y:178,width:8,height:4,fill:cols[b-1]}));s.appendChild(el('text',{x:x+24+j*60,y:183,'font-size':9,fill:'var(--muted)'},'broker '+b))})})}
+seg('[data-g]',b=>drawG(b.dataset.g));drawG('all');
+
+quiz('#qQuiz','#qScore',[
+ {q:'What does dual mode mean in the lab?',o:['Each node is broker and controller','Two clusters'],a:0,why:'process.roles=broker,controller.'},
+ {q:'Why format all data directories with one cluster ID?',o:['Speed','So directories can\'t be mixed into another cluster'],a:1,why:'It limits mistakes.'},
+ {q:'Broker 1 started alone logs connection warnings. Why?',o:['Misconfigured','Other controllers aren\'t running yet'],a:1,why:'They stop once the others start.'},
+ {q:'An alert expression is true for 30 s with for: 1m. State?',o:['Pending','Firing'],a:0,why:'It fires only after a full minute.'},
+ {q:'Why run Alertmanager on 9095?',o:['Required by Kafka','Its defaults 9093/9094 are taken by brokers'],a:1,why:'Brokers 2 and 3 listen there.'}]);
+
+})();
+</script>
+</body>
+</html>

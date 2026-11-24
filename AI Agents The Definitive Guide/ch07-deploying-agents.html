@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Deploying Agents in Real Products</title>
+<meta name="description" content="A deploy button is not the finish line. Real products need observation from day one, fuses against runaway loops, tested fallbacks, and respect for the physics of GPUs and caches.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the AI Agents companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = control flow and structure, orange pencil = the model and its outputs, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* additions for the AI Agents companion */
+button.tag{cursor:pointer}
+button.tag:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .k{color:var(--blue);font-weight:600} pre.code .c{color:var(--muted);font-style:italic} pre.code .s{color:var(--ok)} pre.code .p{color:var(--pencil)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+.log{font-family:var(--mono);font-size:.8rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:8em;max-height:18em;overflow:auto;display:flex;flex-direction:column;gap:3px}
+.log .ln{overflow-wrap:anywhere}
+.log .ln.u{color:var(--ink)} .log .ln.m{color:var(--pencil)} .log .ln.t{color:var(--blue)} .log .ln.ok{color:var(--ok)} .log .ln.bad{color:var(--bad)} .log .ln.mu{color:var(--muted)}
+.pill{display:inline-block;font-family:var(--mono);font-size:.72rem;padding:2px 8px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.pill.ok{border-color:var(--ok);color:var(--ok);background:var(--ok-soft)} .pill.bad{border-color:var(--bad);color:var(--bad);background:var(--bad-soft)} .pill.mid{border-color:var(--mid);color:var(--mid);background:var(--mid-soft)}
+.missing{border:2px dashed var(--bad);background:var(--bad-soft);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:6px}
+
+/* page */
+
+.stages{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+@media (max-width:720px){.stages{grid-template-columns:1fr 1fr}}
+.stages button{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:10px;text-align:left;display:flex;flex-direction:column;gap:2px}
+.stages button b{font-family:var(--mono);font-size:.75rem;color:var(--blue)}
+.stages button span{font-size:.88rem;font-weight:600}
+.stages button[aria-pressed="true"]{background:var(--blue-soft);border-color:var(--blue)}
+.sess{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+@media (max-width:640px){.sess{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.sess .stat b{font-family:var(--mono);font-size:1.05rem}
+.msgs{display:flex;flex-wrap:wrap;gap:3px}
+.msgs i{width:14px;height:14px;border-radius:3px;background:var(--line)}
+.msgs i.s{background:var(--blue)} .msgs i.u{background:var(--pencil)} .msgs i.a{background:var(--d2)} .msgs i.t{background:var(--mid)} .msgs i.sum{background:var(--ok);width:30px}
+.tiers{display:flex;flex-wrap:wrap;gap:6px;align-items:stretch}
+.tiers .st{flex:1 1 150px;border:1.5px solid var(--line);border-radius:8px;padding:10px;background:var(--surface);display:flex;flex-direction:column;gap:3px;transition:all .3s;font-size:.88rem}
+.tiers .st b{font-family:var(--display)}
+.tiers .st.on{border-color:var(--blue);background:var(--blue-soft)}
+.tiers .st.ok{border-color:var(--ok);background:var(--ok-soft)}
+.tiers .st.fail{border-color:var(--bad);background:var(--bad-soft)}
+.norm{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px}
+.norm button{font-family:var(--mono);font-size:.8rem}
+.tl{display:flex;gap:2px;height:46px;align-items:flex-end}
+.tl i{flex:1;background:var(--line);border-radius:2px 2px 0 0}
+.tl i.cold{background:var(--bad)} .tl i.warm{background:var(--ok)} .tl i.idle{background:transparent}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">AI Agents · visual companion</a><span class="tag">Chapter 7 of 12</span><button class="tag themebtn" type="button" aria-label="Toggle light or dark theme">theme</button></div>
+  <h1>Deploying Agents in Real Products</h1>
+  <p class="lede">A deploy button is not the finish line. Real products need observation from day one, fuses against runaway loops, tested fallbacks, and respect for the physics of GPUs and caches.</p>
+  <nav class="toc" aria-label="Sections"><a href="#maturity">Maturity model</a><a href="#lab">Diagnostic lab</a><a href="#harden">Hardening</a><a href="#fallback">Fallbacks</a><a href="#physics">Inference physics</a><a href="#check">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="maturity" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Shipping is a loop, not a button</h2></div>
+  <p>Vendors make "deploy to endpoint" look like the finish line. In real production models flake, latency spikes, and agents make perfectly logical decisions that wreck data or burn the budget. The book avoids vendor tutorials and focuses on what survives provider changes: fallbacks, inference abstraction, feedback loops, failure modes. Think of it as rehearsing a cast of nondeterministic actors so opening night is not your first debugging session. The loop is build, observe, harden, integrate, optimize.</p>
+  <div class="sheet">
+    <div class="stages" id="stages" role="group" aria-label="Maturity stage"></div>
+    <div class="detail" id="stageInfo" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="lab" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>The MVP is a diagnostic lab, and you monitor from day one</h2></div>
+  <p>An agent MVP is not a feature-thin product; it is an experiment harness. A lightweight UI (Streamlit, Gradio) and a managed PaaS that redeploys on every commit within minutes let you tweak a prompt or a route and immediately see how real users react. You are collecting evidence: where agents hesitate, where reasoning breaks, where cost spikes. And you cannot improve what you cannot observe, so monitoring starts with the MVP, at the agent level as well as the system level.</p>
+  <div class="cardgrid" id="mon"></div>
+  <div class="sheet">
+    <div class="row between"><h3>Trace sampling budget</h3><div class="seg" role="group" aria-label="Phase"><button data-ph="dev" aria-pressed="false">Dev / test</button><button data-ph="prod" aria-pressed="true">Production</button><button data-ph="inc" aria-pressed="false">Incident</button></div></div>
+    <div class="three">
+      <label class="rng"><span>Requests per day: <b id="rqV"></b></span><input type="range" id="rq" min="1" max="200" value="50"></label>
+      <label class="rng"><span>Error rate: <b id="erV"></b></span><input type="range" id="er" min="0" max="20" value="3"></label>
+      <label class="rng"><span>Success sampling: <b id="smV"></b></span><input type="range" id="sm" min="10" max="25" value="15"></label>
+    </div>
+    <div class="bars" id="trBars"></div>
+    <p class="small">Rules of thumb from the book: define redaction rules first (PII, card data, secrets, tokens never captured). Log everything in development. In production keep every error but only 10 to 25 percent of successes. During incidents or big changes go back to 100 percent.</p>
+  </div>
+  <div class="callout blue"><b class="h">Stream, don't wait</b><span>Long agent runs blow past typical 30-second request timeouts. Use WebSockets or Server-Sent Events to stream progress and user-safe intermediate results instead of a single blocking POST.</span></div>
+</section>
+
+<section id="harden" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Hardening the backbone: checkpoints, a context janitor, fuses</h2></div>
+  <p>Moving to a production API is where "agent vibes" become "system physics". You are handing a nondeterministic actor your infrastructure and your wallet. Three patterns carry most of the weight: <b>checkpointing</b> every turn (crash at step 4 of 10, resume at 4), a <b>context janitor</b> that keeps the system prompt and the last N turns and replaces the middle with a summary, and a <b>circuit breaker</b> with a budget fuse and a turn fuse. Run the book's customer-support scenario: a delayed order, a returns question, follow-ups.</p>
+  <div class="sheet">
+    <div class="three">
+      <label class="rng"><span>Budget cap: <b id="bcV"></b></span><input type="range" id="bc" min="5" max="100" value="50"></label>
+      <label class="rng"><span>Max turns: <b id="mtV"></b></span><input type="range" id="mt" min="3" max="20" value="12"></label>
+      <label class="rng"><span>Janitor keeps last: <b id="krV"></b> msgs</span><input type="range" id="kr" min="2" max="12" value="6"></label>
+    </div>
+    <div class="sess">
+      <div class="stat"><span>status</span><b id="sSt">running</b></div>
+      <div class="stat"><span>turns</span><b id="sTu">0</b></div>
+      <div class="stat"><span>cost</span><b id="sCo">$0.00</b></div>
+      <div class="stat"><span>context</span><b id="sTo">0</b></div>
+      <div class="stat"><span>checkpoints</span><b id="sCk">0</b></div>
+    </div>
+    <div class="msgs" id="msgs" aria-label="Message history"></div>
+    <p class="small"><span class="blue">■</span> system <span class="pencil">■</span> user <span style="color:var(--d2)">■</span> assistant <span class="midc">■</span> tool <span class="okc">■</span> janitor summary</p>
+    <div class="row"><button class="btn primary" id="hTurn">Customer turn</button><button class="btn" id="hLoop">Agent loops on policy lookup</button><button class="btn" id="hCrash">Simulate crash + restore</button><button class="btn" id="hReset">New session</button></div>
+    <div class="log" id="hLog"></div>
+  </div>
+  <p class="small">In the book's runs the janitor cut 41 messages (2,917 tokens) to 8 messages (432 tokens) before the model call, a turn fuse of 3 stopped repeated policy lookups, and a simulated crash resumed from the last checkpoint.</p>
+</section>
+
+<section id="fallback" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>The fallback guy (or it's you at 3 a.m.)</h2></div>
+  <p>The primary model will fail: timeouts, outages, outputs that parse but are wrong. Design the fallback with the system and test the second-choice model through the <i>whole</i> pipeline, because a fallback that struggles with JSON still breaks you. The book builds three enforcement tiers for structured output. At minimum implement the first two.</p>
+  <div class="sheet">
+    <div class="tiers" id="tiers">
+      <div class="st" data-t="1"><b>Tier 1 · strict schema</b><span class="small">Provider-side constrained decoding. Best shape guarantee, for one call only.</span></div>
+      <div class="st" data-t="2"><b>Tier 2 · Instructor + Pydantic</b><span class="small">Validate, normalize, retry with the error. Works with any JSON-capable model.</span></div>
+      <div class="st" data-t="3"><b>Tier 3 · degraded + canonicalize</b><span class="small">Blunt prompt, accept key aliases, map values, infer priority conservatively.</span></div>
+    </div>
+    <div class="row"><button class="btn" data-sc="ok">Model supports strict mode</button><button class="btn" data-sc="proxy">Proxy ignores strict mode</button><button class="btn" data-sc="messy">Model returns messy keys</button></div>
+    <div class="log" id="tierLog"></div>
+  </div>
+  <p><b>Model drift</b> is the quiet killer: different models say the same thing with different labels. Normalization maps translate every variant into a small stable vocabulary, and anything unmappable is rejected rather than guessed (priority drives paging, so it is strict).</p>
+  <div class="sheet">
+    <div class="norm" id="norm"></div>
+    <p id="normOut" class="mono" aria-live="polite"></p>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>Same ticket, four models, two runs each</h3><span class="small">from the book's illustrative trials</span></div>
+    <div class="tbl"><table class="t">
+      <tr><th>Model</th><th>Priority</th><th>Sentiment</th><th>Tier reached</th></tr>
+      <tr><td>GPT-5.2</td><td>p0 · p0</td><td>angry · angry</td><td>1</td></tr>
+      <tr><td>Qwen3 Max Thinking</td><td>p1 · p1</td><td>frustrated · frustrated</td><td>1</td></tr>
+      <tr><td>Claude Haiku 4.5</td><td>p0 · p0</td><td>angry · angry</td><td>1</td></tr>
+      <tr><td>MiniMax M2.5</td><td class="badc"><b>p0 · p1</b></td><td>frustrated · frustrated</td><td>3</td></tr>
+    </table></div>
+    <p class="small">Every answer is valid JSON. Yet one model pages someone now and another waits until morning, and one cannot even agree with itself. Valid structure does not mean stable decisions.</p>
+  </div>
+</section>
+
+<section id="physics" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Self-hosting: cold starts, caches and deployment physics</h2></div>
+  <p>Host models yourself and the agent is talking to a GPU process with physics. Weights must load into VRAM before the first token; in the book's test a 3B model on an A100 took <b>124.6 s</b> to start versus <b>0.277 s</b> for a warm request, about 450× longer for the first user after a deploy. <b>Scale to zero</b> saves money but turns every idle gap into a cold start. Store weights on a persistent mounted volume so new workers read from disk instead of re-downloading gigabytes.</p>
+  <div class="sheet">
+    <div class="three">
+      <label class="rng"><span>Idle timeout before scale-down: <b id="itoV"></b> min</span><input type="range" id="ito" min="0" max="60" value="10"></label>
+      <label class="rng"><span>Cold start: <b id="csV"></b> s</span><input type="range" id="cs" min="10" max="180" value="120"></label>
+      <div class="small">One simulated day of bursty traffic. Red = request that hit a cold start.</div>
+    </div>
+    <div class="tl" id="tl" aria-label="Requests across the day"></div>
+    <p id="tlTxt" class="small" aria-live="polite"></p>
+  </div>
+  <p>Long histories cost three ways: time-to-first-token rises because prefill attends over the whole prompt, the KV cache grows and squeezes batching, and each decoded token reads more cache. Prefix caching helps (the book measured 1.1× to 1.2× on short requests; shared long prompts gain more), until the prefix changes. Swapping system prompts, injecting RAG context or forking a conversation pays the <b>cache invalidation tax</b>.</p>
+  <div class="cardgrid" id="backends"></div>
+  <div class="callout"><b class="h">Don't guess, measure</b><span>Every GPU and model size moves the bottleneck. Benchmark your own setup under concurrent load, keep agent code backend-agnostic behind the OpenAI-compatible API, and remember quantized checkpoints can cut both hardware needs and cold-start time.</span></div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="quiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b>Maturity loop</b><span>MVP → alpha → hardening + beta → production → scale.</span></div>
+    <div><b>Observe early</b><span>Agent behavior plus cost, latency, traces, logs. Sample wisely.</span></div>
+    <div><b>Harden</b><span>Checkpoint every turn, prune the middle, fuse on budget and turns.</span></div>
+    <div><b>Fallback tiers</b><span>Strict → Instructor → canonicalize. Test the fallback end to end.</span></div>
+    <div><b>Normalize labels</b><span>Valid JSON can still drift in meaning between models.</span></div>
+    <div><b>Deployment physics</b><span>Cold starts, scale-to-zero, prefix caches and their invalidation.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>AI Agents: The Definitive Guide</i> by Nicole Koenigstein (O'Reilly). Explanations, examples, code snippets and drawings are original summaries; the figures are redrawn ideas, not copies.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch06-secure-execution.html"><span>Previous · Chapter 6</span><b>Secure Execution and Tool Governance</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch08-evaluation-foundations.html"><span>Next · Chapter 8</span><b>Foundational Evaluation and Observation</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every AI Agents companion page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('aia:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('aia:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle: remembers choice per browser */
+(function(){const r=document.documentElement;const t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+ const cur=()=>r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+ $$('.themebtn').forEach(b=>{const lab=()=>{b.textContent=cur()==='dark'?'light theme':'dark theme'};lab();
+  b.addEventListener('click',()=>{const nx=cur()==='dark'?'light':'dark';r.setAttribute('data-theme',nx);store.set('theme',nx);lab()})})})();
+/* log lines appended one by one into a box */
+function playLog(target,lines,delay){const r=typeof target==='string'?$(target):target;r.innerHTML='';let i=0;clearInterval(r._t);
+  r._t=setInterval(()=>{if(i>=lines.length){clearInterval(r._t);return}const d=document.createElement('div');const L=lines[i++];d.className='ln '+(L.c||'');d.innerHTML=L.t;r.appendChild(d);r.scrollTop=r.scrollHeight},delay||420)}
+
+
+/* maturity */
+const STG=[['MVP','Feasibility and vibes','Streamlit or Gradio, OpenRouter, LiteLLM','Does this actually solve the core problem?','First runnable agent, simple UI, managed inference.'],['Alpha','Edge cases and UX','Dockerized app, MCP, FastAPI, tracing','Where does the agent break when someone else uses it?','Containers, early observability, eval datasets for latency and stress.'],['Hardening + beta','Reliability and safety','Fallback models, human in the loop','Can we trust this with real users?','Failure modes logged, reliability tests, beta with design partners.'],['Production','Stability','Product APIs, auth, tracing, logging, alerts','Can this run safely inside the real product?','Backend and frontend integration, incident paths, operational ownership.'],['Scale','Performance and cost','Kubernetes or Ray, vLLM or TGI, caches, checkpoints, autoscaling','Is latency acceptable and cost sustainable at volume?','Selective self-hosting, throughput and unit-economics tuning.']];
+$('#stages').innerHTML=STG.map((s,i)=>`<button data-i="${i}" aria-pressed="${i===0}"><b>stage ${i+1}</b><span>${s[0]}</span></button>`).join('');
+function stg(i){const s=STG[i];$('#stageInfo').innerHTML=`<span class="eyebrow">${s[1]}</span><h3>${s[0]}</h3><p><b>Question:</b> ${s[3]}</p><p><b>Stack:</b> ${s[2]}</p><p><b>Integration:</b> ${s[4]}</p>`}
+seg('#stages button',b=>stg(+b.dataset.i));stg(0);
+
+/* monitoring */
+cards('#mon',[{t:'Agent behavior',d:'Role adherence, style rules, schema validity, tool usage. Catches silent drift before it becomes a hard error.'},{t:'Cost',d:'Tokens, API spend, infrastructure. Reveals runaway loops and routing regressions.'},{t:'Latency',d:'Model and tool times. Surfaces bottlenecks and coupling.'},{t:'Tracing',d:'Decision paths and tool-call sequences, so reasoning is inspectable.'},{t:'Logging',d:'Failures, retries, edge cases, intermediate artifacts: forensics when things go wrong.'}]);
+let ph='prod';function tr(){const R=+$('#rq').value*1000,e=+$('#er').value/100,s=+$('#sm').value/100;$('#rqV').textContent=R.toLocaleString();$('#erV').textContent=(e*100).toFixed(0)+'%';$('#smV').textContent=(s*100).toFixed(0)+'%';
+ const rate=ph==='prod'?s:1;$('#sm').disabled=ph!=='prod';const errs=R*e,succ=R*(1-e)*rate;bars('#trBars',[{l:'error traces kept',v:errs,c:'bad',txt:Math.round(errs).toLocaleString()},{l:'success traces kept',v:succ,c:'ok',txt:Math.round(succ).toLocaleString()},{l:'all requests',v:R,c:'muted',txt:R.toLocaleString()}],R)}
+seg('[data-ph]',b=>{ph=b.dataset.ph;tr()});['rq','er','sm'].forEach(id=>$('#'+id).addEventListener('input',tr));tr();
+
+/* hardening sim */
+let S,saved=null;function hReset(){S={status:'running',turns:0,cost:0,hist:['s'],ck:0};saved=null;$('#hLog').innerHTML='';hl('session sess_42 started','mu');hdraw()}
+function hl(t,c){const d=document.createElement('div');d.className='ln '+(c||'');d.innerHTML=t;$('#hLog').appendChild(d);$('#hLog').scrollTop=1e6}
+function toks(){return S.hist.reduce((a,m)=>a+(m==='s'?120:m==='sum'?40:m==='t'?110:70),0)}
+function hdraw(){const cap=+$('#bc').value/100;$('#bcV').textContent='$'+cap.toFixed(2);$('#mtV').textContent=$('#mt').value;$('#krV').textContent=$('#kr').value;
+ $('#sSt').textContent=S.status;$('#sSt').className=S.status==='halted'?'badc':S.status==='running'?'okc':'';$('#sTu').textContent=S.turns;$('#sCo').textContent='$'+S.cost.toFixed(3);$('#sTo').textContent=toks()+' tok';$('#sCk').textContent=S.ck;
+ $('#msgs').innerHTML=S.hist.map(m=>`<i class="${m}"></i>`).join('')}
+function janitor(){const keep=+$('#kr').value;const limit=1200;if(toks()<=limit)return;const sys=S.hist[0];const mid=S.hist.slice(1,-keep);if(!mid.length)return;const before=toks(),n=S.hist.length;S.hist=[sys,'sum',...S.hist.slice(-keep)];hl(`janitor: pruned ${mid.length} middle messages (${n} → ${S.hist.length}, ${before} → ${toks()} tokens); system prompt and last ${keep} kept`,'m')}
+function step(kind){if(S.status==='halted'){hl('session halted: escalated to a human queue','bad');return}
+ janitor();S.turns++;S.cost+=0.008+toks()/1e5*0.6;
+ if(kind==='turn'){S.hist.push('u','t','a');hl(`turn ${S.turns}: customer asks; agent calls order_status, answers`,'t')}else{S.hist.push('t','a');hl(`turn ${S.turns}: agent calls lookup_return_policy again…`,'mu')}
+ const cap=+$('#bc').value/100,mx=+$('#mt').value;
+ if(S.cost>=cap){S.status='halted';hl(`⚡ budget fuse: $${S.cost.toFixed(3)} ≥ $${cap.toFixed(2)} → CircuitBreakerTripped → "I'm stuck, a colleague will follow up"`,'bad')}
+ else if(S.turns>=mx){S.status='halted';hl(`⚡ turn fuse: ${S.turns} ≥ ${mx} → CircuitBreakerTripped → handoff to human`,'bad')}
+ S.ck++;saved=JSON.parse(JSON.stringify(S));hl(`checkpoint #${S.ck} saved`,'ok');hdraw()}
+$('#hTurn').addEventListener('click',()=>step('turn'));$('#hLoop').addEventListener('click',()=>{for(let i=0;i<4&&S.status!=='halted';i++)step('loop')});
+$('#hCrash').addEventListener('click',()=>{if(!saved){hl('nothing saved yet: a crash now would lose the session','bad');return}hl('💥 container restarted (502)','bad');S=JSON.parse(JSON.stringify(saved));hl(`restored from checkpoint #${S.ck}: turn ${S.turns}, $${S.cost.toFixed(3)} spent, conversation intact`,'ok');hdraw()});
+$('#hReset').addEventListener('click',hReset);['bc','mt','kr'].forEach(id=>$('#'+id).addEventListener('input',hdraw));hReset();
+
+/* tiers */
+const TS={ok:[[1,'ok','Tier 1: strict JSON schema enforced by the provider → valid ticket']],proxy:[[1,'fail','Tier 1: the proxy routed to a provider without constrained decoding → output has markdown fences'],[2,'ok','Tier 2: Instructor validates, maps "High" → p1, retries once with the error → valid ticket']],messy:[[1,'fail','Tier 1: strict mode unsupported for this model'],[2,'fail','Tier 2: 3 retries, still "subject" instead of "summary" and a nested object'],[3,'ok','Tier 3: degraded prompt + canonicalizer: subject → summary, steps_taken → repro_steps, priority inferred conservatively → valid ticket']]};
+$$('[data-sc]').forEach(b=>b.addEventListener('click',()=>{const L=TS[b.dataset.sc];$$('#tiers .st').forEach(s=>s.className='st');$('#tierLog').innerHTML='';let i=0;
+ const t=setInterval(()=>{if(i>=L.length){clearInterval(t);return}const[n,r,txt]=L[i++];const st=$(`#tiers .st[data-t="${n}"]`);st.className='st on';setTimeout(()=>st.className='st '+r,300);const d=document.createElement('div');d.className='ln '+(r==='ok'?'ok':'bad');d.textContent=txt;$('#tierLog').appendChild(d)},700)}));
+const NM={'urgent':'priority → p0','Critical':'priority → p0','High':'priority → p1','P2':'priority → p2','"low-ish"':'priority → ✗ ValueError (cannot map; no guessing)','sign-in':'category → login','auth issue':'category → login','payment':'category → billing','irritated':'sentiment → frustrated','furious':'sentiment → angry','"meh"':'sentiment → frustrated (conservative default)'};
+$('#norm').innerHTML=Object.keys(NM).map(k=>`<button class="btn" data-k='${k}'>${k}</button>`).join('');
+$$('#norm button').forEach(b=>b.addEventListener('click',()=>{$('#normOut').textContent=b.dataset.k+'  ⟶  '+NM[b.dataset.k]}));$('#normOut').textContent='Tap a raw model label.';
+
+/* scale to zero */
+const ARR=[];(function(){let s=11;const r=()=>{s=(s*16807)%2147483647;return s/2147483647};let t=0;while(t<24*60){const burst=r()<0.25;const gap=burst?2+r()*6:30+r()*150;t+=gap;if(t<24*60)ARR.push(t)}})();
+function stz(){const to=+$('#ito').value,cs=+$('#cs').value;$('#itoV').textContent=to;$('#csV').textContent=cs;let last=-1e9,cold=0;const res=ARR.map(t=>{const c=to===0?true:(t-last)>to;last=t;if(c)cold++;return c});
+ const bins=96,B=Array.from({length:bins},()=>({n:0,c:0}));ARR.forEach((t,i)=>{const k=Math.min(bins-1,Math.floor(t/(1440/bins)));B[k].n++;if(res[i])B[k].c++});
+ const mx=Math.max(...B.map(b=>b.n),1);$('#tl').innerHTML=B.map(b=>b.n?`<i class="${b.c?'cold':'warm'}" style="height:${12+b.n/mx*34}px"></i>`:'<i class="idle"></i>').join('');
+ const gpuH=Math.min(24,(ARR.length*0+ARR.reduce((a,t,i)=>a+Math.min(to,(ARR[i+1]||1440)-t),0))/60+0.1);
+ $('#tlTxt').textContent=`${cold} of ${ARR.length} requests (${(cold/ARR.length*100).toFixed(0)}%) waited about ${cs} s for a cold start. GPU kept warm roughly ${gpuH.toFixed(1)} h of 24. Longer timeouts trade money for latency; persistent weight storage shortens the penalty.`}
+['ito','cs'].forEach(id=>$('#'+id).addEventListener('input',stz));stz();
+cards('#backends',[{t:'vLLM',d:'PagedAttention memory management and iteration-level scheduling. Battle-tested default; excellent high-concurrency batching.'},{t:'TGI',d:'Hugging Face\'s server, tightly integrated with its ecosystem. Has adopted vLLM-derived kernels, but can saturate under heavy concurrency.'},{t:'SGLang',d:'RadixAttention keeps the KV cache as a tree, so forked and multi-turn conversations reuse shared fragments. Strong for branching agents.'}]);
+
+quiz('#quiz','#qScore',[
+ {q:'In production, which traces should you always keep?',o:['All successes','All errors','None'],a:1,why:'Keep 100% of errors and sample successes (about 10 to 25%) to spot drift without paying for noise.'},
+ {q:'What does the context janitor throw away?',o:['The system prompt','The middle of the conversation','The latest turns'],a:1,why:'It keeps instructions and recency and replaces the middle with a summary.'},
+ {q:'The agent is cheap per turn but keeps calling the same tool. Which fuse trips?',o:['Budget fuse','Turn fuse'],a:1,why:'The turn fuse stops loops even when spend is still low.'},
+ {q:'All four models return schema-valid tickets. Are you safe?',o:['Yes','No, decisions like priority can still drift'],a:1,why:'Structured output guarantees shape, not judgment. One model flipped p0 and p1 across runs.'},
+ {q:'Your RAG step injects new documents at the top of every prompt. What suffers?',o:['Prefix cache reuse','Tool schemas'],a:0,why:'Any prefix change is a cache miss, so the KV cache must be recomputed: the cache invalidation tax.'}]);
+
+})();
+</script>
+</body>
+</html>

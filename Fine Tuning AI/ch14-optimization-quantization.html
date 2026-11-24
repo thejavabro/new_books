@@ -1,0 +1,536 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Optimization and Quantization</title>
+<meta name="description" content="Your expert works; now make it small and fast. Merge, quantize from 16 to 4 bits, and tame the KV cache, measuring the cost at every step.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Fine-Tuning AI companion (adapted from the Accelerate companion). Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+.themebtn{cursor:pointer}
+.themebtn:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)} pre.code .n{color:var(--pencil)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+.missing{border:2px dashed var(--bad);background:var(--bad-soft);color:var(--bad);padding:12px 16px;border-radius:8px}
+.tokrow{display:flex;flex-wrap:wrap;gap:4px}
+.tok{font-family:var(--mono);font-size:.8rem;padding:2px 6px;border-radius:4px;border:1px solid var(--line);background:var(--paper)}
+.tok.m{opacity:.4;text-decoration:line-through}
+.tok.l{background:var(--ok-soft);border-color:var(--ok)}
+.tok.p{background:var(--blue-soft);border-color:var(--blue)}
+.tok.a{background:var(--pencil-soft);border-color:var(--pencil)}
+.out{font-family:var(--mono);font-size:.85rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:2.5em;white-space:pre-wrap;word-break:break-word}
+label.rng{min-width:0} label.rng select{width:100%}
+.stat .big{font-size:clamp(1.6rem,5vw,2.4rem);color:var(--ink)}
+.stat .big.blue{color:var(--blue)} .stat .big.pencil{color:var(--pencil)} .stat .big.okc{color:var(--ok)} .stat .big.badc{color:var(--bad)} .stat .big.midc{color:var(--mid)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:.85rem}
+.legend i{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+
+code,pre,kbd,.mf,.out{font-variant-ligatures:none;font-feature-settings:"calt" 0,"liga" 0}
+
+/* page */
+
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media (max-width:640px){.grid2{grid-template-columns:1fr}}
+table.t{width:100%;border-collapse:collapse;font-size:.88rem}
+table.t th,table.t td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left}
+table.t td.n,table.t th.n{text-align:right;font-variant-numeric:tabular-nums}
+table.t tr.sel td{background:var(--blue-soft)}
+table.t tr.fail td{color:var(--bad)}
+.tw{overflow-x:auto}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Fine-Tuning AI · visual companion</a><span class="tag">Part IV · Chapter 14 of 15</span><button class="tag themebtn" type="button" data-theme-toggle>Theme: auto</button></div>
+  <h1>Optimization and Quantization</h1>
+  <p class="lede">Your expert works; now make it small and fast. Merge, quantize from 16 to 4 bits, and tame the KV cache, measuring the cost at every step.</p>
+  <nav class="toc" aria-label="Sections"><a href="#gap">The deployment gap</a><a href="#merge">Merging</a><a href="#quant">How quantization works</a><a href="#zoo">Format zoo</a><a href="#gguf">GGUF and the sweep</a><a href="#qat">QAT</a><a href="#kv">KV cache</a><a href="#pipeline">The pipeline</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="gap" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>From it trains to it ships</h2></div>
+  <p>Your merged medical Gemma is about 15 to 18 GB in 16-bit and needs that much VRAM before it reads one token. That is fine on a rented A100, but not on a clinician's laptop, an air-gapped mini-PC or a $200/month budget. If the model you own only runs on hardware you rent, owning it loses much of its point. Three independent levers close the gap: <b>merge</b> the adapter into the base, <b>quantize</b> 16-bit weights to about 4, and <b>tame the KV cache</b>. They move you around a triangle of size, speed and accuracy, and you cannot max out all three.</p>
+  <div class="sheet">
+    <label class="rng"><span>Bits per weight: <b id="bwV">4</b></span><input type="range" id="bw" min="0" max="4" value="2"></label>
+    <div class="two"><div class="svgbox fit"><svg id="tri" viewBox="0 0 260 230" role="img" aria-label="Size, speed and accuracy triangle"></svg></div><p id="triTxt"></p></div>
+  </div>
+  <p>Treat optimization as a pipeline of reversible, measured decisions. After merging, check parity. After quantizing, measure perplexity and task accuracy. The people who get burned quantize once, eyeball three outputs and ship.</p>
+</section>
+
+<section id="merge" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Merging the adapter, and the 4-bit trap</h2></div>
+  <p>Merging evaluates <b>W<sub>merged</sub> = W<sub>base</sub> + (α / r) · BA</b> once per adapted layer, writes it into the weight and drops A and B. You get a plain model that any serving stack loads, with no per-token adapter matmuls (worth a few percent of throughput). It does not make the model smaller. The trap: calling <code>merge_and_unload()</code> on the 4-bit QLoRA base adds the 16-bit delta to already-compressed weights, a sloppy double quantization. Reload the base in bfloat16, merge, save the <b>tokenizer from the adapter folder</b>, then quantize as a separate step.</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Merge path"><button data-mp="bf" aria-pressed="true">Merge in bf16 → quantize</button><button data-mp="q4" aria-pressed="false">Merge into 4-bit base</button></div><button class="btn" id="mReroll">New weights</button></div>
+    <div class="svgbox"><svg id="mSvg" viewBox="0 0 660 150" role="img" aria-label="Base weights, LoRA delta, merged weights and final error"></svg></div>
+    <p id="mTxt" class="small" aria-live="polite"></p>
+  </div>
+  <div class="grid2">
+    <div class="sheet"><h3>Verify parity</h3><p class="small">Run a few prompts through base + adapter and through the merged model. Compare <b>next-token</b> argmax and max |Δlogit|, not whole greedy transcripts: tiny rounding differences make long decodes drift apart even when the merge is correct. A broken merge (wrong dtype, wrong tokenizer, corrupted weights) shows a different top token with a large gap. If protobuf errors appear, set <code>USE_TF=0</code>.</p></div>
+    <div class="sheet"><h3>When not to merge</h3><label class="rng"><span>Adapters served: <b id="naV">5</b></span><input type="range" id="na" min="1" max="40" value="5"></label><div class="bars" id="naBars"></div></div>
+  </div>
+</section>
+
+<section id="quant" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>How quantization actually works</h2></div>
+  <p>float32 spends 1 sign, 8 exponent (range) and 23 mantissa (precision) bits. float16 keeps 5 and 10; bfloat16 keeps float32's 8-bit exponent with only 7 mantissa bits, which makes it the training default. Gemma 4 E4B's on-disk size is larger than "4B × 2 bytes" because Per-Layer Embeddings add large lookup tables. "E" means <i>effective</i> parameters. The quantizer shrinks the stored weights.</p>
+  <div class="sheet"><div class="svgbox"><svg id="fpSvg" viewBox="0 0 660 150" role="img" aria-label="Bit layouts of float32, float16, bfloat16 and int4"></svg></div></div>
+  <p>For inference you need far fewer bits, because no gradients are flowing. Store small integers plus a recipe: <code>scale = (max − min) / 15</code>, <code>zero_point = round(−min / scale)</code>, <code>q = clamp(round(w / scale) + zp, 0, 15)</code>. Try it, and notice what one outlier does.</p>
+  <div class="sheet">
+    <div class="row between" style="flex-wrap:wrap;gap:8px">
+      <div class="seg" role="group" aria-label="Grouping"><button data-gp="t" aria-pressed="false">Per-tensor</button><button data-gp="g" aria-pressed="true">Groups of 8</button></div>
+      <div class="seg" role="group" aria-label="Outlier"><button data-ol="0" aria-pressed="true">No outlier</button><button data-ol="1" aria-pressed="false">One outlier</button></div>
+      <div class="seg" role="group" aria-label="Symmetry"><button data-sy="a" aria-pressed="true">Asymmetric</button><button data-sy="s" aria-pressed="false">Symmetric</button></div>
+    </div>
+    <div class="svgbox"><svg id="qSvg" viewBox="0 0 660 230" role="img" aria-label="Sixteen weights and their 4-bit approximations"></svg></div>
+    <p id="qTxt" aria-live="polite"></p>
+  </div>
+  <p>Smaller groups (32, 64 or 128; 128 is the common default) mean better fidelity and a few more scales to store. Most LLM weight quantizers are symmetric or nearly so, per group. They are also <b>weight-only</b>: activations have per-input outliers, so quantizing them (int8 end to end) is a high-throughput production technique, not the default.</p>
+</section>
+
+<section id="zoo" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>The format zoo: where will it run?</h2></div>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Target" id="zooSeg"><button data-z="0" aria-pressed="true">Laptop / Mac / CPU</button><button data-z="1" aria-pressed="false">GPU serving</button><button data-z="2" aria-pressed="false">My consumer GPU</button><button data-z="3" aria-pressed="false">Still training</button></div>
+    <div class="detail" id="zInfo" aria-live="polite"></div>
+  </div>
+  <div class="callout"><b class="h">Hard walls</b><span>Quantized files are one-way: you cannot fine-tune a GGUF or GPTQ, so archive the bf16 merged model and regenerate quants from it. GPTQ, AWQ and EXL2 do not run on CPUs or Macs. bitsandbytes is never a deployment format. And the speed comes from <b>fused kernels</b> (llama.cpp's per-backend K-quant kernels, Marlin in vLLM), which unpack 4-bit tiles on-chip straight into the matmul. Inference is memory-bound, so moving a quarter of the bytes is the win. Benchmark on the runtime you will deploy.</span></div>
+</section>
+
+<section id="gguf" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>GGUF, K-quants and the bit-width sweep</h2></div>
+  <p>Two llama.cpp steps: <code>convert_hf_to_gguf.py --outtype f16</code> (a container change, no compression), then <code>llama-quantize … Q4_K_M</code>. Read <b>Q4_K_M</b> as: about 4 bits average, a <b>K</b>-quant (block structure with per-block scales), size tier <b>M</b> (S, M, L: how many important tensors keep extra bits). An <b>importance matrix</b> computed over in-domain calibration text tells the quantizer which weights to protect. The book's run gave 14,236 MiB at 16 BPW and 5,042 MiB at 5.67 BPW.</p>
+  <div class="sheet">
+    <div class="row between"><h3>Pick a quant</h3><label class="rng" style="max-width:260px"><span>Max accuracy drop: <b id="gateV">1.5</b>%</span><input type="range" id="gate" min="0.2" max="6" step="0.1" value="1.5"></label></div>
+    <div class="tw"><table class="t" id="qt"></table></div>
+    <div class="svgbox"><svg id="knee" viewBox="0 0 660 200" role="img" aria-label="Accuracy versus size showing the knee below Q4_K_M"></svg></div>
+    <p id="kTxt" class="small" aria-live="polite"></p>
+  </div>
+  <div class="cardgrid" id="calCards"></div>
+</section>
+
+<section id="qat" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>A better way forward: QAT</h2></div>
+  <p>Post-training quantization (PTQ) compresses weights that never had to tolerate rounding, so some quality is simply lost. <b>Quantization-aware training</b> simulates the rounding during training, so the weights settle onto the grid. Full QAT used to mean a second, expensive training run. Gemma 4 ships official QAT checkpoints: <code>-qat-q4_0-gguf</code> (llama.cpp tools), <code>-qat-w4a16-ct</code> (vLLM or SGLang) and <code>-qat-q4_0-unquantized</code>, plus <code>-assistant</code> draft models.</p>
+  <div class="callout"><b class="h">The one-line win for fine-tuners</b><span>Shipping Google's QAT GGUF would throw away your fine-tune. Instead, fine-tune on top of <code>google/gemma-4-e4b-it-qat-q4_0-unquantized</code>, then merge and quantize as usual. You inherit quantization-robust weights. It is not identical to running end-to-end QAT yourself, so still measure. If your model has no QAT checkpoint, use PTQ and measure.</span></div>
+</section>
+
+<section id="kv" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>The KV cache: the memory that grows</h2></div>
+  <p>Each token's keys and values are computed once and reused by every later token. That is what makes generation fast, and it costs memory that grows linearly with context. On long inputs it can exceed the weights. <b>kv_bytes = 2 × layers × kv_heads × head_dim × seq_len × batch × bytes</b>.</p>
+  <div class="sheet">
+    <div class="grid2">
+      <label class="rng"><span>Context: <b id="slV"></b> tokens</span><input type="range" id="sl" min="0" max="7" value="3"></label>
+      <label class="rng"><span>Concurrent sequences: <b id="bsV">1</b></span><input type="range" id="bs" min="1" max="32" value="1"></label>
+      <label class="rng"><span>KV heads (GQA): <b id="khV">4</b> of 16 query heads</span><input type="range" id="kh" min="0" max="4" value="2"></label>
+      <label class="rng"><span>Cache precision</span><select id="kp"><option value="2">16-bit</option><option value="1">8-bit (q8_0)</option><option value="0.5">4-bit</option></select></label>
+    </div>
+    <div class="row" style="gap:12px;flex-wrap:wrap"><div class="stat"><span class="big pencil" id="kvGB">0</span><span>GB of KV cache</span></div><div class="stat"><span class="big blue">4.5</span><span>GB of Q4_K_M weights</span></div></div>
+    <p class="small" id="kvTxt">Assumes 34 layers and head_dim 256 (a 4B-class model).</p>
+  </div>
+  <p><b>GQA</b> already shrinks kv_heads 4 to 8× for free. <b>KV quantization</b> (llama.cpp <code>--cache-type-k q8_0 --cache-type-v q8_0</code>, Transformers <code>cache_implementation="quantized"</code>) halves or quarters the cache. 8-bit is usually invisible; 4-bit can hurt precise long-range recall. Serving stacks add the rest:</p>
+  <div class="sheet">
+    <div class="row between"><h3>Contiguous vs. paged allocation</h3><div class="seg" role="group" aria-label="Allocator"><button data-pa="c" aria-pressed="true">Reserve max length</button><button data-pa="p" aria-pressed="false">PagedAttention</button></div></div>
+    <div class="svgbox"><svg id="paSvg" viewBox="0 0 660 150" role="img" aria-label="Memory blocks for three sequences"></svg></div>
+    <p id="paTxt" class="small" aria-live="polite"></p>
+  </div>
+  <div class="cardgrid" id="kvCards"></div>
+</section>
+
+<section id="pipeline" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Putting it together: a gated pipeline</h2></div>
+  <div class="sheet stepper" id="ppStep">
+    <div class="svgbox"><svg id="ppSvg" viewBox="0 0 660 120" role="img" aria-label="Merge, parity, convert, quantize, evaluate, gate"></svg></div>
+  </div>
+  <div class="tw"><table class="t"><thead><tr><th></th><th>Before</th><th>After</th></tr></thead><tbody>
+    <tr><td>Artifact</td><td>base + adapter (2 files, 37 MB adapter)</td><td>medical-gemma-Q4_K_M.gguf</td></tr>
+    <tr><td>On disk</td><td>~15 GB</td><td>~4.5 GB</td></tr>
+    <tr><td>Loads on</td><td>24 GB+ GPU</td><td>8 GB laptop / CPU</td></tr>
+    <tr><td>Runtime</td><td>transformers + PEFT</td><td>llama.cpp / Ollama</td></tr>
+    <tr><td>Task accuracy</td><td>84.2%</td><td>83.1%</td></tr></tbody></table></div>
+  <div class="sheet">
+    <label class="rng"><span>Pitfall</span><select id="pf"></select></label>
+    <div class="detail" id="pfInfo" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Quick check</h2></div>
+  <div class="row between"><span class="small">Pick an answer for each.</span><span class="score" id="qs"></span></div>
+  <div class="quiz" id="qz"></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Fine-Tuning AI: Customizing Large Language Models</i> by Laurence Moroney (O’Reilly, 2026). Explanations, code snippets and drawings are original summaries, not text or figures copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch13-fine-tuning-diffusion.html"><span>Previous · Chapter 13</span><b>Fine-Tuning Diffusion Models</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch15-serving-the-expert.html"><span>Next · Chapter 15</span><b>Serving the Expert</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('fta:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('fta:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle: auto -> light -> dark */
+(function(){const modes=['auto','light','dark'];let m=store.get('theme','auto');
+  function apply(){if(m==='auto')document.documentElement.removeAttribute('data-theme');else document.documentElement.setAttribute('data-theme',m);
+    $$('[data-theme-toggle]').forEach(b=>b.textContent='Theme: '+m)}
+  apply();$$('[data-theme-toggle]').forEach(b=>b.addEventListener('click',()=>{m=modes[(modes.indexOf(m)+1)%3];store.set('theme',m);apply()}));})();
+
+
+function rng(seed){return()=>{seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function gauss(r){let u=0;while(!u)u=r();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*r())}
+
+/* triangle */
+const BW=[[16,'16-bit',[.05,.1,.85]],[8,'8-bit (Q8_0)',[.2,.25,.55]],[4,'4-bit (Q4_K_M)',[.38,.34,.28]],[3,'3-bit',[.45,.4,.15]],[2,'2-bit',[.5,.45,.05]]];
+const TRI=[[130,20],[20,210],[240,210]];
+function tri(){const b=BW[+$('#bw').value];$('#bwV').textContent=b[0];const s=$('#tri');s.innerHTML='';
+ s.appendChild(el('path',{d:`M${TRI[0]}L${TRI[1]}L${TRI[2]}Z`,class:'s-paper st-ink','stroke-width':1.5}));
+ [['Accuracy',130,12,'middle'],['Small size',16,226,'start'],['Speed',244,226,'end']].forEach(([t,x,y,a])=>s.appendChild(el('text',{x,y,'text-anchor':a,'font-size':12,'font-weight':700,class:'s-ink'},t)));
+ const w=[b[2][2],b[2][0],b[2][1]];const p=[0,1].map(k=>w[0]*TRI[0][k]+w[1]*TRI[1][k]+w[2]*TRI[2][k]);
+ s.appendChild(el('circle',{cx:p[0],cy:p[1],r:9,class:'s-pencil'}));
+ const size=(15*b[0]/16).toFixed(1);$('#triTxt').innerHTML=`<b>${b[1]}</b> · about ${size} GB for a 15 GB fp16 model. `+['The most accurate and the largest. Archive this one.','Essentially lossless: a reference to measure smaller quants against.','The usual sweet spot: nearly all the size and speed win, about a point of accuracy lost.','Visible degradation begins. Only for tight memory.','Tiny and fast, but reasoning falls apart. A non-starter for a medical model.'][+$('#bw').value]}
+$('#bw').addEventListener('input',tri);tri();
+
+/* merge demo */
+let mp='bf',mseed=3;
+function q4(arr){const mn=Math.min(...arr),mx=Math.max(...arr),sc=(mx-mn)/15||1,zp=Math.round(-mn/sc);return arr.map(w=>(Math.max(0,Math.min(15,Math.round(w/sc)+zp))-zp)*sc)}
+function merge(){const r=rng(mseed);const W=[...Array(8)].map(()=>gauss(r)*.5),B=[...Array(8)].map(()=>gauss(r)*.15),a=gauss(r);const D=B.map(b=>b*a*2);
+ const ideal=W.map((w,i)=>w+D[i]);const final=mp==='bf'?q4(ideal):q4(q4(W).map((w,i)=>w+D[i]));
+ const err=final.map((f,i)=>Math.abs(f-ideal[i]));const mae=err.reduce((x,y)=>x+y,0)/8;
+ const s=$('#mSvg');s.innerHTML='';const cols=[['W_base',W,'blue'],['(α/r)·BA',D,'ok'],[mp==='bf'?'merged bf16':'4-bit W + Δ',mp==='bf'?ideal:q4(W).map((w,i)=>w+D[i]),'mid'],['final Q4',final,'pencil'],['|error|',err,'bad']];
+ cols.forEach(([t,v,c],k)=>{const x=10+k*130;s.appendChild(el('text',{x:x+55,y:14,'text-anchor':'middle','font-size':11,'font-weight':700,class:'s-ink'},t));v.forEach((val,i)=>{const y=22+i*15;const w=Math.min(55,Math.abs(val)*(k===4?400:45));
+  s.appendChild(el('rect',{x:k===4?x+10:(val<0?x+55-w:x+55),y,width:w,height:11,rx:2,style:`fill:var(--${c})`}))});if(k<4)s.appendChild(el('line',{x1:x+55,y1:20,x2:x+55,y2:142,class:'st-line'}));if(k<4)s.appendChild(el('text',{x:x+120,y:84,'text-anchor':'middle','font-size':16,class:'s-muted'},['+','=','→','vs'][k]))});
+ $('#mTxt').innerHTML=`Mean |error| vs. the ideal merged weights: <b>${mae.toFixed(4)}</b>. `+(mp==='bf'?'Rounded once, at the end, on the true merged values.':'The base was already rounded, the delta is added on top, and the sum is rounded again: two rounding errors. The error bars are drawn 8× larger than the weights.')}
+seg('[data-mp]',b=>{mp=b.dataset.mp;merge()});$('#mReroll').addEventListener('click',()=>{mseed++;merge()});merge();
+function na(){const n=+$('#na').value;$('#naV').textContent=n;bars('#naBars',[{l:`Merged: ${n} full copies`,v:n*15,txt:(n*15).toLocaleString('en-US')+' GB',c:'bad'},{l:'One base + hot-swapped adapters',v:15+n*0.037,txt:(15+n*0.037).toFixed(1)+' GB',c:'ok'}],Math.max(n*15,16))}
+$('#na').addEventListener('input',na);na();
+
+/* float layouts */
+{const s=$('#fpSvg');const F=[['float32',[1,8,23]],['float16',[1,5,10]],['bfloat16',[1,8,7]],['int4',[0,0,4]]];const u=17;
+ F.forEach(([n,[sg,ex,ma]],r)=>{const y=10+r*34;s.appendChild(el('text',{x:70,y:y+17,'text-anchor':'end','font-size':12,'font-weight':700,class:'s-ink'},n));let x=80;
+  [[sg,'bad','sign'],[ex,'blue','exponent'],[ma,'pencil',n==='int4'?'integer 0–15':'mantissa']].forEach(([c,col,l])=>{if(!c)return;s.appendChild(el('rect',{x,y,width:c*u-2,height:24,rx:3,style:`fill:var(--${col}-soft);stroke:var(--${col})`}));if(c*u>40)s.appendChild(el('text',{x:x+c*u/2,y:y+16,'text-anchor':'middle','font-size':10,class:'s-ink'},`${l} ${c}`));x+=c*u});
+  s.appendChild(el('text',{x:x+6,y:y+17,'font-size':11,class:'s-muted'},`${sg+ex+ma} bits`))})}
+
+/* quantizer playground */
+let gp='g',ol=0,sy='a';const QR=rng(11);const QW=[...Array(16)].map(()=>gauss(QR)*.3);
+function quant(arr){const mn=Math.min(...arr),mx=Math.max(...arr);let sc,zp;if(sy==='s'){const m=Math.max(Math.abs(mn),Math.abs(mx));sc=m/7.5||1;zp=7.5}else{sc=(mx-mn)/15||1;zp=Math.round(-mn/sc)}
+ return{q:arr.map(w=>(Math.max(0,Math.min(15,Math.round(w/sc+zp)))-zp)*sc),sc,zp,mn,mx}}
+function play(){const W=QW.slice();if(ol)W[5]=2.4;const groups=gp==='t'?[W]:[W.slice(0,8),W.slice(8)];const res=groups.map(quant);const Q=res.flatMap(r=>r.q);
+ const s=$('#qSvg');s.innerHTML='';const lo=-1,hi=2.6,X=v=>30+(v-lo)/(hi-lo)*610;
+ res.forEach((r,g)=>{const y=40+g*90;const levels=[...Array(16)].map((_,k)=>(k-r.zp)*r.sc);
+  s.appendChild(el('line',{x1:30,y1:y,x2:640,y2:y,class:'st-line'}));levels.forEach(l=>s.appendChild(el('line',{x1:X(l),y1:y-8,x2:X(l),y2:y+8,class:'st-muted'})));
+  s.appendChild(el('text',{x:30,y:y-14,'font-size':10,class:'s-muted'},`${groups.length>1?'group '+(g+1):'whole tensor'} · scale ${r.sc.toFixed(3)} · 16 levels`));
+  groups[g].forEach((w,i)=>{const qv=r.q[i];s.appendChild(el('circle',{cx:X(w),cy:y+26,r:4,class:w>2?'s-bad':'s-blue'}));s.appendChild(el('line',{x1:X(w),y1:y+22,x2:X(qv),y2:y+4,class:'st-pencil'}));s.appendChild(el('circle',{cx:X(qv),cy:y,r:3,class:'s-pencil'}))})});
+ s.appendChild(el('text',{x:640,y:224,'text-anchor':'end','font-size':10,class:'s-muted'},'blue = original weight · orange = nearest 4-bit level'));
+ const idx=W.map((_,i)=>i).filter(i=>!(ol&&i===5));const mae=idx.reduce((a,i)=>a+Math.abs(W[i]-Q[i]),0)/idx.length;const distinct=new Set(idx.map(i=>Q[i].toFixed(5))).size;
+ $('#qTxt').innerHTML=`Mean error on the ordinary weights: <b>${mae.toFixed(4)}</b> · they use <b>${distinct}</b> distinct levels. `+(ol&&gp==='t'?'The outlier stretched the range, so the ordinary weights are squeezed onto a few levels and precision is lost everywhere.':ol?'With groups, the outlier only damages its own group; the other keeps a tight range.':'Each group gets a range fitted to its own values.')}
+seg('[data-gp]',b=>{gp=b.dataset.gp;play()});seg('[data-ol]',b=>{ol=+b.dataset.ol;play()});seg('[data-sy]',b=>{sy=b.dataset.sy;play()});play();
+
+/* zoo */
+const ZOO=[['GGUF (llama.cpp)','The most portable format: CPU, Apple Silicon (Metal), NVIDIA and AMD; Ollama, LM Studio and most desktop apps. K-quants such as Q4_K_M. One file that runs almost anywhere. The book\'s main path for the private medical model.'],
+ ['AWQ or GPTQ (compressed-tensors)','For vLLM throughput. GPTQ calibrates layer by layer and compensates earlier errors. AWQ protects weight channels that meet large activations and usually holds task accuracy best at 4-bit. Both use llm-compressor (autoawq is deprecated). At the time of writing AWQ there did not support Gemma 4, so use GPTQ or the official QAT w4a16 checkpoint.'],
+ ['EXL2 (ExLlamaV2)','Mixed and fractional bit rates (for example 4.65 bits average) to fill your VRAM exactly. Excellent quality per byte on NVIDIA GPUs; GPU-only and tied to its runtime.'],
+ ['bitsandbytes (NF4 / int8)','Zero effort, quantizes on load, ideal for QLoRA. Not for serving: nothing gets smaller on disk and its kernels are the slowest.']];
+function zoo(i){$('#zInfo').innerHTML=`<p><b>${ZOO[i][0]}</b>: ${ZOO[i][1]}</p>`}seg('[data-z]',b=>zoo(+b.dataset.z));zoo(0);
+
+/* quant table + knee */
+const QT=[['f16 (baseline)',14.90,6.41,84.2,'Reference. Archive it.'],['Q8_0',7.9,6.41,84.2,'Essentially lossless; a safety reference.'],['Q6_K',6.28,6.43,84.1,'Nearly indistinguishable from 16-bit.'],['Q5_K_M',5.42,6.47,83.8,'A strong middle ground.'],['Q4_K_M',4.68,6.58,83.1,'The workhorse. Start here.'],['Q3_K_M',3.79,7.22,78.6,'Past the knee: visible degradation.'],['Q2_K',2.9,9.8,69,'Runs and sounds fluent, but reasoning collapses.']];
+let qsel=4;function qtab(){const gate=+$('#gate').value;$('#gateV').textContent=gate.toFixed(1);const base=QT[0][3];
+ let best=-1;QT.forEach((r,i)=>{if(i&&base-r[3]<=gate)best=i});
+ $('#qt').innerHTML='<thead><tr><th>Variant</th><th class="n">GB</th><th class="n">PPL</th><th class="n">Acc</th><th>Gate</th></tr></thead><tbody>'+QT.map((r,i)=>`<tr data-qi="${i}" class="${i===qsel?'sel':''} ${i&&base-r[3]>gate?'fail':''}" style="cursor:pointer"><td>${r[0]}</td><td class="n">${r[1].toFixed(2)}</td><td class="n">${r[2].toFixed(2)}</td><td class="n">${r[3].toFixed(1)}%</td><td>${i===0?'':base-r[3]<=gate?'pass':'fail'}</td></tr>`).join('')+'</tbody>';
+ $$('#qt tr[data-qi]').forEach(tr=>tr.addEventListener('click',()=>{qsel=+tr.dataset.qi;qtab()}));
+ const s=$('#knee');s.innerHTML='';const X=v=>40+(v-2.5)/12.6*600,Y=v=>180-(v-66)/20*165;
+ [70,75,80,85].forEach(v=>{s.appendChild(el('line',{x1:40,y1:Y(v),x2:640,y2:Y(v),class:'st-line'}));s.appendChild(el('text',{x:34,y:Y(v)+4,'text-anchor':'end','font-size':10,class:'s-muted'},v+'%'))});
+ s.appendChild(el('rect',{x:40,y:Y(base),width:600,height:Y(base-gate)-Y(base),class:'s-oksoft',opacity:.6}));
+ const pts=QT.slice().sort((a,b)=>a[1]-b[1]);s.appendChild(el('path',{d:pts.map((r,i)=>(i?'L':'M')+X(r[1])+' '+Y(r[3])).join(''),fill:'none',class:'st-blue','stroke-width':2.5}));
+ QT.forEach((r,i)=>{s.appendChild(el('circle',{cx:X(r[1]),cy:Y(r[3]),r:i===qsel?7:4.5,class:i===qsel?'s-pencil':'s-blue'}));s.appendChild(el('text',{x:X(r[1]),y:Y(r[3])+(i%2?18:-10),'text-anchor':'middle','font-size':10,class:'s-ink'},r[0].split(' ')[0]))});
+ s.appendChild(el('text',{x:640,y:196,'text-anchor':'end','font-size':10,class:'s-muted'},'size on disk (GB) →'));
+ const r=QT[qsel];$('#kTxt').innerHTML=`<b>${r[0]}</b>: ${r[4]} ${best>0?`With a ${gate.toFixed(1)}% budget, the smallest passing quant is <b>${QT[best][0]}</b>.`:'Nothing passes this budget: keep f16.'} f16, Q6_K, Q5_K_M, Q4_K_M and Q3_K_M rows are the book\'s sweep; Q8_0 and Q2_K are illustrative.`}
+$('#gate').addEventListener('input',qtab);qtab();
+cards('#calCards',[{t:'Calibrate in-domain',d:'imatrix decides what to protect from the activations your text produces. Medical Q&A for a medical model, not generic web text.',c:'blue'},{t:'Keep three pools disjoint',d:'Train, calibration and test. Calibrating on the test set makes the scores fiction, and the imatrix gain is modest anyway.',c:'bad'},{t:'Cost',d:'Minutes on a CUDA build with -ngl 99; up to an hour on CPU. Use about 100 samples, or skip it: plain Q4_K_M is already deployable.',c:'ok'},{t:'Perplexity + task metric',d:'Perplexity is a cheap tripwire (a jump is a red flag; flat is necessary but not enough). Task accuracy or F1 on the held-out set is what counts. The book\'s F1 sweep fell 44.0 → 42.1% by Q4_K_M, then 40.0% at Q3_K_M.',c:'pencil'}]);
+
+/* KV */
+const SL=[1024,2048,4096,8000,16384,32768,65536,131072],KH=[1,2,4,8,16];
+function kv(){const sl=SL[+$('#sl').value],bs=+$('#bs').value,kh=KH[+$('#kh').value],bp=+$('#kp').value;$('#slV').textContent=sl.toLocaleString('en-US');$('#bsV').textContent=bs;$('#khV').textContent=kh;
+ const gb=2*34*kh*256*sl*bs*bp/1e9;$('#kvGB').textContent=gb<10?gb.toFixed(2):Math.round(gb).toLocaleString('en-US');
+ $('#kvTxt').textContent=`2 × 34 layers × ${kh} KV heads × 256 × ${sl.toLocaleString('en-US')} tokens × ${bs} × ${bp} bytes. `+(gb>4.5?'The cache is now larger than the weights.':'Still smaller than the weights.')+(kh===16?' Without GQA (one KV head per query head) it would be this large.':'')}
+['sl','bs','kh'].forEach(id=>$('#'+id).addEventListener('input',kv));$('#kp').addEventListener('change',kv);kv();
+let pa='c';function paged(){const s=$('#paSvg');s.innerHTML='';const L=[180,40,95],MAX=256,u=600/MAX;let used=0,alloc=0;
+ L.forEach((len,i)=>{const y=12+i*44;s.appendChild(el('text',{x:4,y:y+18,'font-size':11,class:'s-ink'},'seq '+(i+1)));
+  const res=pa==='c'?MAX:Math.ceil(len/16)*16;alloc+=res;used+=len;s.appendChild(el('rect',{x:50,y,width:res*u*0.96,height:26,rx:4,class:'s-badsoft'}));
+  if(pa==='p')for(let k=0;k<res/16;k++)s.appendChild(el('rect',{x:50+k*16*u*0.96,y,width:16*u*0.96-2,height:26,rx:3,fill:'none',class:'st-muted'}));
+  s.appendChild(el('rect',{x:50,y,width:len*u*0.96,height:26,rx:4,class:'s-blue',opacity:.85}))});
+ $('#paTxt').textContent=pa==='c'?`Each sequence reserves room for the maximum length: ${alloc} slots for ${used} tokens, ${Math.round((1-used/alloc)*100)}% wasted (red).`:`Fixed pages of 16 tokens allocated on demand, like OS virtual memory: ${alloc} slots for ${used} tokens, ${Math.round((1-used/alloc)*100)}% wasted. Identical pages, such as a shared system prompt, can also be shared across requests.`}
+seg('[data-pa]',b=>{pa=b.dataset.pa;paged()});paged();
+cards('#kvCards',[{t:'Prefix caching',d:'Keep the KV for a shared 800-token system prompt resident and reuse it, so each request pays only for its new tokens. Use vLLM --enable-prefix-caching; llama.cpp reuses the previous turn automatically. Cuts time to first token.',c:'blue'},{t:'Offloading',d:'When the cache outgrows the GPU, spill older pages to CPU RAM or disk and stream them back. Slower, but no out-of-memory error. A safety valve, not a plan.',c:'mid'},{t:'Speculative decoding',d:'A small draft model proposes k tokens and the big model verifies them in one pass. Usually 2 to 3× faster on predictable text, and the output matches the big model\'s. This is what the -assistant drafts are for.',c:'ok'},{t:'Prefill / decode split',d:'Prefill is compute-bound and parallel; decode is memory-bound and sequential. At data-center scale they run on separate pools, with the KV cache handed between them.',c:'pencil'}]);
+
+/* pipeline */
+const pp=$('#ppSvg');const PP=['merge (bf16)','parity check','→ GGUF f16','quantize','evaluate','gate'];const ppG=PP.map((t,i)=>{const g=el('g',{class:'fade'});const x=6+i*109;g.appendChild(el('rect',{x,y:34,width:98,height:50,rx:9,class:i===5?'s-oksoft':'s-surface',style:`stroke:var(--${i===5?'ok':'blue'})`,'stroke-width':2}));g.appendChild(el('text',{x:x+49,y:64,'text-anchor':'middle','font-size':11,'font-weight':700,class:'s-ink'},t));if(i<5)g.appendChild(el('path',{d:`M${x+99} 59 h9`,class:'st-muted','stroke-width':2}));pp.appendChild(g);return g});
+$('#ppStep').insertAdjacentHTML('beforeend',stepHTML());
+stepper('#ppStep',['Reload the base in bfloat16, attach the adapter, merge_and_unload(), save with the adapter\'s tokenizer.','assert parity_ok: same next-token argmax, small max |Δlogit|.','convert_hf_to_gguf.py to a 16-bit GGUF. No compression yet.','llama-quantize to Q4_K_M, optionally with an in-domain imatrix.','Task accuracy for f16 and the quant on the held-out test set (plus perplexity).','If drop > max_acc_drop, raise QualityGateError ("try a higher bit width"). Otherwise write the eval report and ship. Compression is done when the file is smaller <i>and</i> proven good enough.'],i=>ppG.forEach((g,k)=>g.classList.toggle('off',k>i)));
+const PF=[['Merging into a 4-bit base','Double quantization is baked in before compression even starts. Always reload in bf16 or fp16 to merge.'],['Calibrating on the wrong data','Generic web text protects the wrong weights; your test set makes the numbers fiction. Keep train, calibration and test separate.'],['Shipping without measuring','Three cherry-picked prompts look fine until a user hits the broken case. Run the sweep and decide from the table.'],['Tokenizer or chat-template mismatch','Special tokens and template changes must travel with every artifact, merged and GGUF. Otherwise the model generates fluent but wrong text.']];
+$('#pf').innerHTML=PF.map((p,i)=>`<option value="${i}">${p[0]}</option>`).join('');function pf(){$('#pfInfo').innerHTML=`<p>${PF[+$('#pf').value][1]}</p>`}$('#pf').addEventListener('change',pf);pf();
+
+quiz('#qz','#qs',[
+ {q:'What does merging a LoRA do to model size?',o:['Shrinks it 4×','Nothing: same size, one artifact','Doubles it'],a:1,why:'It folds BA into W. Size only drops with quantization.'},
+ {q:'Why use per-group scales instead of one per tensor?',o:['Faster training','An outlier then only stretches its own group\'s range','Fewer files'],a:1,why:'One outlier no longer squeezes every other weight onto a few levels.'},
+ {q:'Shipping a private model to clinicians\' laptops. Format?',o:['bitsandbytes','GGUF','EXL2'],a:1,why:'GGUF runs on CPU, Apple Silicon and consumer GPUs through llama.cpp and Ollama.'},
+ {q:'Gemma 4 ships QAT checkpoints. Best move for a fine-tuner?',o:['Ship Google\'s QAT GGUF','Fine-tune on the unquantized QAT checkpoint, then quantize','Ignore QAT'],a:1,why:'You keep your fine-tune and inherit quantization-robust weights.'},
+ {q:'Which lever does not reduce KV-cache memory?',o:['GQA','KV-cache quantization','Merging the adapter'],a:2,why:'Merging affects weights and adapter overhead, not the per-token cache.'}
+]);
+
+})();
+</script>
+</body>
+</html>

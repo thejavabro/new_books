@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Vision Language Models</title>
+<meta name="description" content="Teach a transformer to look. Images become patch tokens, a projector maps them into the language model’s space, and LoRA adapts the whole thing to your pictures.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Fine-Tuning AI companion (adapted from the Accelerate companion). Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+.themebtn{cursor:pointer}
+.themebtn:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)} pre.code .n{color:var(--pencil)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+.missing{border:2px dashed var(--bad);background:var(--bad-soft);color:var(--bad);padding:12px 16px;border-radius:8px}
+.tokrow{display:flex;flex-wrap:wrap;gap:4px}
+.tok{font-family:var(--mono);font-size:.8rem;padding:2px 6px;border-radius:4px;border:1px solid var(--line);background:var(--paper)}
+.tok.m{opacity:.4;text-decoration:line-through}
+.tok.l{background:var(--ok-soft);border-color:var(--ok)}
+.tok.p{background:var(--blue-soft);border-color:var(--blue)}
+.tok.a{background:var(--pencil-soft);border-color:var(--pencil)}
+.out{font-family:var(--mono);font-size:.85rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:2.5em;white-space:pre-wrap;word-break:break-word}
+label.rng{min-width:0} label.rng select{width:100%}
+.stat .big{font-size:clamp(1.6rem,5vw,2.4rem);color:var(--ink)}
+.stat .big.blue{color:var(--blue)} .stat .big.pencil{color:var(--pencil)} .stat .big.okc{color:var(--ok)} .stat .big.badc{color:var(--bad)} .stat .big.midc{color:var(--mid)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:.85rem}
+.legend i{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+
+code,pre,kbd,.mf,.out{font-variant-ligatures:none;font-feature-settings:"calt" 0,"liga" 0}
+
+/* page */
+
+.strat{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+@media (max-width:640px){.strat{grid-template-columns:1fr}}
+.strat button{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:12px;text-align:left;display:flex;flex-direction:column;gap:4px}
+.strat button b{font-family:var(--display)}
+.strat button span{font-size:.85rem;color:var(--muted)}
+.strat button[aria-pressed="true"]{border-color:var(--blue);background:var(--blue-soft)}
+.cmp2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media (max-width:640px){.cmp2{grid-template-columns:1fr}}
+.cmp2>div{min-width:0;display:flex;flex-direction:column;gap:6px}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Fine-Tuning AI · visual companion</a><span class="tag">Part III · Chapter 11 of 15</span><button class="tag themebtn" type="button" data-theme-toggle>Theme: auto</button></div>
+  <h1>Vision Language Models</h1>
+  <p class="lede">Teach a transformer to look. Images become patch tokens, a projector maps them into the language model’s space, and LoRA adapts the whole thing to your pictures.</p>
+  <nav class="toc" aria-label="Sections"><a href="#why">Why vision</a><a href="#towers">Two towers</a><a href="#budget">Patches and budget</a><a href="#parts">Gemma 4 parts</a><a href="#strategy">What to train</a><a href="#data">Dataset</a><a href="#train">Training</a><a href="#eval">Evaluation</a><a href="#domains">Domains and fixes</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="why" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Why teach a model to see</h2></div>
+  <p>The text-only medical model can talk about pneumonia but, handed a chest X-ray, can only guess. Many of the most valuable AI tasks pair pictures with words: reading scans, spotting a bad solder joint, turning a screenshot of a broken layout into a bug report. <b>Vision language models</b> take an image and a question and answer with genuine visual grounding. Three things made them practical: CLIP-style encoders that understand images in terms of language, instruction tuning, and the PEFT stack you already know. Gemma 4 is natively multimodal: the <code>language_model</code> prefix you saw in adapter names sits beside a <code>vision_tower</code>.</p>
+</section>
+
+<section id="towers" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>The two-tower architecture</h2></div>
+  <p>Every modern VLM follows one blueprint: an <b>image encoder</b> turns pixels into vectors, a <b>projector</b> maps them into the language model's embedding space, and the <b>language model</b> reads them as if they were more words. Trace one request: a phone screenshot and "What buttons are visible on this screen?"</p>
+  <div class="sheet stepper" id="twStep">
+    <div class="svgbox"><svg id="twSvg" viewBox="0 0 660 200" role="img" aria-label="Screenshot to patches to soft tokens to projector to language model"></svg></div>
+  </div>
+  <div class="cardgrid" id="encCards"></div>
+</section>
+
+<section id="budget" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Patches, pooling and the token budget</h2></div>
+  <p>Gemma 4 keeps the image's aspect ratio, resizes to a pixel budget (sides divisible by 48 = 16-pixel patches × 3 pooling), encodes 16 × 16 patches, then pools 3 × 3 blocks into <b>soft tokens</b>. You choose the budget: 70, 140, 280, 560 or 1,120 tokens per image. Fine print or hairline fractures need more; counting ducks needs fewer. More tokens means more sequence and more activation memory.</p>
+  <div class="sheet">
+    <label class="rng"><span>Soft-token budget: <b id="tbV">280</b></span><input type="range" id="tb" min="0" max="4" value="2"></label>
+    <div class="two"><div class="svgbox fit"><svg id="grid" viewBox="0 0 240 420" role="img" aria-label="A phone screenshot divided into patches"></svg></div>
+    <div class="stack" style="gap:10px"><div class="stat"><span class="big blue" id="pt">0</span><span>16 × 16 patches</span></div><div class="stat"><span class="big pencil" id="st">0</span><span>soft tokens after 3 × 3 pooling</span></div><div class="stat"><span class="big okc" id="sq">0</span><span>sequence length with a 12-token question</span></div><p class="small" id="dims"></p></div></div>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>2D RoPE: where is this patch?</h3><span class="small">tap a cell</span></div>
+    <div class="two"><div class="svgbox fit"><svg id="rope2" viewBox="0 0 220 220" role="img" aria-label="Patch grid; selecting one shows its x and y rotations"></svg></div><div class="svgbox fit"><svg id="rope2b" viewBox="0 0 260 140" role="img" aria-label="Two rotation dials for x and y"></svg></div></div>
+    <p class="small">Each patch vector is split in half: one half is rotated by its column, the other by its row. Attention can then tell "above" from "to the right of", which the 1D positions of SigLIP had to infer.</p>
+  </div>
+</section>
+
+<section id="parts" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Inside Gemma 4 E4B</h2></div>
+  <p>Loaded as <code>Gemma4ForConditionalGeneration</code>, the model holds a vision tower (<code>Gemma4VisionModel</code>, a compact ViT), a projector (<code>Gemma4MultimodalEmbedder</code>, <code>embed_vision</code>) and the decoder (<code>Gemma4TextModel</code>), plus an audio tower in some variants. LLaVA first showed the recipe: a CLIP encoder, a Llama model and one linear layer, trained on GPT-4-written visual instructions. The encoder knows how to see, the LM how to talk; fine-tuning mostly teaches <i>what to say about what it sees</i>.</p>
+  <div class="sheet"><div class="bars" id="pBars"></div><p class="small">Bars on a log scale so the 2M-parameter projector is visible next to a 7.5B language model.</p></div>
+</section>
+
+<section id="strategy" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>What to fine-tune, what to freeze</h2></div>
+  <div class="sheet">
+    <div class="strat" id="strat" role="group" aria-label="Strategy"></div>
+    <div class="svgbox fit"><svg id="stSvg" viewBox="0 0 420 96" role="img" aria-label="Which components are trainable"></svg></div>
+    <div class="detail" id="stInfo" aria-live="polite"></div>
+  </div>
+  <p>How to choose: ask the base model to "describe this image in detail". If it names the main elements, strategy 2. If it misses the obvious (calling an X-ray "a black-and-white picture"), the encoder may need strategy 3. After a projector-level fine-tune, a model that misses visually obvious features needs encoder work; one that sees them but describes them badly needs language-side work.</p>
+  <div class="callout"><b class="h">No QLoRA here (for now)</b><span>bitsandbytes quantizes every linear layer, including the small vision encoder, which then stops encoding images properly. The model hallucinates confidently, training looks fine, and only inspection reveals it. So the book trains plain LoRA on a bf16 base: about 19 to 22 GB (LM ~15 GB, vision ~0.35 GB, audio ~0.6 GB, LoRA ~70 MB, activations and image features 2 to 5 GB). Plan for a 24 GB GPU or a Colab A100.</span></div>
+</section>
+
+<section id="data" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>A vision dataset: UI screenshots to JSON</h2></div>
+  <p>Each example is a conversation whose user turn contains an image plus text. The book's dataset: 250 synthetic phone screenshots (13 screen types, 6 palettes) drawn with Pillow, recording every element as it is drawn, then annotated by a teacher VLM (Gemma 4 31B) for layout, elements and accessibility issues, as JSON. 200 to 500 good, diverse examples are usually enough; quality beats quantity. Randomized question phrasings stop the student overfitting to one prompt.</p>
+  <div class="sheet">
+    <div class="row between"><span class="small">"Analyze this mobile app screenshot."</span><div class="seg" role="group" aria-label="Model"><button data-om="base" aria-pressed="false">Base model</button><button data-om="ft" aria-pressed="true">Fine-tuned</button></div></div>
+    <pre class="code" id="omOut" style="white-space:pre-wrap"></pre>
+    <p class="small" id="omTxt"></p>
+  </div>
+  <p>Why JSON? The base already understands screenshots well, so training on prose would barely change anything. Teaching a <b>format</b> it does not produce makes the value obvious and parseable by CI or a dashboard. In domains like radiology or defect inspection you gain on both fronts: seeing new things and saying them your way.</p>
+</section>
+
+<section id="train" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>The training run</h2></div>
+  <div class="cardgrid" id="trCards"></div>
+  <div class="sheet">
+    <div class="row between"><h3>Loss over 80 steps (book's run)</h3><span class="small">validation tracks training closely</span></div>
+    <div class="svgbox"><svg id="vlSvg" viewBox="0 0 660 200" role="img" aria-label="Training and validation loss at steps 20, 40, 60 and 80"></svg></div>
+  </div>
+</section>
+
+<section id="eval" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Is it actually looking?</h2></div>
+  <p>VLMs add a new failure: answering from the question alone. Run the <b>mismatch test</b> first: send two very different images with the same question and compare the answers. Near-identical answers mean it is not looking, and nothing else matters until that is fixed. Then use a vision-capable judge that also sees the image (accuracy, completeness, specificity, usefulness, 1 to 5), plus programmatic checks: does the JSON parse and have the expected fields? Keep generation temperature at 0.1 to 0.3, or greedy, for JSON.</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Model state"><button data-mm="look" aria-pressed="true">Healthy model</button><button data-mm="blind" aria-pressed="false">Blind model</button></div><button class="btn primary" id="mmRun">Run mismatch test</button></div>
+    <div class="cmp2"><div><span class="eyebrow">Login screen →</span><div class="out" id="mm1"></div></div><div><span class="eyebrow">Settings screen →</span><div class="out" id="mm2"></div></div></div>
+    <p id="mmTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="domains" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Domains and troubleshooting</h2></div>
+  <div class="cardgrid" id="domCards"></div>
+  <div class="sheet">
+    <label class="rng"><span>Symptom</span><select id="vs"></select></label>
+    <div class="detail" id="vsInfo" aria-live="polite"></div>
+  </div>
+  <p class="small">The recipe in short: get or build a dataset, define the output format, review 20 to 30 examples, split 90/10, train, run the mismatch test, judge, compare base vs. fine-tuned, and iterate on the <i>data</i> before the hyperparameters.</p>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">10</span><h2>Quick check</h2></div>
+  <div class="row between"><span class="small">Pick an answer for each.</span><span class="score" id="qs"></span></div>
+  <div class="quiz" id="qz"></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Fine-Tuning AI: Customizing Large Language Models</i> by Laurence Moroney (O’Reilly, 2026). Explanations, code snippets and drawings are original summaries, not text or figures copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch10-alignment-preference.html"><span>Previous · Chapter 10</span><b>Alignment and Preference Optimization</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch12-diffusion-models.html"><span>Next · Chapter 12</span><b>Diffusion Models</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('fta:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('fta:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle: auto -> light -> dark */
+(function(){const modes=['auto','light','dark'];let m=store.get('theme','auto');
+  function apply(){if(m==='auto')document.documentElement.removeAttribute('data-theme');else document.documentElement.setAttribute('data-theme',m);
+    $$('[data-theme-toggle]').forEach(b=>b.textContent='Theme: '+m)}
+  apply();$$('[data-theme-toggle]').forEach(b=>b.addEventListener('click',()=>{m=modes[(modes.indexOf(m)+1)%3];store.set('theme',m);apply()}));})();
+
+
+/* towers */
+const tw=$('#twSvg');const TWN=[['Screenshot','1170 × 2532',10,'muted'],['Resize + patch','336 × 720 → 945',140,'pencil'],['Vision tower','27 ViT layers, pool 3×3',270,'d5'],['Projector','105 × 2,560',400,'mid'],['Language model','105 image + 12 text',530,'blue']];
+const twG=TWN.map(([t,s,x,c],i)=>{const g=el('g',{class:'fade'});g.appendChild(el('rect',{x,y:60,width:120,height:70,rx:10,style:`fill:var(--surface);stroke:var(--${c})`,'stroke-width':2}));g.appendChild(el('text',{x:x+60,y:90,'text-anchor':'middle','font-size':13,'font-weight':700,style:`fill:var(--${c})`},t));g.appendChild(el('text',{x:x+60,y:110,'text-anchor':'middle','font-size':10,class:'s-muted'},s));tw.appendChild(g);if(i<4)tw.appendChild(el('path',{d:`M${x+122} 95 h6`,class:'st-muted','stroke-width':2}));return g});
+const twT=el('text',{x:330,y:175,'text-anchor':'middle','font-size':12,class:'s-ink'},'');tw.appendChild(twT);
+$('#twStep').insertAdjacentHTML('beforeend',stepHTML());
+stepper('#twStep',['An iPhone screenshot arrives at 1170 × 2532 pixels.','The processor resizes it to fit the pixel budget, keeping the aspect ratio (say 336 × 720), and cuts non-overlapping 16 × 16 patches: 21 × 45 = 945 patches.','The vision encoder runs 27 transformer layers with self-attention, 2D RoPE and FFNs, then a 3 × 3 pooling merges neighbors: a 7 × 15 grid of 105 soft tokens.','The projector, a tiny MLP of about 2M parameters, translates "image-ese" into "text-ese": 105 vectors at the LM\'s hidden size of 2,560, landing near words like "button" and "corner".','They replace the <|image|> token in the prompt: 105 image vectors plus 12 question tokens = 117. The decoder attends across all of them and writes the answer. Every step is differentiable, so the loss can flow back into the projector and, if unfrozen, the encoder.'],
+ i=>{twG.forEach((g,k)=>g.classList.toggle('off',k>i));twT.textContent=['pixels','945 patches','105 soft tokens','105 × 2,560 vectors','117-vector sequence'][i]});
+cards('#encCards',[{t:'CLIP (2021)',d:'Train on image-caption pairs so matching pairs land close in vector space and mismatches far apart. Images understood in terms of language.',c:'blue'},{t:'SigLIP',d:'Google\'s sigmoid-loss refinement of CLIP: similar results for up to four times less compute. Gemma\'s encoder up to Gemma 3.',c:'pencil'},{t:'Gemma 4 encoder',d:'A custom ViT of roughly 150M parameters in the same tradition: 2D RoPE for spatial layout, native aspect ratio, and a configurable soft-token budget. Some variants even drop the separate encoder.',c:'ok'}]);
+
+/* budget grid */
+const TB=[70,140,280,560,1120];
+function budget(){const tb=TB[+$('#tb').value];$('#tbV').textContent=tb.toLocaleString('en-US');const ar=720/336;const sw=Math.max(1,Math.round(Math.sqrt(tb/ar))),sh=Math.max(1,Math.round(tb/sw));const pw=sw*3,ph=sh*3;
+ $('#pt').textContent=(pw*ph).toLocaleString('en-US');$('#st').textContent=(sw*sh).toLocaleString('en-US');$('#sq').textContent=(sw*sh+12).toLocaleString('en-US');$('#dims').textContent=`Image resized to about ${pw*16} × ${ph*16} px · ${pw} × ${ph} patches · ${sw} × ${sh} soft tokens`;
+ const s=$('#grid');s.innerHTML='';const W=196,H=W*ar;const ox=22,oy=(420-H)/2;
+ s.appendChild(el('rect',{x:ox,y:oy,width:W,height:H,rx:10,class:'s-paper st-ink'}));
+ s.appendChild(el('rect',{x:ox,y:oy,width:W,height:H*.08,class:'s-bluesoft'}));s.appendChild(el('text',{x:ox+W/2,y:oy+H*.055,'text-anchor':'middle','font-size':11,'font-weight':700,class:'s-blue'},'Sign in'));
+ [.2,.3].forEach(f=>s.appendChild(el('rect',{x:ox+16,y:oy+H*f,width:W-32,height:H*.06,rx:4,class:'s-surface st-line'})));
+ s.appendChild(el('rect',{x:ox+30,y:oy+H*.42,width:W-60,height:H*.07,rx:6,class:'s-blue'}));s.appendChild(el('text',{x:ox+W/2,y:oy+H*.465,'text-anchor':'middle','font-size':10,class:'s-surface'},'Continue'));
+ s.appendChild(el('text',{x:ox+W/2,y:oy+H*.56,'text-anchor':'middle','font-size':8,class:'s-muted'},'Forgot password?'));
+ for(let i=1;i<pw;i++)s.appendChild(el('line',{x1:ox+i*W/pw,y1:oy,x2:ox+i*W/pw,y2:oy+H,class:'st-muted','stroke-width':i%3?0.3:1,opacity:i%3?.5:.9}));
+ for(let j=1;j<ph;j++)s.appendChild(el('line',{x1:ox,y1:oy+j*H/ph,x2:ox+W,y2:oy+j*H/ph,class:'st-muted','stroke-width':j%3?0.3:1,opacity:j%3?.5:.9}))}
+$('#tb').addEventListener('input',budget);budget();
+
+/* 2D rope */
+let rp=[5,2];
+function rope2(){const s=$('#rope2');s.innerHTML='';const n=8,c=25;for(let y=0;y<n;y++)for(let x=0;x<n;x++){const r=el('rect',{x:10+x*c,y:10+y*c,width:c-2,height:c-2,rx:3,class:x===rp[0]&&y===rp[1]?'s-pencil':'s-bluesoft',style:'cursor:pointer'});r.addEventListener('click',()=>{rp=[x,y];rope2()});s.appendChild(r)}
+ const t=$('#rope2b');t.innerHTML='';[[rp[0],'x (column)',70,'blue'],[rp[1],'y (row)',190,'pencil']].forEach(([v,l,cx,col])=>{t.appendChild(el('circle',{cx,cy:62,r:44,fill:'none',class:'st-line'}));const a=v*Math.PI/7;
+  t.appendChild(el('line',{x1:cx,y1:62,x2:cx+40*Math.cos(a),y2:62-40*Math.sin(a),class:'st-'+col,'stroke-width':4}));t.appendChild(el('text',{x:cx,y:126,'text-anchor':'middle','font-size':12,class:'s-ink'},`${l} = ${v}`))})}
+rope2();
+
+bars('#pBars',[{l:'Language model',v:Math.log10(7463e6),txt:'7,463M',c:'blue'},{l:'Vision tower',v:Math.log10(167.4e6),txt:'167.4M',c:'d5'},{l:'Projector',v:Math.log10(2e6),txt:'2.0M',c:'mid'},{l:'LoRA (rank 8, LM + projector)',v:Math.log10(17.47e6),txt:'17.5M',c:'ok'}],10);
+
+/* strategy */
+const STR=[['Strategy 1: LM only','LoRA on the language model; tower and projector frozen',[0,0,1],'Lightest on VRAM and time; zero risk to vision. Cannot change how visual information maps to language. Best when images are familiar and you only need different wording, tone or format.'],
+ ['Strategy 2: LM + projector','the book\'s choice',[0,1,1],'Adapts the vision-to-language translation for about 2M extra parameters and barely more VRAM. The projector is delicate, so aggressive tuning can scramble it (hence a low learning rate). Best for most real tasks, especially where your domain emphasizes features the default projection does not.'],
+ ['Strategy 3: everything','LoRA on the vision tower too',[1,1,1],'Can learn genuinely new visual features, at the highest VRAM and data cost, with risk of degrading general vision. For truly unfamiliar imagery: electron microscopy, ultrasound, thermal, seismic plots.']];
+$('#strat').innerHTML=STR.map((s,i)=>`<button data-st="${i}" aria-pressed="${i===1}"><b>${s[0]}</b><span>${s[1]}</span></button>`).join('');
+function strat(i){const s=$('#stSvg');s.innerHTML='';[['Vision tower',4,124],['Projector',150,110],['Language model',282,134]].forEach(([n,x,w],k)=>{const on=STR[i][2][k];s.appendChild(el('rect',{x,y:20,width:w,height:56,rx:10,class:on?'s-oksoft':'s-paper',style:`stroke:var(--${on?'ok':'line'})`,'stroke-width':2}));
+ s.appendChild(el('text',{x:x+w/2,y:46,'text-anchor':'middle','font-size':13,'font-weight':700,class:'s-ink'},n));s.appendChild(el('text',{x:x+w/2,y:64,'text-anchor':'middle','font-size':11,class:on?'s-ok':'s-muted'},on?'LoRA, trainable':'frozen ❄'))});
+ s.appendChild(el('path',{d:'M130 48 h18 M262 48 h18',class:'st-muted','stroke-width':2}));$('#stInfo').innerHTML=`<p>${STR[i][3]}</p>`}
+seg('[data-st]',b=>strat(+b.dataset.st));strat(1);
+
+/* output */
+const OM={base:['This screenshot shows a mobile <b>checkout page</b>. It guides the user through reviewing items and paying.\n\nHere is a detailed breakdown:\n* **Title:** "Checkout"\n* **Order items:** Yoga Mat, $88.00 ...','Helpful prose, but nothing a linter or CI job can consume.'],
+ ft:['{\n  "screen_type": "checkout",\n  "elements": [\n    {"type": "nav_header", "text": "Checkout", "position": "top"},\n    {"type": "list_item", "text": "Yoga Mat", "price": "$88.00"},\n    {"type": "button", "text": "Place order", "position": "bottom"}\n  ],\n  "accessibility_issues": [\n    {"issue": "low_contrast", "detail": "gray secondary text may miss WCAG AA 4.5:1"}\n  ]\n}','Same understanding, delivered in the schema it was trained on, ready for automation.']};
+function om(k){$('#omOut').innerHTML=OM[k][0];$('#omTxt').textContent=OM[k][1]}seg('[data-om]',b=>om(b.dataset.om));om('ft');
+
+cards('#trCards',[{t:'Load the processor',d:'AutoProcessor replaces AutoTokenizer: it tokenizes text, resizes and normalizes images, and builds the combined input. Always call it with keywords, processor(text=..., images=...); bare positional arguments go to the image processor.',c:'blue'},{t:'Target the projector',d:'LoRA on the LM\'s linear layers plus the projector\'s linear layers: 17.5M trainable (0.22%) at rank 8. Vision mappings benefit from rank 8 over 4.',c:'pencil'},{t:'remove_unused_columns=False',d:'Otherwise the trainer silently drops pixel values whose names it does not recognize: training runs, nothing visual is learned.',c:'bad'},{t:'Gentle and small',d:'Learning rate about 2e-5 with cosine decay to protect the projector; small per-device batches with more accumulation, since images inflate memory.',c:'ok'},{t:'Save the processor',d:'processor.save_pretrained() next to the adapter keeps preprocessing and multimodal special tokens consistent at inference.',c:'mid'}]);
+{const s=$('#vlSvg');const D=[[0,9.6,9.6],[20,8.77,8.20],[40,5.51,5.24],[60,4.63,4.52],[80,4.42,4.41]];const X=t=>50+t/80*580,Y=v=>180-(v-3.5)/6.5*165;
+ for(let v=4;v<=10;v+=2){s.appendChild(el('line',{x1:50,y1:Y(v),x2:630,y2:Y(v),class:'st-line'}));s.appendChild(el('text',{x:42,y:Y(v)+4,'text-anchor':'end','font-size':10,class:'s-muted'},v))}
+ [[1,'blue'],[2,'pencil']].forEach(([k,c])=>{const d=D.slice(1).map((p,i)=>(i?'L':'M')+X(p[0])+' '+Y(p[k])).join('');s.appendChild(el('path',{d,fill:'none',class:'st-'+c,'stroke-width':2.5}));D.slice(1).forEach(p=>s.appendChild(el('circle',{cx:X(p[0]),cy:Y(p[k]),r:4,class:'s-'+c})))});
+ D.slice(1).forEach(p=>s.appendChild(el('text',{x:X(p[0]),y:196,'text-anchor':'middle','font-size':10,class:'s-muted'},'step '+p[0])));
+ s.appendChild(el('text',{x:600,y:30,'text-anchor':'end','font-size':11,class:'s-blue'},'train'));s.appendChild(el('text',{x:600,y:46,'text-anchor':'end','font-size':11,class:'s-pencil'},'validation'))}
+
+/* mismatch */
+let mm='look';const MMA={look:['{"screen_type":"login","elements":[{"type":"input","text":"Email"},{"type":"input","text":"Password"},{"type":"button","text":"Continue"}]}','{"screen_type":"settings","elements":[{"type":"nav_header","text":"Settings"},{"type":"list_item","text":"Notifications","has_toggle":true}]}'],blind:['{"screen_type":"home","elements":[{"type":"nav_header","text":"Home"},{"type":"button","text":"Menu"}]}','{"screen_type":"home","elements":[{"type":"nav_header","text":"Home"},{"type":"button","text":"Menu"}]}']};
+function jac(a,b){const A=new Set(a.match(/\w+/g)),B=new Set(b.match(/\w+/g));let i=0;A.forEach(x=>{if(B.has(x))i++});return i/(A.size+B.size-i)}
+function mmRun(){const [a,b]=MMA[mm];$('#mm1').textContent=a;$('#mm2').textContent=b;const sim=jac(a,b);$('#mmTxt').innerHTML=`Similarity between answers: <b>${sim.toFixed(2)}</b>. ${sim>0.8?'<b class="badc">Fail.</b> Same answer for different images: it is ignoring the picture. Check remove_unused_columns, the processor, and probe the vision tower\'s raw outputs for two images.':'<b class="okc">Pass.</b> Different images, different answers. Repeat with several pairs to avoid flukes.'}`}
+seg('[data-mm]',b=>{mm=b.dataset.mm;mmRun()});$('#mmRun').addEventListener('click',mmRun);mmRun();
+
+cards('#domCards',[{t:'Medical imaging',d:'Image plus report pairs (MIMIC-CXR has 370,000+ chest X-rays with reports; also CheXpert, PadChest). Use the maximum token budget for subtle findings; consider strategy 3 for ultrasound or PET. Decision support only, never diagnosis without regulatory clearance.',c:'bad'},{t:'Manufacturing QA',d:'Defect photos with QA reports; even 50 to 100 well-annotated examples help. Describe defects the way engineers do ("insufficient wetting on pin 3 of U7"). Vary lighting and angles in training.',c:'pencil'},{t:'Documents',d:'Invoices, forms, receipts and contracts to JSON, handling layout, stamps and handwriting. Preprocess hard: 300 DPI or more, deskew, normalize contrast.',c:'blue'},{t:'Multi-image turns',d:'Several <|image|> entries in one turn: before/after comparisons, reference images, screen recordings. Each image costs another encoder pass, so lower the per-image budget.',c:'ok'}]);
+const VS=[['Training loss stays flat','Pixels are being dropped (remove_unused_columns=True) or you used AutoTokenizer instead of AutoProcessor.'],['CUDA out of memory','Start with the smallest soft-token budget and raise it; batch size 1 with more accumulation; gradient checkpointing; make sure the vision tower is not loaded in float32.'],['Generic answers that ignore the image','Usually data: every target starts the same way. Diversify images, annotations and question templates.'],['Ignoring images: data or encoder?','Probe the vision tower directly: if two very different images give nearly identical raw outputs, the encoder is broken (for example by 4-bit quantization).'],['Garbage after reloading the adapter','You did not save the processor with the adapter, so special multimodal tokens or preprocessing differ.'],['Judge scores low, outputs look fine','Check how you send the image to the judge: base64-encode it.']];
+$('#vs').innerHTML=VS.map((v,i)=>`<option value="${i}">${v[0]}</option>`).join('');function vs(){$('#vsInfo').innerHTML=`<p>${VS[+$('#vs').value][1]}</p>`}$('#vs').addEventListener('change',vs);vs();
+
+quiz('#qz','#qs',[
+ {q:'What does the projector do?',o:['Encodes pixels','Maps image vectors into the LM\'s embedding space','Generates text'],a:1,why:'It translates the encoder\'s output into vectors the language model can read like words.'},
+ {q:'A 336 × 720 image with 16-pixel patches gives...',o:['945 patches','105 patches','16 patches'],a:0,why:'21 × 45 = 945 patches, pooled 3 × 3 into 105 soft tokens.'},
+ {q:'Why does the book avoid QLoRA for this VLM?',o:['It is slower','4-bit quantization breaks the small vision encoder','LoRA is unsupported'],a:1,why:'The quantized encoder stops encoding images, and the model hallucinates confidently.'},
+ {q:'Which setting silently starves the model of images?',o:['remove_unused_columns=True','bf16=True','rank 8'],a:0,why:'The trainer drops pixel columns it does not recognize.'},
+ {q:'The first evaluation to run on a VLM fine-tune is...',o:['LLM-as-a-judge','The mismatch test','Perplexity'],a:1,why:'If it is not looking at the image, nothing else matters.'}
+]);
+
+})();
+</script>
+</body>
+</html>

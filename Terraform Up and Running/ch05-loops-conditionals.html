@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Loops, Ifs and Gotchas</title>
+<meta name="description" content="Terraform is declarative, yet it still lets you loop, branch and roll out new code without downtime. Each trick has sharp edges, and this page lets you poke at them safely.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Terraform: Up & Running companion. Blueprint grid paper; blue ink = infrastructure and code,
+   orange pencil = people and process, green = healthy / good outcome, red = broken / bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code and terminal */
+pre.code,pre.term{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;padding:14px 16px;border-radius:8px;overflow-x:auto;max-width:100%;white-space:pre}
+pre.code{background:var(--paper);border:1px solid var(--line);color:var(--ink)}
+pre.term{background:#0d1726;color:#d6e2f0;border:1px solid #23354d}
+pre.term .p{color:#7fb2f0} pre.term .g{color:#7fd497} pre.term .r{color:#f2877c} pre.term .y{color:#e8c060} pre.term .m{color:#8ea3bb}
+.code .k{color:var(--d5);font-weight:600} .code .s{color:var(--d2)} .code .c{color:var(--muted);font-style:italic} .code .n{color:var(--d3)} .code .hl{background:var(--mid-soft);border-radius:3px}
+code{font-family:var(--mono);font-size:.88em;background:var(--blue-soft);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+.themebtn{cursor:pointer}
+.missing{border:2px dashed var(--bad);background:var(--bad-soft);border-radius:10px;padding:14px 16px}
+
+/* page */
+
+.users{display:flex;gap:8px;flex-wrap:wrap}
+.users button{font-family:var(--mono);font-size:.85rem;border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:5px 10px}
+.users button.gone{text-decoration:line-through;opacity:.45}
+.pl{display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:.8rem}
+.pl div{padding:5px 8px;border-radius:5px;border:1px solid var(--line);background:var(--paper);overflow-wrap:anywhere}
+.pl .add{border-color:var(--ok);background:var(--ok-soft)} .pl .del{border-color:var(--bad);background:var(--bad-soft)} .pl .chg{border-color:var(--mid);background:var(--mid-soft)}
+.kv{display:grid;grid-template-columns:1fr 1fr auto;gap:6px;align-items:center}
+.kv input{font:inherit;font-family:var(--mono);font-size:.85rem;padding:5px 7px;border:1px solid var(--line);border-radius:6px;background:var(--paper);color:var(--ink);min-width:0}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Terraform: Up &amp; Running · visual companion</a><span class="tag">Chapter 5 of 10</span><button class="tag themebtn" id="themeBtn" type="button">Theme</button></div>
+  <h1>Tips and Tricks: Loops, If-Statements, Deployment and Gotchas</h1>
+  <p class="lede">Terraform is declarative, yet it still lets you loop, branch and roll out new code without downtime. Each trick has sharp edges, and this page lets you poke at them safely.</p>
+  <nav class="toc" aria-label="Sections"><a href="#loops">Loop toolbox</a><a href="#count">count vs for_each</a><a href="#dynamic">dynamic blocks</a><a href="#for">for expressions</a><a href="#cond">Conditionals</a><a href="#zdd">Zero downtime</a><a href="#gotchas">Gotchas</a><a href="#check">Quick check</a></nav>
+</header>
+
+<section id="loops" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Four ways to loop in a declarative language</h2></div>
+  <p>HCL has no <code>for</code> statement. Instead, it has four looping tools, each aimed at a different job.</p>
+  <div class="tbl"><table class="t">
+    <tr><th>Tool</th><th>Loops over</th><th>Use it to create</th></tr>
+    <tr><td><code>count</code></td><td>a number</td><td>multiple copies of a resource or module</td></tr>
+    <tr><td><code>for_each</code></td><td>a set or map</td><td>multiple resources, modules, or inline blocks (via <code>dynamic</code>)</td></tr>
+    <tr><td><code>for</code> expression</td><td>a list or map</td><td>a new list or map value</td></tr>
+    <tr><td><code>%{ for }</code> directive</td><td>a list or map</td><td>a string</td></tr>
+  </table></div>
+</section>
+
+<section id="count" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>count versus for_each: the deletion test</h2></div>
+  <p>Create three IAM users from a list. With <code>count</code>, Terraform identifies each copy by its <b>position</b>: <code>aws_iam_user.example[1]</code>. With <code>for_each</code>, by its <b>key</b>: <code>aws_iam_user.example["trinity"]</code>. Now remove a user from the middle of the list. Tap a name to remove or restore it.</p>
+  <div class="sheet">
+    <div class="users" id="users"></div>
+    <div class="two">
+      <div class="stack"><h3>count = length(var.user_names)</h3><div class="pl" id="plCount"></div></div>
+      <div class="stack"><h3>for_each = toset(var.user_names)</h3><div class="pl" id="plEach"></div></div>
+    </div>
+    <p class="small" id="cntTxt" aria-live="polite"></p>
+  </div>
+  <div class="two">
+<pre class="code"><span class="k">resource</span> <span class="s">"aws_iam_user"</span> <span class="s">"example"</span> {
+  count = length(var.user_names)
+  name  = var.user_names[<span class="hl">count.index</span>]
+}</pre>
+<pre class="code"><span class="k">resource</span> <span class="s">"aws_iam_user"</span> <span class="s">"example"</span> {
+  for_each = toset(var.user_names)
+  name     = <span class="hl">each.value</span>
+}</pre>
+  </div>
+  <p class="small">count has a second limit: it can't loop over inline blocks. for_each can, and the result is a map, which is easier to work with. Both work on modules too, since Terraform 0.13.</p>
+</section>
+
+<section id="dynamic" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Generating inline blocks with dynamic</h2></div>
+  <p>To let callers pass any tags they like into the ASG's inline <code>tag</code> blocks, wrap the block in <code>dynamic</code> and loop with <code>for_each</code>. Edit the map.</p>
+  <div class="sheet">
+    <div class="two">
+      <div class="stack"><div id="kvRows" class="stack"></div><div class="row"><button class="btn" id="kvAdd">Add tag</button></div></div>
+      <pre class="code" id="dynOut"></pre>
+    </div>
+  </div>
+  <div class="callout blue"><b class="h">Enforce tagging with default_tags</b><span>For tags every resource should carry (team, environment), the AWS provider's <code>default_tags</code> block applies them everywhere automatically, instead of relying on each module to remember.</span></div>
+</section>
+
+<section id="for" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>for expressions transform values</h2></div>
+  <p>Need a single value computed from a list, rather than many resources? A <b>for expression</b> works like a list comprehension in Python. Pick an expression.</p>
+  <div class="sheet">
+    <select id="forSel" aria-label="Expression"></select>
+    <pre class="code" id="forCode"></pre>
+    <pre class="term" id="forOut"></pre>
+  </div>
+  <p>Strings have their own looping tool, the <b>for string directive</b>: <code>%{ for name in var.names }${name}, %{ endfor }</code>. Add a tilde, as in <code>%{~ ... ~}</code>, to strip the whitespace and newlines around a directive.</p>
+</section>
+
+<section id="cond" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>If-statements without if</h2></div>
+  <p>The same tools double as conditionals. The classic trick: <code>count = var.enable ? 1 : 0</code>. One copy if true, none if false. The book uses it so the shared cluster module can enable auto scaling in production only. Toggle the inputs.</p>
+  <div class="sheet">
+    <div class="row"><label class="row"><input type="checkbox" id="enAs"> <code>enable_autoscaling</code></label><label class="row"><input type="checkbox" id="fullCw"> <code>give_neo_cloudwatch_full_access</code></label></div>
+    <div class="two"><pre class="code" id="condCode"></pre><div class="pl" id="condPlan"></div></div>
+  </div>
+  <div class="cardgrid" id="condCards"></div>
+</section>
+
+<section id="zdd" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Zero-downtime deployment</h2></div>
+  <p>You've baked a new image or changed the User Data. How do you roll it across the cluster without users seeing errors? The book's first technique uses <code>create_before_destroy</code>: name the ASG after the launch configuration, so a new configuration forces a whole new ASG, which comes up next to the old one. Step through it.</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="zSvg" viewBox="0 0 640 230" role="img" aria-label="Old and new auto scaling groups behind a load balancer during a deployment"></svg></div>
+    <div class="stepper" id="zStep"></div>
+  </div>
+<pre class="code"><span class="k">resource</span> <span class="s">"aws_autoscaling_group"</span> <span class="s">"example"</span> {
+  name             = <span class="s">"${var.cluster_name}-${<span class="hl">aws_launch_configuration.example.name</span>}"</span>
+  min_elb_capacity = var.min_size   <span class="c"># wait for this many healthy servers</span>
+  lifecycle { create_before_destroy = <span class="n">true</span> }
+}</pre>
+  <p>The simpler alternative now is <b>instance refresh</b>, built into AWS: add an <code>instance_refresh</code> block and the ASG replaces servers gradually, keeping a minimum percentage healthy. It doesn't need the naming trick and plays well with auto scaling policies.</p>
+</section>
+
+<section id="gotchas" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Gotchas</h2></div>
+  <div class="cardgrid" id="gotCards"></div>
+  <h3>Renaming without a moved block</h3>
+  <p>Refactoring changes identifiers, and to Terraform a new identifier is a new resource. Rename <code>aws_security_group.instance</code> to <code>.cluster_instance</code> and see what the plan proposes.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Approach"><button data-mv="0" aria-pressed="true">Just rename</button><button data-mv="1" aria-pressed="false">Rename + moved block</button></div>
+    <pre class="term" id="mvOut"></pre>
+  </div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="quiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Terraform: Up &amp; Running</i>, third edition, by Yevgeniy Brikman (O'Reilly, 2022). Explanations, diagrams and code snippets are original summaries and illustrations written for these pages, not copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch04-modules.html"><span>Previous · Chapter 4</span><b>Reusable Infrastructure with Modules</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch06-secrets.html"><span>Next · Chapter 6</span><b>Managing Secrets with Terraform</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('tfur:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('tfur:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle: cycles auto -> light -> dark; remembered per viewer */
+(function(){const r=document.documentElement;const t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+  const b=document.getElementById('themeBtn');if(!b)return;const lab=()=>{const v=r.getAttribute('data-theme');b.textContent='Theme: '+(v||'auto')};lab();
+  b.addEventListener('click',()=>{const v=r.getAttribute('data-theme');const n=v==null?'light':v==='light'?'dark':null;if(n)r.setAttribute('data-theme',n);else r.removeAttribute('data-theme');store.set('theme',n);lab()})})();
+/* terminal typer: lines [{t:'html',d:ms}] into a pre, returns a run() */
+function typer(pre,lines){let timer=null;return function run(){clearTimeout(timer);pre.innerHTML='';let i=0;(function nx(){if(i>=lines.length)return;const L=lines[i++];pre.innerHTML+=(pre.innerHTML?'\n':'')+L.t;timer=setTimeout(nx,L.d==null?260:L.d)})()}}
+
+
+/* count vs for_each */
+const U=['neo','trinity','morpheus'];const on=new Set(U);
+function users(){$('#users').innerHTML=U.map(u=>`<button data-u="${u}" class="${on.has(u)?'':'gone'}" aria-pressed="${on.has(u)}">${u}</button>`).join('');$$('#users button').forEach(b=>b.addEventListener('click',()=>{on.has(b.dataset.u)?on.delete(b.dataset.u):on.add(b.dataset.u);users()}));
+  const now=U.filter(u=>on.has(u));const pc=[];let n=0;
+  U.forEach((u,i)=>{const nu=now[i];if(nu===u)pc.push(`<div>[${i}] ${u}  (no change)</div>`);else if(nu){pc.push(`<div class="chg">~ [${i}] name: "${u}" -&gt; "${nu}"</div>`);n++}else{pc.push(`<div class="del">- [${i}] ${u}  destroy</div>`);n++}});
+  $('#plCount').innerHTML=pc.join('');
+  $('#plEach').innerHTML=U.map(u=>on.has(u)?`<div>["${u}"]  (no change)</div>`:`<div class="del">- ["${u}"]  destroy</div>`).join('');
+  const removed=U.filter(u=>!on.has(u));
+  $('#cntTxt').textContent=!removed.length?'All three users exist. Try removing trinity.':(n>removed.length?`With count, removing ${removed.join(', ')} shifts every later item down one index, so Terraform renames (or replaces) users you never touched. With for_each, only what you removed is destroyed.`:'Removing from the end of the list is harmless either way. The trouble starts in the middle.')}
+users();
+
+/* dynamic */
+let kv=[['Owner','team-foo'],['ManagedBy','terraform']];
+function kvDraw(){$('#kvRows').innerHTML=kv.map((r,i)=>`<div class="kv"><input aria-label="key" data-i="${i}" data-k="0" value="${String(r[0]).replace(/"/g,'&quot;')}"><input aria-label="value" data-i="${i}" data-k="1" value="${String(r[1]).replace(/"/g,'&quot;')}"><button class="btn" data-del="${i}" aria-label="remove">×</button></div>`).join('');
+  $$('#kvRows input').forEach(x=>x.addEventListener('input',()=>{kv[+x.dataset.i][+x.dataset.k]=x.value;dynOut()}));$$('#kvRows [data-del]').forEach(b=>b.addEventListener('click',()=>{kv.splice(+b.dataset.del,1);kvDraw()}));dynOut()}
+function dynOut(){const e=t=>String(t).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  $('#dynOut').innerHTML='<span class="k">dynamic</span> <span class="s">"tag"</span> {\n  for_each = var.custom_tags\n  content {\n    key   = tag.key\n    value = tag.value\n    propagate_at_launch = true\n  }\n}\n\n<span class="c"># expands to:</span>\n'+(kv.length?kv.map(r=>`tag { key = <span class="s">"${e(r[0])}"</span>, value = <span class="s">"${e(r[1])}"</span> ... }`).join('\n'):'<span class="c">(no tag blocks)</span>')}
+$('#kvAdd').addEventListener('click',()=>{kv.push(['Env','stage']);kvDraw()});kvDraw();
+
+/* for expressions */
+const names=['neo','trinity','morpheus'];const heroes={neo:'hero',trinity:'love interest',morpheus:'mentor'};
+const FX=[
+ ['Upper-case every name','[for name in var.names : upper(name)]',()=>JSON.stringify(names.map(n=>n.toUpperCase()))],
+ ['Filter: short names only','[for name in var.names : upper(name) if length(name) &lt; 5]',()=>JSON.stringify(names.filter(n=>n.length<5).map(n=>n.toUpperCase()))],
+ ['Map to a list of strings','[for name, role in var.hero_thousand_faces : "${name} is the ${role}"]',()=>JSON.stringify(Object.entries(heroes).map(([k,v])=>`${k} is the ${v}`),null,1)],
+ ['Build a new map (braces)','{for name, role in var.hero_thousand_faces : upper(name) =&gt; upper(role)}',()=>JSON.stringify(Object.fromEntries(Object.entries(heroes).map(([k,v])=>[k.toUpperCase(),v.toUpperCase()])),null,1)],
+ ['String directive with ~','"%{ for i, n in var.names }${n}%{ if i &lt; length(var.names) - 1 }, %{ endif }%{ endfor }"',()=>'"'+names.join(', ')+'"']];
+$('#forSel').innerHTML=FX.map((f,i)=>`<option value="${i}">${f[0]}</option>`).join('');
+function fx(){const f=FX[+$('#forSel').value];$('#forCode').innerHTML='<span class="c"># var.names = ["neo", "trinity", "morpheus"]</span>\noutput <span class="s">"result"</span> {\n  value = '+f[1]+'\n}';$('#forOut').innerHTML='<span class="p">$ terraform apply</span>\nresult = <span class="g">'+f[2]().replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))+'</span>'}
+$('#forSel').addEventListener('change',fx);fx();
+
+/* conditionals */
+function cond(){const a=$('#enAs').checked,c=$('#fullCw').checked;
+  $('#condCode').innerHTML=`<span class="k">resource</span> <span class="s">"aws_autoscaling_schedule"</span> <span class="s">"scale_out"</span> {\n  count = var.enable_autoscaling ? 1 : 0  <span class="c"># ${a?'= 1':'= 0'}</span>\n}\n\n<span class="c"># if-else: exactly one of these gets count = 1</span>\n<span class="k">resource</span> <span class="s">"aws_iam_user_policy_attachment"</span> <span class="s">"full"</span> {\n  count = var.give_neo_cloudwatch_full_access ? 1 : 0\n}\n<span class="k">resource</span> <span class="s">"aws_iam_user_policy_attachment"</span> <span class="s">"read"</span> {\n  count = var.give_neo_cloudwatch_full_access ? 0 : 1\n}\n\n<span class="k">output</span> <span class="s">"neo_cloudwatch_policy_arn"</span> {\n  value = one(concat(\n    aws_iam_user_policy_attachment.full[*].policy_arn,\n    aws_iam_user_policy_attachment.read[*].policy_arn))\n}`;
+  $('#condPlan').innerHTML=(a?'<div class="add">+ aws_autoscaling_schedule.scale_out[0]</div><div class="add">+ aws_autoscaling_schedule.scale_in[0]</div>':'<div>scale_out, scale_in: 0 copies (skipped)</div>')+(c?'<div class="add">+ policy_attachment.full[0]  (CloudWatchFullAccess)</div><div>policy_attachment.read: 0 copies</div>':'<div>policy_attachment.full: 0 copies</div><div class="add">+ policy_attachment.read[0]  (CloudWatchReadOnly)</div>')+`<div>neo_cloudwatch_policy_arn = ...${c?'FullAccess':'ReadOnly'}</div>`}
+$('#enAs').addEventListener('change',cond);$('#fullCw').addEventListener('change',cond);cond();
+cards('#condCards',[
+ {t:'Ternary for values',d:'For a single argument, the plain ternary is enough: instance_type = var.env == "prod" ? "m4.large" : "t2.micro".'},
+ {t:'for_each conditionals',d:'Pass an empty collection to for_each and you get zero copies. A for expression with an if clause filters what goes in.'},
+ {t:'%{ if } string directive',d:'Inside strings, %{ if cond }...%{ else }...%{ endif } picks text, for example to write a different User Data greeting per environment.'},
+ {t:'one() and [*]',d:'The splat [*] collects an attribute from every copy; one() returns the single element, or null when the list is empty.'}]);
+
+/* zero downtime */
+(function(){const s=$('#zSvg');const lb=el('g');lb.appendChild(el('rect',{x:20,y:85,width:110,height:60,rx:10,fill:'var(--surface)',stroke:'var(--blue)','stroke-width':1.6}));lb.appendChild(el('text',{x:75,y:120,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--blue)'},'ALB'));s.appendChild(lb);
+  const grp=(y,label)=>{const g=el('g');g.appendChild(el('rect',{x:200,y,width:420,height:90,rx:10,fill:'none',stroke:'var(--muted)','stroke-dasharray':'5 4'}));const t=el('text',{x:212,y:y+18,'font-size':12,fill:'var(--muted)','class':'t-mono'},label);g.appendChild(t);const sv=[0,1,2].map(i=>{const r=el('rect',{x:230+i*130,y:y+30,width:110,height:46,rx:6});g.appendChild(r);const tx=el('text',{x:285+i*130,y:y+58,'text-anchor':'middle','font-size':12,'font-weight':600});g.appendChild(tx);return[r,tx]});s.appendChild(g);return{g,sv,t}};
+  const A=grp(10,'ASG webservers-lc-v1'),B=grp(125,'ASG webservers-lc-v2');
+  const la=el('line',{x1:130,y1:110,x2:200,y2:55,stroke:'var(--muted)','stroke-width':2}),lbb=el('line',{x1:130,y1:120,x2:200,y2:170,stroke:'var(--muted)','stroke-width':2});s.appendChild(la);s.appendChild(lbb);
+  const paint=(G,st,ver)=>G.sv.forEach(([r,t])=>{const c=st==='ok'?'ok':st==='boot'?'mid':'line';r.setAttribute('fill',st==='off'?'none':`var(--${c==='line'?'paper':c+'-soft'})`);r.setAttribute('stroke',st==='off'?'var(--line)':`var(--${c==='line'?'line':c})`);t.setAttribute('fill',`var(--${c==='line'?'muted':c})`);t.textContent=st==='off'?'':st==='boot'?'booting '+ver:ver+' healthy'});
+  $('#zStep').innerHTML=stepHTML();
+  stepper('#zStep',['Three servers run v1, registered with the load balancer.','You change the launch configuration. Its name changes, so the ASG name changes, which forces a replacement. Because of create_before_destroy, Terraform creates the new ASG first.','The new servers boot. Terraform waits until min_elb_capacity of them pass the ALB health check. Both versions serve traffic for a moment.','Only then does Terraform destroy the old ASG. Users saw no errors. If the new servers never got healthy, apply would fail and the old ASG would keep serving.'],i=>{
+    paint(A,i===3?'off':'ok','v1');paint(B,i===0?'off':i===1?'boot':'ok','v2');B.g.style.opacity=i===0?.25:1;A.g.style.opacity=i===3?.25:1;
+    la.classList.toggle('flow',i<3);la.style.opacity=i===3?.15:1;lbb.classList.toggle('flow',i>=2);lbb.style.opacity=i>=2?1:.15})})();
+
+cards('#gotCards',[
+ {t:'count and for_each need known values',d:'They are evaluated during plan, so they can\'t depend on resource outputs that only exist after apply, such as a random_integer result. Hardcoded values, variables and data sources are fine.',c:'bad'},
+ {t:'Zero-downtime has limits',d:'With the create_before_destroy trick, auto scaling policies are ignored: every deploy resets the new ASG to min_size. Instance refresh avoids that.',c:'mid'},
+ {t:'Valid plans can fail',d:'Terraform only knows what is in its state. A plan can look fine and apply still fails because someone created an IAM user with the same name by hand. Fix with terraform import, and stop making out-of-band changes.',c:'d3'},
+ {t:'Refactoring can be tricky',d:'Renaming a variable, a resource identifier or a module call can mean destroy-and-recreate. Use moved blocks or terraform state mv, and always read the plan.',c:'d4'},
+ {t:'Some parameters are immutable',d:'Many arguments can\'t change in place, so any change replaces the resource. create_before_destroy lets the replacement exist before the original goes away.',c:'d5'}]);
+
+function mv(k){$('#mvOut').innerHTML=k?'<span class="p">$ terraform plan</span>\n<span class="m">moved {\n  from = aws_security_group.instance\n  to   = aws_security_group.cluster_instance\n}</span>\n\n  # aws_security_group.instance has moved to\n  # aws_security_group.cluster_instance\n<span class="g">Plan: 0 to add, 0 to change, 0 to destroy.</span>':'<span class="p">$ terraform plan</span>\n<span class="r">  - aws_security_group.instance will be destroyed</span>\n<span class="g">  + aws_security_group.cluster_instance will be created</span>\nPlan: 1 to add, 0 to change, <span class="r">1 to destroy</span>.\n<span class="m"># servers lose their firewall rules mid-apply: downtime</span>'}
+seg('[data-mv]',b=>mv(+b.dataset.mv));mv(0);
+
+quiz('#quiz','#qScore',[
+ {q:'You remove the middle item from a list used with count. What happens to later items?',o:['Nothing','They shift index and change'],a:1,why:'count identifies copies by position, so everything after the removed item moves.'},
+ {q:'Which loop can generate inline blocks?',o:['count','for_each with dynamic'],a:1,why:'dynamic blocks combine with for_each; count can\'t loop over inline blocks.'},
+ {q:'How do you write "create this resource only in prod"?',o:['if var.prod {}','count = var.prod ? 1 : 0'],a:1,why:'HCL has no if statement, but count of 0 or 1 does the job.'},
+ {q:'Can count depend on the output of a random_integer resource?',o:['Yes','No'],a:1,why:'count must be known at plan time; resource outputs aren\'t.'},
+ {q:'What avoids the destroy-and-create when renaming a resource?',o:['A moved block','A new tag'],a:0,why:'moved (or terraform state mv) tells Terraform it\'s the same object under a new address.'}]);
+
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cluster Management</title>
+<meta name="description" content="Someone has to decide which broker leads which partition and who is alive. Kafka moved that job from an external ZooKeeper ensemble into its own Raft-based controller quorum.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Apache Kafka in Action companion (adapted from the Accelerate companion). Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* theme toggle */
+.themebtn{position:absolute;top:6px;right:max(10px,env(safe-area-inset-right,0px));z-index:5;font-family:var(--mono);font-size:.72rem;padding:5px 10px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--muted)}
+.themebtn:hover{border-color:var(--blue);color:var(--blue)}
+/* code */
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+pre.code code{border:0;padding:0;background:none}
+.missing{border-left:4px solid var(--bad);background:var(--bad-soft);padding:12px 16px;border-radius:0 8px 8px 0}
+
+/* page */
+
+.mlog{display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:.76rem;max-height:180px;overflow:auto}
+.mlog div{padding:4px 8px;border-left:3px solid var(--pencil);background:var(--paper);border-radius:0 4px 4px 0;overflow-wrap:anywhere}
+.mig{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px}
+@media (max-width:640px){.mig{grid-template-columns:repeat(3,minmax(0,1fr))}}
+.mig div{border:1px solid var(--line);border-radius:8px;padding:8px;font-size:.8rem;text-align:center;background:var(--paper)}
+.mig div.on{background:var(--blue-soft);border-color:var(--blue);font-weight:600}
+.mig div.done{background:var(--ok-soft);border-color:var(--ok)}
+.mig div.ponr{border-color:var(--bad);border-width:2px}
+.chk{display:flex;flex-wrap:wrap;gap:12px}
+.chk label{display:flex;gap:6px;align-items:center;font-size:.92rem;font-family:var(--mono)}
+.chk input{accent-color:var(--blue);width:17px;height:17px}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Apache Kafka in Action · visual companion</a><span class="tag">Part III · Chapter 7 of 18</span></div>
+  <h1>Cluster Management</h1>
+  <p class="lede">Someone has to decide which broker leads which partition and who is alive. Kafka moved that job from an external ZooKeeper ensemble into its own Raft-based controller quorum.</p>
+  <nav class="toc" aria-label="Sections"><a href="#why">Why coordinate</a><a href="#kraft">KRaft</a><a href="#zk">ZooKeeper</a><a href="#migrate">Migration</a><a href="#connect">Connecting</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="why" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Somebody has to be in charge</h2></div>
+  <p>With one broker there is nothing to agree on: it leads every partition and coordinates every group. Add brokers and questions appear. Who assigns partitions, notices dead brokers and removes them, stores the cluster configuration? Kafka gives that job to one <b>controller</b>. But how is it chosen, and what if it dies or slows down? That is the classic problem of <b>consensus</b> in distributed systems, and Kafka has solved it two ways: with Apache ZooKeeper, and now with its own KRaft.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Architecture"><button data-a="kraft" aria-pressed="true">KRaft (Kafka 3.3+)</button><button data-a="zk" aria-pressed="false">ZooKeeper (legacy)</button></div>
+    <div class="svgbox"><svg id="archSvg" viewBox="0 0 680 270" role="img" aria-label="Cluster layout with coordination nodes and brokers"></svg></div>
+    <p id="archTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="kraft" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>KRaft: a Raft quorum and a metadata log</h2></div>
+  <p>KRaft is based on the Raft consensus algorithm (Ongaro and Ousterhout, 2014). Kafka processes take a role: <code>controller</code>, <code>broker</code>, or both. Controllers form the quorum and elect one <b>active controller</b>; the rest are hot <b>standby controllers</b>. All metadata goes into an internal topic, <code>__cluster_metadata</code>, which every broker replicates. Kafka's coordination is now a Kafka log. Click controllers to stop or restart them, and make changes.</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Controllers"><button data-n="1" aria-pressed="false">1 controller</button><button data-n="3" aria-pressed="true">3</button><button data-n="4" aria-pressed="false">4</button><button data-n="5" aria-pressed="false">5</button></div><div class="row"><button class="btn" id="kChange">Create a topic</button><button class="btn" id="kFail">Broker 2 fails</button></div></div>
+    <div class="svgbox"><svg id="kSvg" viewBox="0 0 680 250" role="img" aria-label="Controller quorum above three brokers"></svg></div>
+    <p id="kTxt" aria-live="polite"></p>
+    <div><span class="eyebrow">__cluster_metadata (newest last)</span><div class="mlog" id="kLog"></div></div>
+  </div>
+  <div class="callout ok"><b class="h">Recommended production layout</b><span>Three or five dedicated controllers plus at least three brokers. Four controllers are no better than three. Combined controller-broker processes save machines outside production; on a laptop a single process can do both.</span></div>
+</section>
+
+<section id="zk" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>How ZooKeeper did it, and why it had to go</h2></div>
+  <p>ZooKeeper looks like a small hierarchical key-value store of <b>ZNodes</b>, with one superpower: all its nodes always agree (via the ZAB protocol, a Paxos relative). If several clients write the same ZNode at once, exactly one wins and everyone sees the same winner. Kafka used that to elect its controller:</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="zSvg" viewBox="0 0 680 220" role="img" aria-label="Brokers racing to create the controller ZNode"></svg></div>
+    <div class="stepper" id="zStep"></div>
+  </div>
+  <div class="cardgrid" id="zCards"></div>
+</section>
+
+<section id="migrate" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Migrating from ZooKeeper to KRaft</h2></div>
+  <p>ZooKeeper was deprecated in Kafka 3.5 and is removed in 4.0, so the authors urge migrating soon. It works without downtime, but only to <i>dedicated</i> KRaft controllers. Walk through the phases; note where you can still turn back.</p>
+  <div class="sheet">
+    <div class="mig" id="migBar"></div>
+    <div class="stepper" id="mStep"></div>
+    <pre class="code"><code id="mCfg"></code></pre>
+  </div>
+</section>
+
+<section id="connect" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>How a client finds the right broker</h2></div>
+  <p>A database has one address. Kafka has many brokers, and each partition's leader may be on a different one. Clients start from <b>bootstrap servers</b>, ask any broker for <b>metadata</b> (every broker caches it), then talk directly to the leaders. Since Kafka 0.10 nobody asks ZooKeeper for this any more.</p>
+  <div class="sheet">
+    <div class="row"><span class="small">Listed in <code>bootstrap.servers</code>:</span><div class="chk" id="bsList"></div></div>
+    <div class="row"><span class="small">Brokers currently down:</span><div class="chk" id="bsDown"></div></div>
+    <div class="svgbox"><svg id="cSvg" viewBox="0 0 680 230" role="img" aria-label="Client sending a metadata request then connecting to partition leaders"></svg></div>
+    <p id="cTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout blue"><b class="h">Bootstrap with a name, connect by address</b><span>Since any broker can answer the first request, list several brokers or use one DNS name, load balancer or virtual IP for bootstrapping. Each broker still needs its own reachable address, because after the metadata response the client connects to the leaders directly. When a leader moves, the client gets an error, refreshes metadata and reconnects after a short pause.</span></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Recap and quick check</h2></div>
+  <div class="recap">
+    <div><b class="pencil">Controller</b><span>One process manages partitions, leaders and broker membership.</span></div>
+    <div><b class="blue">KRaft</b><span>Raft quorum of controllers; metadata in __cluster_metadata; standby takes over instantly.</span></div>
+    <div><b>ZooKeeper</b><span>Separate system, ZNode race for controller, slow polling, stale caches. Gone in Kafka 4.0.</span></div>
+    <div><b class="okc">Migration</b><span>No downtime; reversible until controllers leave migration mode.</span></div>
+    <div><b>Bootstrap</b><span>Several brokers or one DNS name; metadata request; then direct connections to leaders.</span></div>
+  </div>
+  <div class="sheet"><div class="row between"><h3>Quick check</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Apache Kafka in Action: From basics to production</i> by Anatoly Zelenin and Alexander Kropp (Manning, 2025). Explanations, examples, code snippets and drawings are original summaries; the figures are redrawn ideas, not copies.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch06-performance.html"><span>Previous · Chapter 6</span><b>Performance</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch08-producing-persisting.html"><span>Next · Chapter 8</span><b>Producing and Persisting Messages</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){if(!group)return;group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('kia:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('kia:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* light/dark toggle: follows the system until the reader picks one */
+(function(){const r=document.documentElement;const t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+  const b=document.createElement('button');b.className='themebtn';b.type='button';
+  function lab(){const d=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');b.textContent=d==='dark'?'Light theme':'Dark theme';b.setAttribute('aria-label','Switch to '+(d==='dark'?'light':'dark')+' theme')}
+  b.addEventListener('click',()=>{const d=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');const n=d==='dark'?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n);lab()});
+  lab();document.body.appendChild(b)})();
+
+
+/* architecture toggle */
+function drawArch(m){const s=$('#archSvg');s.innerHTML='';const node=(x,y,w,t,c,fill)=>{s.appendChild(el('rect',{x,y,width:w,height:40,rx:8,fill:fill||'var(--surface)',stroke:`var(--${c})`,'stroke-width':1.8}));s.appendChild(el('text',{x:x+w/2,y:y+25,'text-anchor':'middle','font-size':12,'font-weight':600,fill:'var(--ink)'},t))};
+  if(m==='kraft'){s.appendChild(el('rect',{x:150,y:10,width:380,height:80,rx:12,fill:'var(--pencil-soft)',stroke:'var(--pencil)','stroke-dasharray':'5 4'}));s.appendChild(el('text',{x:340,y:28,'text-anchor':'middle','font-size':11,fill:'var(--pencil)',class:'t-mono'},'KRAFT CONTROLLER QUORUM'));
+    node(170,40,105,'controller ★','pencil');node(287,40,105,'standby','pencil');node(404,40,105,'standby','pencil');
+    [0,1,2,3].forEach(i=>{node(60+i*150,190,120,'broker '+(i+1),'d1');s.appendChild(el('line',{x1:222,y1:80,x2:120+i*150,y2:190,stroke:'var(--pencil)','stroke-width':1.4,class:'flow'}))});
+    s.appendChild(el('text',{x:340,y:150,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},'every process replicates __cluster_metadata'));
+    $('#archTxt').textContent='One system to run. The active controller is always a member of the quorum; a standby already has the full metadata log and continues immediately if it fails. Brokers just do data work.'}
+  else{s.appendChild(el('rect',{x:150,y:10,width:380,height:80,rx:12,fill:'var(--mid-soft)',stroke:'var(--mid)','stroke-dasharray':'5 4'}));s.appendChild(el('text',{x:340,y:28,'text-anchor':'middle','font-size':11,fill:'var(--mid)',class:'t-mono'},'ZOOKEEPER ENSEMBLE (separate system)'));
+    node(170,40,105,'zk node','mid');node(287,40,105,'zk node','mid');node(404,40,105,'zk node','mid');
+    [0,1,2,3].forEach(i=>{node(60+i*150,190,120,i===1?'broker 2 = controller':'broker '+(i+1),i===1?'pencil':'d1',i===1?'var(--pencil-soft)':'');s.appendChild(el('line',{x1:340,y1:80,x2:120+i*150,y2:190,stroke:'var(--mid)','stroke-width':1.2,opacity:.7}))});
+    s.appendChild(el('text',{x:340,y:150,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},'metadata, ISR changes, ACLs stored in ZNodes'));
+    $('#archTxt').textContent='Two distributed systems to run and secure (ACLs live in ZooKeeper too). The controller is just one of the brokers; when it failed, large clusters could struggle for minutes while a new one loaded all the metadata.'}}
+seg('[data-a]',b=>drawArch(b.dataset.a));drawArch('kraft');
+
+/* KRaft sim */
+let N=3,dead=new Set(),active=0,mlog=[],topics=0,b2=true;
+function addLog(t){mlog.push(t);$('#kLog').innerHTML=mlog.map(x=>`<div>${x}</div>`).join('');$('#kLog').scrollTop=1e6}
+function quorum(){return N-dead.size>=Math.floor(N/2)+1}
+function drawK(msg){const s=$('#kSvg');s.innerHTML='';const w=Math.min(110,560/N);
+  for(let i=0;i<N;i++){const x=340-(N*(w+12))/2+i*(w+12);const d=dead.has(i),a=i===active&&!d&&quorum();const g=el('g',{class:'comp',tabindex:0,role:'button',style:'cursor:pointer'});
+    g.appendChild(el('rect',{x,y:20,width:w,height:48,rx:8,fill:d?'var(--bad-soft)':a?'var(--pencil)':'var(--pencil-soft)',stroke:d?'var(--bad)':'var(--pencil)','stroke-width':2,'stroke-dasharray':d?'5 4':''}));
+    g.appendChild(el('text',{x:x+w/2,y:40,'text-anchor':'middle','font-size':11.5,'font-weight':700,fill:a?'var(--surface)':'var(--ink)'},'ctrl '+(i+1)));g.appendChild(el('text',{x:x+w/2,y:57,'text-anchor':'middle','font-size':10,fill:a?'var(--surface)':d?'var(--bad)':'var(--muted)'},d?'stopped':a?'active':'standby'));
+    g.addEventListener('click',()=>toggle(i));g.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();toggle(i)}});s.appendChild(g)}
+  [0,1,2].forEach(i=>{const x=110+i*170,dn=i===1&&!b2;s.appendChild(el('rect',{x,y:170,width:120,height:44,rx:8,fill:dn?'var(--bad-soft)':'var(--surface)',stroke:dn?'var(--bad)':'var(--d1)','stroke-width':1.8}));s.appendChild(el('text',{x:x+60,y:197,'text-anchor':'middle','font-size':12,fill:'var(--ink)'},'broker '+(i+1)+(dn?' (down)':'')));
+    if(quorum()&&!dn)s.appendChild(el('line',{x1:340,y1:68,x2:x+60,y2:170,stroke:'var(--pencil)','stroke-width':1.3,class:'flow'}))});
+  const maj=Math.floor(N/2)+1;$('#kTxt').innerHTML=(msg?msg+' ':'')+(quorum()?`<b class="okc">Quorum OK</b>: ${N-dead.size} of ${N} controllers alive, majority is ${maj}. Up to ${N-maj} may fail.`:`<b class="badc">No quorum</b>: ${N-dead.size} of ${N} alive, majority needs ${maj}. No new active controller can be elected, so metadata changes stop. Data keeps flowing on existing leaders, but failures can no longer be handled.`)}
+function toggle(i){let msg='';if(dead.has(i)){dead.delete(i);msg=`Controller ${i+1} is back as a standby and catches up from the metadata log.`}else{dead.add(i);if(i===active){const nx=[...Array(N).keys()].find(k=>!dead.has(k));if(nx!==undefined&&quorum()){active=nx;msg=`Active controller stopped. The quorum elected controller ${nx+1}, which already had the whole log and took over immediately.`;addLog(`epoch++ · controller ${nx+1} is active`)}else msg='Active controller stopped.'}else msg=`Standby ${i+1} stopped.`}
+  if(quorum()&&dead.has(active)){const nx=[...Array(N).keys()].find(k=>!dead.has(k));active=nx;addLog(`epoch++ · controller ${nx+1} is active`)}drawK(msg)}
+seg('[data-n]',b=>{N=+b.dataset.n;dead.clear();active=0;drawK(N%2===0?'Even count: one more machine, no extra tolerance.':N===1?'Fine on a laptop, no failover.':'')});
+$('#kChange').addEventListener('click',()=>{if(!quorum())return drawK('Rejected: without a quorum nothing can be committed to the metadata log.');topics++;addLog(`TopicRecord shop.orders.v${topics} · 3 partitions`);addLog(`PartitionRecord p0 leader=1 isr=[1,2,3] …`);drawK('The active controller appended records; brokers replicate them and act.')});
+$('#kFail').addEventListener('click',()=>{if(!quorum())return drawK('Nobody can react: no active controller.');b2=!b2;addLog(b2?'BrokerRegistration broker 2 back · rejoins ISR after catching up':'BrokerFenced broker 2 · PartitionChangeRecord: leaders moved to 1 and 3, ISR shrinks');$('#kFail').textContent=b2?'Broker 2 fails':'Broker 2 returns';drawK(b2?'Broker 2 is back.':'The active controller noticed missed heartbeats, fenced broker 2 and moved its leaderships.')});
+addLog('FeatureLevelRecord metadata.version …');addLog('RegisterBrokerRecord broker 1, 2, 3');drawK();
+
+/* ZooKeeper race */
+$('#zStep').innerHTML=stepHTML();
+function drawZ(i){const s=$('#zSvg');s.innerHTML='';s.appendChild(el('rect',{x:240,y:10,width:200,height:70,rx:10,fill:'var(--mid-soft)',stroke:'var(--mid)'}));s.appendChild(el('text',{x:340,y:34,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--ink)'},'ZooKeeper'));
+  s.appendChild(el('text',{x:340,y:60,'text-anchor':'middle','font-size':12,fill:'var(--ink)',class:'t-mono'},i===0?'/controller (empty)':i>=4?'/controller = 3':'/controller = 2'));
+  [0,1,2].forEach(b=>{const x=60+b*220,win=(i>=1&&i<4&&b===1)||(i>=4&&b===2),dn=i>=3&&b===1;s.appendChild(el('rect',{x,y:150,width:140,height:46,rx:8,fill:dn?'var(--bad-soft)':win?'var(--pencil-soft)':'var(--surface)',stroke:dn?'var(--bad)':win?'var(--pencil)':'var(--d1)','stroke-width':2}));
+    s.appendChild(el('text',{x:x+70,y:178,'text-anchor':'middle','font-size':12,'font-weight':600,fill:'var(--ink)'},'broker '+(b+1)+(win?' = controller':dn?' (gone)':'')));
+    if(i===0||i===4&&b!==1)s.appendChild(el('line',{x1:x+70,y1:150,x2:340,y2:80,stroke:'var(--blue)','stroke-width':2,class:'flow'}))});
+  if(i===2)s.appendChild(el('text',{x:340,y:120,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},'others watch /controller and back off'))}
+stepper('#zStep',['No controller ZNode exists. Every broker tries to create /controller with its own ID at the same moment.','ZooKeeper lets exactly one write win: broker 2 is now the controller, and all ZooKeeper nodes agree.','The losers see the ZNode exists and place a watch on it. The controller writes partition assignments and leaders to ZooKeeper; leaders write their ISR changes there too.','Broker 2 dies. Its session expires, and ZooKeeper removes the ZNode (it was tied to the session).','The watch fires, the race repeats and broker 3 wins. In big clusters, the new controller then had to read all metadata back from ZooKeeper, which could take minutes.'],drawZ);
+cards('#zCards',[{t:'Two systems to run',c:'mid',d:'Operators needed ZooKeeper expertise and had to secure it, because it held ACLs and security data.'},{t:'Too slow for Kafka',c:'bad',d:'ZooKeeper favours consensus over speed. Its generic abstractions on top of its own log were unnecessary for a system that is itself excellent at logs, and they capped partition counts.'},{t:'Stale caches',c:'d3',d:'Brokers cached metadata to avoid slow lookups, and some changes bypassed the controller. The controller polled for updates periodically, so it could act on outdated information, for example making an unavailable broker a leader.'}]);
+
+/* migration */
+const MS=[['Upgrade','Upgrade to the newest Kafka release that still supports ZooKeeper, using the normal rolling upgrade.',''],
+ ['New controllers','Provision 3 or 5 dedicated KRaft controllers with the same cluster ID, migration mode on, and the ZooKeeper address.','process.roles=controller\nnode.id=3000\ncontroller.quorum.voters=3000@ctl-1:9093,3001@ctl-2:9093,3002@ctl-3:9093\nzookeeper.metadata.migration.enable=true\nzookeeper.connect=zk-1:2181,zk-2:2181,zk-3:2181'],
+ ['Brokers to migration','Add migration mode and the controller addresses to every existing broker and roll them. Controllers copy all metadata from ZooKeeper until the log says the migration of metadata to KRaft is complete. Revert is still possible.','# on each existing broker, in addition to its ZooKeeper settings\nzookeeper.metadata.migration.enable=true\ncontroller.quorum.voters=3000@ctl-1:9093,3001@ctl-2:9093,3002@ctl-3:9093\ncontroller.listener.names=CONTROLLER'],
+ ['Brokers to KRaft','Remove migration mode and ZooKeeper settings from brokers and set process.roles=broker; roll them. Run like this for a week or two; reverting is still possible.','process.roles=broker\nnode.id=1\ncontroller.quorum.voters=3000@ctl-1:9093,3001@ctl-2:9093,3002@ctl-3:9093\n# zookeeper.connect removed\n# zookeeper.metadata.migration.enable removed'],
+ ['Finalize','Point of no return: turn off migration mode on the controllers, drop the ZooKeeper connection and restart them one by one.','# on each controller\n# zookeeper.metadata.migration.enable removed\n# zookeeper.connect removed\n# then: rolling restart of controllers'],
+ ['Upgrade again','Now on pure KRaft, upgrade to the latest Kafka with the normal procedure and decommission ZooKeeper.','']];
+$('#mStep').innerHTML=stepHTML();
+stepper('#mStep',MS.map(m=>`<b>${m[0]}.</b> ${m[1]}`),i=>{$('#migBar').innerHTML=MS.map((m,k)=>`<div class="${k===i?'on':k<i?'done':''}${k===4?' ponr':''}">${m[0]}${k===4?'<br><span class="small badc">no way back</span>':''}</div>`).join('');$('#mCfg').textContent=MS[i][2]||'# follow the standard upgrade procedure in the Kafka docs'});
+
+/* connecting */
+const L=new Set([0]),D=new Set();
+$('#bsList').innerHTML=[0,1,2].map(i=>`<label><input type="checkbox" data-l="${i}"${i===0?' checked':''}>localhost:909${2+i}</label>`).join('');
+$('#bsDown').innerHTML=[0,1,2].map(i=>`<label><input type="checkbox" data-d="${i}">broker ${i+1}</label>`).join('');
+function drawC(){const s=$('#cSvg');s.innerHTML='';const ok=[...L].find(i=>!D.has(i));
+  s.appendChild(el('rect',{x:20,y:90,width:110,height:50,rx:8,fill:'var(--surface)',stroke:'var(--d2)','stroke-width':2}));s.appendChild(el('text',{x:75,y:120,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--ink)'},'Consumer'));
+  const leaders=[0,1,2].map(p=>[p,(p+1)%3,(p+2)%3].find(b=>!D.has(b)));
+  [0,1,2].forEach(b=>{const y=15+b*72,dn=D.has(b);s.appendChild(el('rect',{x:420,y,width:240,height:58,rx:8,fill:dn?'var(--bad-soft)':'var(--paper)',stroke:dn?'var(--bad)':'var(--ink)','stroke-dasharray':dn?'5 4':''}));s.appendChild(el('text',{x:432,y:y+20,'font-size':12,'font-weight':700,fill:dn?'var(--bad)':'var(--ink)'},`broker ${b+1} :909${2+b}${dn?' down':''}${L.has(b)?' · bootstrap':''}`));
+    const led=leaders.map((l,p)=>l===b?'P'+p:null).filter(Boolean);s.appendChild(el('text',{x:432,y:y+42,'font-size':11,fill:'var(--muted)'},dn?'':led.length?'leader of '+led.join(', '):'followers only'))});
+  if(ok===undefined){$('#cTxt').innerHTML='<b class="badc">The client can\'t start:</b> none of its bootstrap servers answers, even though other brokers are alive. List more brokers or use a DNS name.';return}
+  s.appendChild(el('line',{x1:130,y1:100,x2:420,y2:44+ok*72-15,stroke:'var(--pencil)','stroke-width':2,'stroke-dasharray':'5 4'}));s.appendChild(el('text',{x:250,y:70,'font-size':11,fill:'var(--pencil)'},'1 · metadata request'));
+  const used=new Set(leaders.filter(x=>x!==undefined));used.forEach(b=>s.appendChild(el('line',{x1:130,y1:125,x2:420,y2:44+b*72,stroke:'var(--blue)','stroke-width':2,class:'flow'})));s.appendChild(el('text',{x:250,y:200,'font-size':11,fill:'var(--blue)'},'2 · fetch directly from leaders'));
+  $('#cTxt').innerHTML=`Broker ${ok+1} answered the metadata request with the broker list and every partition's leader. The consumer now fetches from broker(s) ${[...used].map(b=>b+1).join(', ')}. ${D.size?'Leaders on stopped brokers were moved by the controller; the client noticed errors, re-requested metadata and reconnected.':''}`}
+$$('[data-l]').forEach(c=>c.addEventListener('change',()=>{c.checked?L.add(+c.dataset.l):L.delete(+c.dataset.l);drawC()}));
+$$('[data-d]').forEach(c=>c.addEventListener('change',()=>{c.checked?D.add(+c.dataset.d):D.delete(+c.dataset.d);if(D.size===3){c.checked=false;D.delete(+c.dataset.d)}drawC()}));drawC();
+
+quiz('#qQuiz','#qScore',[
+ {q:'Where does KRaft keep cluster metadata?',o:['In ZNodes','In __cluster_metadata','In __consumer_offsets'],a:1,why:'A replicated internal topic: Kafka coordinates itself with a log.'},
+ {q:'Five controllers. How many can fail?',o:['1','2','4'],a:1,why:'Majority of 5 is 3, so two may fail.'},
+ {q:'ZooKeeper to KRaft migration: when is there no way back?',o:['When brokers switch to KRaft','When controllers leave migration mode'],a:1,why:'Up to that point you can still revert.'},
+ {q:'Bootstrap lists only broker 1, which is down. Brokers 2 and 3 are fine. Does the client start?',o:['Yes','No'],a:1,why:'It needs one reachable bootstrap server to get metadata.'},
+ {q:'After the metadata response, the producer sends data to...',o:['the bootstrap broker','each partition\'s leader'],a:1,why:'Clients connect directly to the brokers that lead their partitions.'}]);
+
+})();
+</script>
+</body>
+</html>

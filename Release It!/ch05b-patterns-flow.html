@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Stability Patterns II: Control the Flow</title>
+<meta name="description" content="The second group of patterns is about flow: let servers say &quot;not now&quot;, test against a hostile double, decouple in time, reject excess work, push back on producers, and put a speed limit on dangerous automation.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Release It! companion. Layout: an operations logbook on blueprint grid paper.
+   Blue ink = structure and healthy flow, orange pencil = load and stress, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+.callout.missing{border-color:var(--bad);background:var(--bad-soft)}
+.callout.missing b.h{color:var(--bad)}
+em.miss{font-style:normal;font-family:var(--mono);font-size:.72rem;color:var(--bad);border:1px solid var(--bad);border-radius:4px;padding:0 5px;margin-left:4px;white-space:nowrap}
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;max-height:220px;overflow:auto;display:flex;flex-direction:column;gap:2px}
+.log .e{color:var(--bad)} .log .w{color:var(--mid)} .log .g{color:var(--ok)}
+
+/* page */
+
+.ports{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px}
+.ports button{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:9px 10px;text-align:left;display:flex;flex-direction:column;gap:2px;font-size:.88rem}
+.ports button b{font-family:var(--mono);color:var(--pencil);font-size:.8rem}
+.ports button[aria-pressed="true"]{border-color:var(--pencil);background:var(--pencil-soft)}
+.spec{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px}
+@media (max-width:620px){.spec{grid-template-columns:1fr 1fr}}
+.spec button{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:8px;font-size:.85rem;text-align:center}
+.spec button[aria-pressed="true"]{background:var(--blue-soft);border-color:var(--blue);font-weight:600}
+.qopts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+@media (max-width:620px){.qopts{grid-template-columns:1fr 1fr}}
+.qopts button{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:8px;font-size:.88rem}
+.qopts button[aria-pressed="true"]{background:var(--blue-soft);border-color:var(--blue)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Release It! · visual companion</a><span class="tag">Part I · Create Stability · Chapter 5b of 17</span></div>
+  <h1>Stability Patterns II: Control the Flow</h1>
+  <p class="lede">The second group of patterns is about flow: let servers say "not now", test against a hostile double, decouple in time, reject excess work, push back on producers, and put a speed limit on dangerous automation.</p>
+  <nav class="toc" aria-label="Sections"><a href="#handshake">Handshaking</a><a href="#harness">Test harnesses</a><a href="#middleware">Decoupling middleware</a><a href="#shed">Shed load</a><a href="#backpressure">Back pressure</a><a href="#governor">Governor</a><a href="#odds">Astronomical odds</a><a href="#check">Quick check</a></nav>
+  
+</header>
+
+<section id="handshake" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Handshaking: let the server say &quot;not now&quot;</h2></div>
+  <p>Serial lines, modems and TCP all let the receiver signal when it's ready. Application protocols mostly don't. HTTP has "503 Service Unavailable" for temporary conditions, but most clients treat anything unusual as fatal. Handshaking lets a server protect itself by throttling its own workload instead of accepting whatever arrives. The practical version: each instance's <b>health check</b> tells the load balancer when it's too busy, and the balancer stops sending it work.</p>
+  <div class="sheet">
+    <div class="row"><div class="seg" role="group" aria-label="Health check"><button data-h="dumb" aria-pressed="true">Health check always says OK</button><button data-h="smart" aria-pressed="false">Health check returns 503 when busy</button></div><button class="btn primary" id="hGo">Send a burst</button></div>
+    <div class="svgbox"><svg id="hSvg" viewBox="0 0 640 200" role="img" aria-label="Load balancer and three instances"></svg></div>
+    <p id="hTxt" aria-live="polite"></p>
+  </div>
+  <p class="small">Build handshaking into any protocol you design. When calling a service that can't handshake, a <a href="ch05a-patterns-containment.html#breaker">Circuit Breaker</a> is the stopgap: you can't ask politely, so you call and track whether it works.</p>
+</section>
+
+<section id="harness" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Test harnesses: a devious stand-in</h2></div>
+  <p>Integration test environments only show what your system does when dependencies behave <i>within</i> spec, and they lock the whole company into testing one version at a time. In production everything eventually runs out of spec. A <b>test harness</b> is a separate server pretending to be the remote system, written to misbehave at every layer: network, protocol, application. Unlike a mock object, it isn't bound by the interface. A trick from the book: one harness, different ports, different misbehavior. Choose a port to point your client at.</p>
+  <div class="sheet">
+    <div class="ports" id="ports"></div>
+    <div class="detail" id="pTxt" aria-live="polite"></div>
+  </div>
+  <div class="callout"><b class="h">It should leave scars</b><span>A good harness is as nasty as the real world. Its job is to make the system under test cynical. It also lets several developers test failure handling from their own machines without a shared environment.</span></div>
+</section>
+
+<section id="middleware" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Decoupling middleware</h2></div>
+  <p>Middleware both integrates systems (passing data and events) and decouples them (removing direct knowledge of each other). Synchronous request/reply, whether RPC or JSON over HTTP, forces both sides to be up at the same time and amplifies shocks. Message-oriented middleware decouples in <b>space and time</b>: the sender doesn't wait, so it cannot be dragged into a cascading failure. The cost is logic: what do you do when the credit-card authorization reply comes back as a failure, or never comes? Slide along the spectrum.</p>
+  <div class="sheet">
+    <div class="spec" id="spec" role="group" aria-label="Coupling"></div>
+    <div class="detail" id="specTxt" aria-live="polite"></div>
+  </div>
+  <p class="small">This is an architecture decision that ripples everywhere and is hard to reverse, so make it early, at the last responsible moment. Learn several architectural styles and choose; not everything must be three tiers and a relational database.</p>
+</section>
+
+<section id="shed" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Shed load: you can't out-scale the world</h2></div>
+  <p>Public services have zero control over demand; more than a billion devices could call at once. TCP copes by refusing connections when its listen queue is full, but services usually fall over earlier, from contention on pooled resources: threads wait, then run slower because of all the other waiting threads, until callers time out. "Really, really slow" and "down" look the same from outside. So do what TCP does: <b>refuse work when you're too busy</b>, ideally judged against your own SLA, or with a simple cap on concurrent requests.</p>
+  <div class="sheet">
+    <label class="rng"><span>Offered load: <b id="olV"></b> req/s (capacity 1,000)</span><input type="range" id="ol" min="200" max="3000" step="50" value="1500"></label>
+    <div class="svgbox"><svg id="shSvg" viewBox="0 0 640 210" role="img" aria-label="Successful throughput with and without load shedding"></svg></div>
+    <p id="shTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="backpressure" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Create back pressure</h2></div>
+  <p>Every performance problem starts with a queue backing up somewhere. An unbounded queue eats memory, and by Little's law its wait time grows with its length toward infinity. So bound your queues, and decide what happens when one is full. Pick a policy and push a burst through a queue of 10.</p>
+  <div class="sheet">
+    <div class="qopts" id="qopts" role="group" aria-label="Full-queue policy"></div>
+    <div class="row"><button class="btn primary" id="qGo">Producer sends 25 items fast</button></div>
+    <div class="svgbox"><svg id="qSvg" viewBox="0 0 640 120" role="img" aria-label="Bounded queue between producer and consumer"></svg></div>
+    <p id="qTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout blue"><b class="h">Inside the boundary: back pressure. At the edge: shed load.</b><span>Blocking the producer only works when the consumers are a finite set you control. At the system edge, a blocked thread just frustrates a user or triggers retries. The book's example: an API for creating location tags lets 100 calls per server into the storage engine. Request threads should hand the storage call to another pool, time out, and answer 503 (or queue the command and answer 202). When back pressure kicks in, tell monitoring.</span></div>
+</section>
+
+<section id="governor" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Governor: a speed limit for automation</h2></div>
+  <p>Steam engines could spin until the metal tore apart, so engineers added governors to cap the speed. Automation has no judgment and goes wrong fast; by the time a human notices, it's a recovery, not an intervention. After its outage, Reddit's autoscaler was limited to shutting down only a percentage of instances at a time. A governor is <b>stateful</b> (knows what it did recently), <b>time-aware</b> and <b>asymmetric</b>: shutting down, deleting and blocking are the unsafe directions. Safety is often U-shaped: too few instances hurts availability, too many hurts the budget. Ask an autoscaler for a big change and watch the governor resist.</p>
+  <div class="sheet">
+    <label class="rng"><span>Autoscaler's target: <b id="gtV"></b> instances (now 100)</span><input type="range" id="gt" min="0" max="400" step="10" value="20"></label>
+    <div class="svgbox"><svg id="gvSvg" viewBox="0 0 640 220" role="img" aria-label="Instances over time with and without a governor"></svg></div>
+    <p id="gvTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="odds" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>&quot;The odds are astronomical&quot;</h2></div>
+  <p>The chapter closes with arithmetic. A small service doing ten million requests a day for three years has about eleven billion chances for something to go wrong. A Milky Way's worth of stars is only a few dozen times larger. Astronomically unlikely events happen all the time at scale. Try your own service.</p>
+  <div class="sheet">
+    <label class="rng"><span>Requests per day: <b id="rdV"></b></span><input type="range" id="rd" min="3" max="10" step="0.5" value="7"></label>
+    <label class="rng"><span>A "one in a ___" failure: <b id="ofV"></b></span><input type="range" id="of" min="3" max="12" step="1" value="9"></label>
+    <div class="stat"><span>Expected occurrences over three years</span><span class="big pencil" id="occ"></span></div>
+  </div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Which pattern fits?</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+  <div class="recap">
+    <div><b>Handshaking</b><span>Servers signal "busy"; load balancers listen.</span></div>
+    <div><b>Test harness</b><span>A malicious stand-in that breaks every layer.</span></div>
+    <div><b>Decoupling middleware</b><span>Asynchronous messaging stops cascades.</span></div>
+    <div><b>Shed load</b><span>Refuse work rather than slow down.</span></div>
+    <div><b>Back pressure</b><span>Bounded queues slow producers, inside the boundary.</span></div>
+    <div><b>Governor</b><span>Slow down unsafe automation so humans can step in.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Release It! Design and Deploy Production-Ready Software</i>, second edition, by Michael T. Nygard (Pragmatic Bookshelf, 2018). Explanations, examples, code snippets and drawings are original summaries; nothing here is copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch05a-patterns-containment.html"><span>Previous · Chapter 5a</span><b>Stability Patterns I: Contain the Damage</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch06-black-friday.html"><span>Next · Chapter 6</span><b>Case Study: Phenomenal Cosmic Powers, Itty-Bitty Living Space</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('rel:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('rel:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>{if(data[i])f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%'})))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+
+let hm='dumb';
+function drawH(load){const s=$('#hSvg');s.innerHTML='';const L=load||[0,0,0];
+  s.appendChild(el('rect',{x:20,y:70,width:120,height:60,rx:8,fill:'var(--surface)',stroke:'var(--blue)','stroke-width':2}));s.appendChild(el('text',{x:80,y:105,'text-anchor':'middle','font-size':12.5,'font-weight':700,fill:'var(--ink)'},'Load balancer'));
+  L.forEach((v,i)=>{const y=20+i*62;const busy=v>=80;const out=hm==='smart'&&busy;
+    s.appendChild(el('line',{x1:140,y1:100,x2:380,y2:y+25,stroke:out?'var(--line)':'var(--blue)','stroke-width':2,class:out?'':'flow','stroke-dasharray':out?'2 6':''}));
+    s.appendChild(el('rect',{x:380,y,width:230,height:50,rx:8,fill:busy&&!out?'var(--bad-soft)':'var(--surface)',stroke:busy?(out?'var(--mid)':'var(--bad)'):'var(--ok)','stroke-width':2}));
+    s.appendChild(el('rect',{x:392,y:y+30,width:206,height:10,rx:3,fill:'var(--paper)'}));s.appendChild(el('rect',{x:392,y:y+30,width:2.06*Math.min(100,v),height:10,rx:3,fill:v>=100?'var(--bad)':v>=80?'var(--mid)':'var(--ok)'}));
+    s.appendChild(el('text',{x:400,y:y+20,'font-size':11.5,'font-weight':600,fill:'var(--ink)'},`instance ${i+1}: ${Math.round(v)}% · health ${out?'503':'200'}`))})}
+$('#hGo').addEventListener('click',()=>{let L=[20,20,20];let t=0;const iv=setInterval(()=>{t++;const target=hm==='smart'?L.map((v,i)=>v<80?i:-1).filter(i=>i>=0):[0,1,2];const pick=target.length?target:[0,1,2];
+  pick.forEach(i=>L[i]+=i===0?14:6);L=L.map(v=>Math.max(5,v-3));if(hm==='smart')L=L.map(v=>Math.min(v,95));drawH(L);
+  if(t>=12){clearInterval(iv);$('#hTxt').innerHTML=hm==='smart'?'<b class="okc">Instance 1 reported 503</b> and was skipped until it recovered; the others absorbed the burst. A crude on/off signal, but it works.':'<b class="badc">Instance 1 is overwhelmed</b> (it got the heavy requests) but keeps saying OK, so the balancer keeps feeding it until it falls over.'}},120)});
+seg('[data-h]',b=>{hm=b.dataset.h;drawH();$('#hTxt').textContent=''});drawH();
+
+const PT=[['10200','Accept, never reply','The connection succeeds and then silence. Does your client have a read timeout?'],['10201','Reply with random bytes','Garbage instead of JSON. Do you parse defensively, or crash?'],['10202','Connect, then drop','Immediate disconnect. Do you retry sensibly, or spin?'],['10203','Refuse connections','The fast failure. Easy, but test it anyway.'],['10204','One byte every 30 s','Slow drip. Does a per-read timeout reset on each byte and let this hang forever?'],['10205','Headers, no body','HTTP headers arrive, the body never does.'],['10206','Megabytes, not kilobytes','A huge response. Do you cap what you read?'],['10207','Full receive window','The harness never drains data; your writes block. Do they time out?'],['10208','Reject all credentials','Every auth attempt fails. Do you lock out, alert, or loop?']];
+$('#ports').innerHTML=PT.map((p,i)=>`<button data-i="${i}" aria-pressed="${i===0}"><b>:${p[0]}</b><span>${p[1]}</span></button>`).join('');
+function showPt(i){$('#pTxt').innerHTML=`<span class="eyebrow">port ${PT[i][0]}</span><h3 class="pencil">${PT[i][1]}</h3><p>${PT[i][2]}</p>`}
+seg('#ports button',b=>showPt(+b.dataset.i));showPt(0);
+
+const SP=[['In-process call','Same space, same time. Simplest, but caller and callee fail together.'],['RPC / RMI','Different places, same time. The caller blocks. Some can\'t even time out.'],['HTTP / JSON','Same: synchronous request/reply. Clear logic, but a slow provider stalls you.'],['Message queue','Different places, different times. The sender continues; replies, if any, come later. No cascading failure, but you must handle late or failed replies.'],['Pub/sub, events','Fully decoupled: publishers don\'t know who listens. Participants change independently. Hardest to reason about end to end.']];
+$('#spec').innerHTML=SP.map((p,i)=>`<button data-i="${i}" aria-pressed="${i===2}">${p[0]}</button>`).join('');
+function showSp(i){$('#specTxt').style.borderLeftColor=i<3?'var(--pencil)':'var(--ok)';$('#specTxt').innerHTML=`<span class="eyebrow">${i<3?'tightly coupled':'loosely coupled'}</span><h3>${SP[i][0]}</h3><p>${SP[i][1]}</p>`}
+seg('#spec button',b=>showSp(+b.dataset.i));showSp(2);
+
+function drawSh(){const L=+$('#ol').value;$('#olV').textContent=L.toLocaleString();const s=$('#shSvg');s.innerHTML='';const X=v=>50+(v-200)/2800*560,Y=v=>180-v/1100*160;
+  const noShed=v=>v<=1000?v:Math.max(0,1000-(v-1000)*0.9),shed=v=>Math.min(v,950);
+  [[noShed,'bad','no shedding'],[shed,'ok','shed load above limit']].forEach(([f,c,t],k)=>{let d='';for(let v=200;v<=3000;v+=25)d+=(d?'L':'M')+X(v)+','+Y(f(v));s.appendChild(el('path',{d,fill:'none',stroke:`var(--${c})`,'stroke-width':2.5}));s.appendChild(el('circle',{cx:X(L),cy:Y(f(L)),r:6,fill:`var(--${c})`}));s.appendChild(el('text',{x:600,y:20+k*16,'text-anchor':'end','font-size':11,fill:`var(--${c})`,'font-weight':700},t))});
+  s.appendChild(el('line',{x1:50,y1:180,x2:610,y2:180,stroke:'var(--line)'}));s.appendChild(el('text',{x:330,y:200,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},'offered load (req/s)'));s.appendChild(el('text',{x:14,y:100,'font-size':11,fill:'var(--muted)',transform:'rotate(-90 14 100)','text-anchor':'middle'},'good responses/s'));
+  const a=Math.round(noShed(L)),b=Math.round(shed(L));$('#shTxt').innerHTML=L<=1000?'Under capacity: both serve everything.':`Without shedding, contention collapses goodput to <b class="badc">${a}</b> req/s and every caller waits. Shedding serves <b class="okc">${b}</b> req/s quickly and refuses ${L-b} fast (a 503 to the load balancer, or an error callers can handle).`}
+$('#ol').addEventListener('input',drawSh);drawSh();
+
+const QP=[['drop','Silently drop the new item'],['old','Drop the oldest item'],['refuse','Refuse the new item'],['block','Block the producer']];let qp='block';
+$('#qopts').innerHTML=QP.map(q=>`<button data-q="${q[0]}" aria-pressed="${q[0]==='block'}">${q[1]}</button>`).join('');
+seg('#qopts button',b=>{qp=b.dataset.q;drawQ([],0,0,0)});
+function drawQ(q,dropped,refused,waited){const s=$('#qSvg');s.innerHTML='';s.appendChild(el('text',{x:30,y:20,'font-size':11,fill:'var(--muted)',class:'t-mono'},'PRODUCER'));s.appendChild(el('text',{x:610,y:20,'text-anchor':'end','font-size':11,fill:'var(--muted)',class:'t-mono'},'CONSUMER'));
+  for(let k=0;k<10;k++){s.appendChild(el('rect',{x:150+k*34,y:40,width:30,height:36,rx:4,fill:k<q.length?'var(--blue)':'var(--paper)',stroke:'var(--line)'}));if(k<q.length)s.appendChild(el('text',{x:165+k*34,y:63,'text-anchor':'middle','font-size':10,fill:'var(--surface)',class:'t-mono'},q[k]))}
+  s.appendChild(el('text',{x:30,y:62,'font-size':11.5,fill:waited?'var(--mid)':'var(--ink)'},waited?`waited ${waited}×`:'sending'));s.appendChild(el('text',{x:330,y:105,'text-anchor':'middle','font-size':11.5,fill:'var(--muted)'},`dropped ${dropped} · refused ${refused}`))}
+$('#qGo').addEventListener('click',()=>{let q=[],dr=0,rf=0,w=0,n=1;const iv=setInterval(()=>{if(n<=25){if(q.length<10)q.push(n);else if(qp==='drop')dr++;else if(qp==='old'){q.shift();q.push(n);dr++}else if(qp==='refuse')rf++;else{w++;n--}n++}
+  if(Math.random()<.35&&q.length)q.shift();drawQ(q,dr,rf,w);
+  if(n>25){clearInterval(iv);$('#qTxt').textContent={drop:`${dr} items vanished while the producer believed they were accepted. Fine only if the data is worthless when lost.`,old:`${dr} oldest items were discarded. Good for data whose value decays fast, like position updates.`,refuse:`${rf} items were refused; the producer knows and can retry or shed. Honest and cheap.`,block:`The producer was blocked ${w} times until space opened. That is back pressure: it propagates upstream and slows the source. Distinguish a temporary slowdown from a broken consumer.`}[qp]}},70)});
+drawQ([],0,0,0);
+
+function drawGv(){const T=+$('#gt').value;$('#gtV').textContent=T;const s=$('#gvSvg');s.innerHTML='';const X=t=>50+t*9,Y=v=>190-v/400*170;
+  s.appendChild(el('rect',{x:50,y:Y(250),width:540,height:Y(60)-Y(250),fill:'var(--ok-soft)'}));s.appendChild(el('text',{x:586,y:Y(250)+14,'text-anchor':'end','font-size':10.5,fill:'var(--ok)'},'safe range 60–250'));
+  let a=100,g=100,da='M'+X(0)+','+Y(100),dg=da;
+  for(let t=1;t<=60;t++){a=t<3?a:T;let step;if(T<g){step=g>60?Math.max(2,(g)*0.05):1;step=Math.min(step,g-T);g-=t%5===0?step:0}else if(T>g){step=g<250?20:3;g=Math.min(T,g+step)}da+=`L${X(t)},${Y(a)}`;dg+=`L${X(t)},${Y(g)}`}
+  s.appendChild(el('path',{d:da,fill:'none',stroke:'var(--bad)','stroke-width':2,'stroke-dasharray':'5 4'}));s.appendChild(el('path',{d:dg,fill:'none',stroke:'var(--blue)','stroke-width':2.5}));
+  s.appendChild(el('text',{x:60,y:Y(400)+12,'font-size':11,fill:'var(--bad)'},'ungoverned'));s.appendChild(el('text',{x:150,y:Y(400)+12,'font-size':11,fill:'var(--blue)'},'governed'));s.appendChild(el('text',{x:320,y:212,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},'minutes'));
+  $('#gvTxt').innerHTML=T<100?`Scaling <b>down</b> is the unsafe direction: the governor removes a few instances every five minutes, slower still below the safe range, and alerts a human. After an hour it has reached ${Math.round(g)}, not ${T}; plenty of time to spot that the target is nonsense.`:T>100?`Scaling <b>up</b> is fast inside the safe range, then meets growing resistance beyond 250 (the budget side of the U-curve). Governed: ${Math.round(g)} after an hour.`:'No change requested.'}
+$('#gt').addEventListener('input',drawGv);drawGv();
+
+function odds(){const r=Math.pow(10,+$('#rd').value),o=Math.pow(10,+$('#of').value);$('#rdV').textContent=Math.round(r).toLocaleString();$('#ofV').textContent='1 in '+o.toLocaleString();const n=r*365*3/o;$('#occ').textContent=n>=1?Math.round(n).toLocaleString()+'×':(n*100).toFixed(1)+'% chance'}
+['rd','of'].forEach(k=>$('#'+k).addEventListener('input',odds));odds();
+
+quiz('#qQuiz','#qScore',[
+ {q:'Your public API is hit by an unexpected traffic spike from the whole internet.',a:0,o:['Shed load','Back pressure','Governor'],why:'At the edge, refuse excess work; you can\'t slow the whole world down.'},
+ {q:'An internal indexing service can\'t keep up with the two services feeding it.',a:1,o:['Shed load','Back pressure','Test harness'],why:'Within your boundary, a bounded blocking queue slows the producers.'},
+ {q:'A cleanup job could delete 90% of customer records if its query is wrong.',a:2,o:['Handshaking','Decoupling middleware','Governor'],why:'Deleting is unsafe; rate-limit it and alert a human.'},
+ {q:'You want to know how your client copes with a server that sends one byte every 30 seconds.',a:1,o:['Mock object','Test harness','Integration environment'],why:'Only a separate, deliberately misbehaving server can do that.'},
+ {q:'Order placement must keep working even when fulfillment is down for an hour.',a:0,o:['Decoupling middleware','Handshaking','Shed load'],why:'Queue the messages; the systems no longer need to be up at the same time.'}]);
+
+})();
+</script>
+</body>
+</html>

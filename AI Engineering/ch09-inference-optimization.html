@@ -1,0 +1,580 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Inference Optimization · AI Engineering</title>
+<meta name="description" content="A brilliant model that is slow and expensive will not be used. Measure what matters, understand why decoding is memory-bound, and apply the model-level and service-level techniques that make inference faster and cheaper.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<script>try{var t=localStorage.getItem('aie:theme');if(t)document.documentElement.setAttribute('data-theme',JSON.parse(t))}catch(e){}</script>
+<style>
+/* Shared base for the AI Engineering companion. Layout: an engineering-notebook reading column on blueprint grid paper.
+   Blue ink = the model and its machinery, orange pencil = the application and its users, green = good outcome, red = failure.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* added for AI Engineering */
+.themebtn{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);margin-left:auto}
+.themebtn:hover{border-color:var(--blue);color:var(--blue)}
+.tok{display:inline-block;font-family:var(--mono);font-size:.85rem;padding:2px 6px;margin:2px;border-radius:4px;border:1px solid var(--line);background:var(--paper)}
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre}
+pre.code.wrap{white-space:pre-wrap;word-break:break-word}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.pill{display:inline-block;font-size:.8rem;padding:2px 9px;border-radius:999px;font-weight:600}
+.pill.ok{background:var(--ok-soft);color:var(--ok)} .pill.bad{background:var(--bad-soft);color:var(--bad)} .pill.mid{background:var(--mid-soft);color:var(--mid)} .pill.blue{background:var(--blue-soft);color:var(--blue)}
+textarea,input[type=text],input[type=number]{font:inherit;font-size:.95rem;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:8px 10px;width:100%;max-width:100%}
+textarea{min-height:90px;resize:vertical}
+.ctrls{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px 18px}
+.note{font-size:.85rem;color:var(--muted);font-style:italic}
+mark{background:var(--mid-soft);color:inherit;padding:0 2px;border-radius:3px}
+
+/* page */
+
+.toks{display:flex;flex-wrap:wrap;gap:4px;min-height:34px;align-items:center}
+.toks span{font-family:var(--mono);font-size:.8rem;padding:3px 7px;border-radius:5px;border:1px solid var(--line);background:var(--paper)}
+.toks span.acc{background:var(--ok-soft);border-color:var(--ok);color:var(--ok)}
+.toks span.rej{background:var(--bad-soft);border-color:var(--bad);color:var(--bad);text-decoration:line-through}
+.toks span.tgt{background:var(--blue-soft);border-color:var(--blue);color:var(--blue);font-weight:700}
+.mem{display:flex;flex-direction:column;gap:6px}
+.mem div{border-radius:8px;padding:8px 12px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:.85rem;border:1px solid var(--line)}
+.mem div b{font-family:var(--mono)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">AI Engineering · visual companion</a><span class="tag">Shipping it · Chapter 9 of 10</span><button class="themebtn" type="button" data-theme-toggle aria-label="Switch colour theme">Theme: auto</button></div>
+  <h1>Inference Optimization</h1>
+  <p class="lede">A brilliant model that is slow and expensive will not be used. Measure what matters, understand why decoding is memory-bound, and apply the model-level and service-level techniques that make inference faster and cheaper.</p>
+  <nav class="toc" aria-label="Sections"><a href="#overview">Overview</a><a href="#bottleneck">Bottlenecks</a><a href="#metrics">Metrics</a><a href="#hardware">Accelerators</a><a href="#model">Model-level</a><a href="#service">Service-level</a><a href="#quiz">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="overview" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Better, cheaper, faster</h2></div>
+  <p>Models come and go; making them faster and cheaper stays relevant. A slow model loses users or makes its predictions useless (an outdated forecast), and an expensive one may not be worth running. Optimization happens at three levels: the <b>model</b> (make it smaller or more efficient), the <b>hardware</b> (better chips), and the <b>service</b> (use the hardware well for many requests). If you use a model API, the provider does most of this, but the ideas still help you choose between APIs and self-hosting.</p>
+  <div class="svgbox"><svg viewBox="0 0 640 170" role="img" aria-label="Requests go to an inference service, which batches them and runs the model on hardware">
+    <g font-size="12" fill="var(--ink)">
+      <rect x="10" y="55" width="110" height="60" rx="8" fill="var(--surface)" stroke="var(--line)"/><text x="65" y="82" text-anchor="middle">User requests</text><text x="65" y="100" text-anchor="middle" fill="var(--muted)" font-size="11">many, at once</text>
+      <rect x="170" y="25" width="290" height="120" rx="10" fill="var(--blue-soft)" stroke="var(--blue)"/><text x="315" y="45" text-anchor="middle" font-weight="700" fill="var(--blue)">Inference service</text>
+      <rect x="185" y="60" width="120" height="70" rx="6" fill="var(--surface)" stroke="var(--line)"/><text x="245" y="90" text-anchor="middle">Inference server</text><text x="245" y="108" text-anchor="middle" fill="var(--muted)" font-size="11">routes, batches</text>
+      <rect x="325" y="60" width="120" height="70" rx="6" fill="var(--surface)" stroke="var(--pencil)"/><text x="385" y="90" text-anchor="middle">Model on</text><text x="385" y="108" text-anchor="middle">accelerators</text>
+      <rect x="510" y="55" width="120" height="60" rx="8" fill="var(--surface)" stroke="var(--line)"/><text x="570" y="90" text-anchor="middle">Responses</text>
+      <path d="M120 85h46M305 95h16M460 85h46" stroke="var(--muted)" stroke-width="2" marker-end="url(#ar9)" fill="none"/>
+    </g><defs><marker id="ar9" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker></defs></svg></div>
+</section>
+
+<section id="bottleneck" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Compute-bound or bandwidth-bound?</h2></div>
+  <p>Optimizing means finding the bottleneck. A workload is <b>compute-bound</b> when the arithmetic limits it, and <b>memory bandwidth-bound</b> when moving data between memory and the processor limits it. ("Memory-bound" sometimes means running out of memory <i>capacity</i> instead; that's a different problem.) The <b>roofline</b> model shows which: an operation's <b>arithmetic intensity</b> (FLOPs per byte moved) decides whether it hits the bandwidth slope or the compute ceiling.</p>
+  <div class="sheet">
+    <div class="row between"><h3>Roofline explorer</h3><span class="small">chip: ~312 TFLOP/s (16-bit), 2 TB/s</span></div>
+    <div class="seg" role="group" aria-label="Workload"><button data-w="0" aria-pressed="true">Decode</button><button data-w="1" aria-pressed="false">Prefill</button></div>
+    <label class="rng"><span id="aiLbl">Batch size: <b id="aiV"></b></span><input type="range" id="ai" min="0" max="12" step="1" value="0"></label>
+    <div class="svgbox"><svg id="roof" viewBox="0 0 640 240" role="img" aria-label="Roofline chart"></svg></div>
+    <p class="small" id="roofTxt"></p>
+  </div>
+  <div class="two">
+    <div class="callout blue"><b class="h">Prefill: compute-bound</b><span>All input tokens go through the model in parallel. Limited by how many operations the hardware can do. Sets <b>time to first token</b>.</span></div>
+    <div class="callout"><b class="h">Decode: bandwidth-bound</b><span>One token at a time, and each step loads large weight matrices into the compute units. Limited by memory bandwidth. Sets <b>time per output token</b>.</span></div>
+  </div>
+  <p>Because the two phases stress different resources, production systems often run them on separate machines (see Service optimization below). Image generators like Stable Diffusion are usually compute-bound, while language model decoding is usually bandwidth-bound.</p>
+  <div class="two">
+    <div class="sheet"><h3>Online APIs</h3><p class="small">Optimize latency: handle each request on arrival (perhaps batched briefly). For customer-facing apps like chatbots and coding assistants. <b>Streaming</b> sends tokens as they're produced so users wait less, at the cost of not checking the full response before showing it.</p></div>
+    <div class="sheet"><h3>Batch APIs</h3><p class="small">Optimize cost: as of writing, Google Gemini and OpenAI offered batch APIs at 50% off, with turnaround in hours. Good for synthetic data, periodic reports, document processing, migrations, evaluation runs. (Unlike traditional ML "batch inference", these don't precompute answers before requests arrive.)</p></div>
+  </div>
+</section>
+
+<section id="metrics" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Performance metrics</h2></div>
+  <p><b>Latency = TTFT + TPOT × (number of output tokens).</b> Time to first token covers prefill (plus queueing); time per output token covers each decode step. A very fast reader takes about 120 ms per token, so a TPOT around 120 ms (6–8 tokens/s) is usually enough when streaming. Users may see a longer TTFT than the model does: if the model plans and calls tools before writing the visible answer, the user's "first token" comes late.</p>
+  <div class="sheet">
+    <div class="row between"><h3>Same total, different feel</h3><span class="small">streamed response</span></div>
+    <div class="ctrls">
+      <label class="rng"><span>TTFT: <b id="ttV"></b></span><input type="range" id="tt" min="50" max="4000" step="50" value="400"></label>
+      <label class="rng"><span>TPOT: <b id="tpV"></b></span><input type="range" id="tp" min="5" max="200" step="5" value="40"></label>
+      <label class="rng"><span>Output tokens: <b id="otV"></b></span><input type="range" id="ot" min="10" max="2000" step="10" value="300"></label>
+    </div>
+    <div class="svgbox"><svg id="latSvg" viewBox="0 0 640 70" role="img" aria-label="Latency timeline: TTFT then decoding"></svg></div>
+    <p class="small" id="latTxt"></p>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>Averages lie: look at percentiles</h3><button class="btn" id="pctAdd">Add a random request</button></div>
+    <div class="toks" id="pctList"></div>
+    <div class="kv"><div class="stat"><span>Mean</span><b class="big badc" id="pMean"></b></div><div class="stat"><span>p50</span><b class="big blue" id="p50"></b></div><div class="stat"><span>p90</span><b class="big pencil" id="p90"></b></div><div class="stat"><span>p99</span><b class="big" id="p99"></b></div></div>
+    <p class="small">The book's example: ten TTFTs where one 3,000 ms outlier drags the mean to 390 ms though nearly all take about 100 ms. Tap a value to remove it. Investigate outliers; report p50, p90, p95 and p99.</p>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>Throughput is cost</h3><span class="small">output tokens/s across all users</span></div>
+    <div class="ctrls">
+      <label class="rng"><span>Hardware cost: <b id="hcV"></b></span><input type="range" id="hc" min="0.5" max="40" step="0.5" value="2"></label>
+      <label class="rng"><span>Decode throughput: <b id="thrV"></b></span><input type="range" id="thr" min="10" max="5000" step="10" value="100"></label>
+      <label class="rng"><span>Output tokens per request: <b id="oprV"></b></span><input type="range" id="opr" min="10" max="2000" step="10" value="200"></label>
+      <label class="rng"><span>Prefill: requests per minute: <b id="pfV"></b></span><input type="range" id="pf" min="10" max="2000" step="10" value="100"></label>
+    </div>
+    <div class="kv"><div class="stat"><span>Per 1M output tokens</span><b class="big blue" id="c1m"></b></div><div class="stat"><span>Decode, 1K requests</span><b class="big pencil" id="cdec"></b></div><div class="stat"><span>Prefill, 1K requests</span><b class="big" id="cpre"></b></div><div class="stat"><span>Total, 1K requests</span><b class="big okc" id="ctot"></b></div></div>
+    <p class="small">Defaults reproduce the book's example: $2/h at 100 tokens/s ≈ $5.556 per 1M tokens; 1K requests cost $1.11 to decode plus $0.33 to prefill.</p>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>Goodput: throughput that meets your SLO</h3><button class="btn" id="gpNew">New traffic</button></div>
+    <div class="ctrls">
+      <label class="rng"><span>Max TTFT: <b id="sTV"></b></span><input type="range" id="sT" min="50" max="1000" step="25" value="200"></label>
+      <label class="rng"><span>Max TPOT: <b id="sPV"></b></span><input type="range" id="sP" min="20" max="200" step="5" value="100"></label>
+    </div>
+    <div class="svgbox"><svg id="gpSvg" viewBox="0 0 640 230" role="img" aria-label="Scatter of requests by TTFT and TPOT; those inside the SLO box count toward goodput"></svg></div>
+    <p class="small" id="gpTxt"></p>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>Utilization: MFU and MBU</h3><span class="small">not the same as "GPU utilization"</span></div>
+    <p class="small">NVIDIA's "GPU utilization" only says the GPU was busy, not how much of its capacity was used. <b>MFU</b> (model FLOP/s utilization) compares achieved FLOP/s to the chip's peak. <b>MBU</b> (model bandwidth utilization) compares bandwidth used, parameters × bytes per parameter × tokens/s, to the chip's peak bandwidth.</p>
+    <div class="ctrls">
+      <label class="rng"><span>Parameters: <b id="uNV"></b></span><input type="range" id="uN" min="1" max="180" value="7"></label>
+      <label class="rng"><span>Bytes per parameter: <b id="uBV"></b></span><input type="range" id="uB" min="0" max="2" value="1"></label>
+      <label class="rng"><span>Tokens/s: <b id="uTV"></b></span><input type="range" id="uT" min="5" max="400" step="5" value="100"></label>
+      <label class="rng"><span>Chip bandwidth: <b id="uWV"></b></span><input type="range" id="uW" min="0.5" max="8" step="0.1" value="2"></label>
+    </div>
+    <p class="big blue" id="mbuOut"></p>
+    <p class="small">Defaults: 7B in FP16 at 100 tokens/s on an A100 (2 TB/s) uses 700 GB/s, an MBU of 70%. Fewer bytes per parameter (quantization) means fewer bytes to move per token. Training tends to reach higher MFU than inference; PaLM reported 46.2% MFU in training.</p>
+  </div>
+</section>
+
+<section id="hardware" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>AI accelerators</h2></div>
+  <p>CPUs have a few powerful cores (up to about 64 on high-end consumer machines) built for sequential, general work. GPUs have thousands of small cores built for parallel work like matrix multiplication. Many other accelerators now exist, including chips specialized for inference (lower precision, faster memory access) and for transformers. Chips also differ in their compute primitives: scalar, vector and tensor (matrix) units.</p>
+  <div class="two">
+    <div class="sheet"><h3>Compute depends on precision (H100 SXM, with sparsity)</h3><div class="bars" id="hBars"></div><p class="small">Fewer bits, more operations per second. TF32 is a 19-bit format.</p></div>
+    <div class="sheet"><h3>The memory hierarchy</h3>
+      <div class="mem">
+        <div style="background:var(--ok-soft)"><span>GPU on-chip SRAM</span><b>&gt;10 TB/s · ≤40 MB</b></div>
+        <div style="background:var(--blue-soft)"><span>GPU high-bandwidth memory (HBM)</span><b>256 GB/s – 1.5+ TB/s · 24–80 GB</b></div>
+        <div style="background:var(--pencil-soft)"><span>CPU memory (DRAM)</span><b>25–50 GB/s · up to TBs</b></div>
+      </div>
+      <p class="small">Faster means smaller and more expensive. Much of GPU optimization is about keeping data in the fast tiers. Reference numbers only.</p></div>
+  </div>
+  <div class="callout"><b class="h">Power</b><span>An H100 at peak for a year uses about 7,000 kWh; an average US household uses about 10,000 kWh a year. Electricity is a real limit on scaling compute. Chips list maximum power draw or TDP (thermal design power, a cooling proxy).</span></div>
+  <p>Choosing accelerators comes down to three questions: can it run my workload, how long will it take, and what does it cost? FLOP/s, memory size and bandwidth answer the first two; price and power answer the third.</p>
+</section>
+
+<section id="model" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Model-level optimization</h2></div>
+  <p>Ideally optimization doesn't change quality, but many techniques do, which is one reason the same open model can behave differently on different providers. Transformer language models are resource-hungry because they're big, autoregressive and attention-based; each has a family of fixes.</p>
+  <div class="cardgrid" id="compCards"></div>
+  <h3>Beating the one-token-at-a-time bottleneck</h3>
+  <p>At 100 ms a token, 100 tokens take 10 s. Output tokens cost two to four times input tokens across providers, and Anyscale found one output token can affect latency as much as 100 input tokens.</p>
+  <div class="sheet">
+    <div class="row between"><h3>Speculative decoding</h3><button class="btn primary" id="sdRun">Run one round</button></div>
+    <p class="small">A fast <b>draft</b> model proposes K tokens; the big <b>target</b> model checks them all in one parallel pass, keeps the longest correct prefix, and adds one token of its own. The output is exactly what the target alone would produce.</p>
+    <div class="ctrls">
+      <label class="rng"><span>Draft length K: <b id="kV"></b></span><input type="range" id="sdK" min="1" max="12" value="4"></label>
+      <label class="rng"><span>Acceptance rate per token: <b id="aV"></b></span><input type="range" id="sdA" min="0" max="0.98" step="0.02" value="0.7"></label>
+    </div>
+    <div class="toks" id="sdToks"></div>
+    <div class="kv"><div class="stat"><span>Tokens per target pass</span><b class="big okc" id="sdE"></b></div><div class="stat"><span>Estimated speed-up</span><b class="big blue" id="sdS"></b></div></div>
+    <p class="small">Expected tokens per round = (1 − a<sup>K+1</sup>) / (1 − a). Speed-up assumes verifying costs one target step and drafting costs 1.8 ms vs 14.1 ms per token, the ratio DeepMind reported for a 4B draft model and Chinchilla-70B (which more than halved latency). Structured text like code tends to have higher acceptance.</p>
+  </div>
+  <div class="two">
+    <div class="sheet"><h3>Inference with reference</h3><p class="small">Answers often repeat parts of the input (quoting a document, editing code). Instead of a draft model, copy a matching span from the context as the draft and let the model verify it. No extra model, but it only helps when outputs overlap the input.</p></div>
+    <div class="sheet"><h3>Parallel decoding</h3><p class="small">Generate several future tokens at once, then verify and fix them. Lookahead decoding uses the same decoder (with Jacobi iteration); Medusa adds extra decoding heads, each guessing a later position, and picks the best combination with tree attention. Promising, but harder to implement.</p></div>
+  </div>
+  <h3>Attention and the KV cache</h3>
+  <p>Each new token attends to the key and value vectors of all earlier tokens. Rather than recompute them, keep them in a <b>KV cache</b> (inference only). It grows with sequence length and batch size: a 500B+ model with multi-head attention, batch 512 and context 2,048 needs a 3 TB cache, three times the model's weights.</p>
+  <div class="sheet">
+    <div class="row between"><h3>KV cache calculator</h3><span class="small">2 × B × S × L × H × M</span></div>
+    <div class="ctrls">
+      <label class="rng"><span>Batch size B: <b id="kbV"></b></span><input type="range" id="kb" min="1" max="128" value="32"></label>
+      <label class="rng"><span>Sequence length S: <b id="ksV"></b></span><input type="range" id="ks" min="9" max="17" step="1" value="11"></label>
+      <label class="rng"><span>Layers L: <b id="klV"></b></span><input type="range" id="kl" min="12" max="120" value="40"></label>
+      <label class="rng"><span>Model dimension H: <b id="khV"></b></span><input type="range" id="kh" min="1024" max="16384" step="256" value="5120"></label>
+    </div>
+    <div class="row"><div class="seg" role="group" aria-label="Attention design"><button data-kd="1" aria-pressed="true">Full attention</button><button data-kd="8" aria-pressed="false">GQA (÷8)</button><button data-kd="64" aria-pressed="false">MQA (÷heads)</button></div><label class="row small"><input type="checkbox" id="kq"> 8-bit cache</label><label class="row small"><input type="checkbox" id="kx"> share across 3 layers</label></div>
+    <p class="big blue" id="kvOut"></p>
+    <p class="small" id="kvTxt"></p>
+  </div>
+  <div class="cardgrid" id="attCards"></div>
+  <h3>Kernels and compilers</h3>
+  <p><b>Kernels</b> are code tuned for specific hardware, written in CUDA, Triton or ROCm. Writing them used to be a dark art; it's increasingly part of AI engineering. <b>Compilers</b> (torch.compile, XLA, TensorRT, Apache TVM, MLIR) "lower" model code into kernels for a target chip.</p>
+  <div class="cardgrid" id="kCards"></div>
+  <div class="sheet stepper" id="ptStep"><h3>PyTorch's Llama-7B case study (A100 80 GB)</h3><div class="detail" id="ptOut"></div></div>
+</section>
+
+<section id="service" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Service-level optimization</h2></div>
+  <p>Given fixed resources and a stream of requests, allocate them well. These techniques don't change the model, so quality stays the same.</p>
+  <div class="sheet">
+    <div class="row between"><h3>Batching simulator</h3><div class="seg" role="group" aria-label="Batching strategy"><button data-bt="0" aria-pressed="true">Static</button><button data-bt="1" aria-pressed="false">Dynamic</button><button data-bt="2" aria-pressed="false">Continuous</button></div></div>
+    <label class="rng"><span>Dynamic batching window: <b id="bwV"></b></span><input type="range" id="bw" min="1" max="12" value="4"></label>
+    <div class="svgbox"><svg id="btSvg" viewBox="0 0 640 300" role="img" aria-label="Timeline of eight requests under the chosen batching strategy"></svg></div>
+    <p class="small" id="btTxt"></p>
+  </div>
+  <div class="two">
+    <div class="sheet"><h3>Decouple prefill and decode</h3><p class="small">Prefill is compute-bound and decode bandwidth-bound; on one machine they fight. DistServe and "Inference Without Interference" showed separate instances raise the requests a system can serve within latency targets; moving intermediate state between them is cheap on fast links like NVLink. With long inputs and a TTFT priority, prefill-to-decode instance ratios of 2:1 to 4:1 are common.</p></div>
+    <div class="sheet"><h3>Parallelism</h3><p class="small"><b>Replica</b>: more copies, more requests. <b>Tensor</b> (intra-operator): split each matrix multiplication across devices; serves bigger models and cuts latency, with communication overhead. <b>Pipeline</b>: split layers into stages on different devices with micro-batches; serves big models but adds latency, so it's more common in training. Also <b>context</b> (split the input sequence) and <b>sequence</b> parallelism (split operators).</p></div>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>Prompt caching</h3><div class="seg" role="group" aria-label="Use case"><button data-pc="0" aria-pressed="true">Chat with a book</button><button data-pc="1" aria-pressed="false">Many-shot</button><button data-pc="2" aria-pressed="false">Multi-turn</button></div></div>
+    <p class="small">Reuse the processing of shared prompt segments (system prompts, long documents, conversation history). Introduced by Gim et al. in November 2023 and now in major APIs. Anthropic's 2024 numbers:</p>
+    <div class="bars" id="pcBars"></div>
+    <p class="small" id="pcTxt"></p>
+  </div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="q"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b class="blue">Find the bottleneck</b><span>Prefill is compute-bound (TTFT); decode is bandwidth-bound (TPOT).</span></div>
+    <div><b class="pencil">Measure right</b><span>TTFT, TPOT, percentiles, throughput, goodput against an SLO, MFU and MBU.</span></div>
+    <div><b>Know the chip</b><span>FLOP/s by precision, memory size, bandwidth, power, cost.</span></div>
+    <div><b class="okc">Model level</b><span>Quantize, distill, prune; speculative and parallel decoding; KV cache tricks; kernels.</span></div>
+    <div><b>Service level</b><span>Continuous batching, split prefill and decode, prompt caching, parallelism.</span></div>
+    <div><b>Biggest wins</b><span>Usually quantization, tensor parallelism, replica parallelism and attention optimization.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>AI Engineering: Building Applications with Foundation Models</i> by Chip Huyen (O'Reilly, 2025). Explanations, examples, code snippets and drawings are original summaries; charts are redrawn from the ideas in the book, and numbers marked "illustrative" are not from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch08-dataset-engineering.html"><span>Previous · Chapter 8</span><b>Dataset Engineering</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch10-architecture-feedback.html"><span>Next · Chapter 10</span><b>AI Engineering Architecture and User Feedback</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('aie:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('aie:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  const fills=[...r.querySelectorAll('.fill')];requestAnimationFrame(()=>requestAnimationFrame(()=>fills.forEach((f,i)=>{if(data[i])f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%'})))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle: auto -> light -> dark */
+(function(){const b=document.querySelector('[data-theme-toggle]');if(!b)return;const order=['auto','light','dark'];
+  let cur=store.get('theme','auto');
+  function apply(){if(cur==='auto')document.documentElement.removeAttribute('data-theme');else document.documentElement.setAttribute('data-theme',cur);b.textContent='Theme: '+cur;store.set('theme',cur)}
+  b.addEventListener('click',()=>{cur=order[(order.indexOf(cur)+1)%3];apply()});apply();})();
+function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+function fmt(n,d){d=d==null?1:d;if(Math.abs(n)>=1e12)return (n/1e12).toFixed(d)+'T';if(Math.abs(n)>=1e9)return (n/1e9).toFixed(d)+'B';if(Math.abs(n)>=1e6)return (n/1e6).toFixed(d)+'M';if(Math.abs(n)>=1e3)return (n/1e3).toFixed(d)+'K';return (+n).toFixed(d)}
+function rng(id,fn){const e=$(id);e.addEventListener('input',fn);return e}
+
+
+let wk=0;const PEAK=312e12,BW=2e12;
+function roof(){const s=$('#roof');s.innerHTML='';const x0=50,x1=620,y0=210,y1=20;const lx=v=>x0+(Math.log10(v)+1)/5*(x1-x0),ly=v=>y0-(Math.log10(v)-11)/4*(y0-y1);
+ const v=+$('#ai').value;let I,lbl;if(wk===0){const b=Math.pow(2,v);I=b;lbl=`Batch size: <b id="aiV">${b}</b>`}else{const t=Math.pow(2,v+4);I=t;lbl=`Prompt tokens: <b id="aiV">${t}</b>`}$('#aiLbl').innerHTML=lbl;
+ const att=Math.min(PEAK,I*BW),ridge=PEAK/BW;
+ s.appendChild(el('line',{x1:x0,y1:y0,x2:x1,y2:y0,stroke:'var(--line)'}));s.appendChild(el('line',{x1:x0,y1:y0,x2:x0,y2:y1,stroke:'var(--line)'}));
+ s.appendChild(el('text',{x:x1,y:y0+20,'text-anchor':'end','font-size':11,fill:'var(--muted)'},'arithmetic intensity (FLOP/byte, log) →'));s.appendChild(el('text',{x:x0+4,y:y1+2,'font-size':11,fill:'var(--muted)'},'attainable FLOP/s (log)'));
+ let d='';for(let a=0.1;a<=1e4;a*=1.1){d+=(d?'L':'M')+lx(a).toFixed(1)+','+ly(Math.min(PEAK,a*BW)).toFixed(1)}s.appendChild(el('path',{d,fill:'none',stroke:'var(--ink)','stroke-width':2.5}));
+ s.appendChild(el('line',{x1:lx(ridge),y1:y0,x2:lx(ridge),y2:ly(PEAK),stroke:'var(--muted)','stroke-dasharray':'4 4'}));s.appendChild(el('text',{x:lx(ridge)+4,y:y0-6,'font-size':10,fill:'var(--muted)'},'ridge ≈ '+Math.round(ridge)));
+ s.appendChild(el('text',{x:lx(1.5),y:ly(4e12)-8,'font-size':11,fill:'var(--pencil)',transform:`rotate(-30 ${lx(1.5)} ${ly(4e12)-8})`},'bandwidth-bound'));s.appendChild(el('text',{x:lx(2000),y:ly(PEAK)-8,'text-anchor':'middle','font-size':11,fill:'var(--blue)'},'compute-bound'));
+ s.appendChild(el('circle',{cx:lx(I),cy:ly(att),r:8,fill:I<ridge?'var(--pencil)':'var(--blue)'}));
+ $('#roofTxt').textContent=`Intensity ≈ ${I} FLOP/byte (rough: ~2 FLOPs per parameter per token, 2 bytes per parameter, so ~1 FLOP/byte per token processed together). Attainable ≈ ${fmt(att,0)}FLOP/s, ${(att/PEAK*100).toFixed(0)}% of peak. `+(I<ridge?'Bandwidth-bound: the chip waits on memory. '+(wk===0?'Batching more requests reuses each loaded weight.':''):'Compute-bound: more FLOP/s (or fewer operations) is what helps.')}
+seg('[data-w]',b=>{wk=+b.dataset.w;$('#ai').value=wk?4:0;roof()});rng('#ai',roof);roof();
+function lat(){const tt=+$('#tt').value,tp=+$('#tp').value,n=+$('#ot').value;$('#ttV').textContent=tt+' ms';$('#tpV').textContent=tp+' ms';$('#otV').textContent=n;const tot=tt+tp*n;const s=$('#latSvg');s.innerHTML='';const W=600,sc=W/Math.max(tot,1);
+ s.appendChild(el('rect',{x:20,y:15,width:Math.max(2,tt*sc),height:26,fill:'var(--pencil)',rx:3}));s.appendChild(el('rect',{x:20+tt*sc,y:15,width:Math.max(2,tp*n*sc),height:26,fill:'var(--blue)',rx:3}));
+ s.appendChild(el('text',{x:20,y:60,'font-size':11,fill:'var(--pencil)'},'TTFT'));s.appendChild(el('text',{x:620,y:60,'text-anchor':'end','font-size':11,fill:'var(--blue)'},'decode: TPOT × tokens'));
+ const rate=1000/tp;$('#latTxt').innerHTML=`Total <b>${(tot/1000).toFixed(2)} s</b>. Streaming at ${rate.toFixed(1)} tokens/s: `+(tp>120?'slower than a fast reader; users will wait on the text.':tp<60?'faster than anyone reads; spare speed could be traded for throughput.':'about reading speed, which is enough.')+(tt>1500?' A long TTFT feels like the app froze.':'')}
+['#tt','#tp','#ot'].forEach(i=>rng(i,lat));lat();
+let PV=[100,102,100,100,99,104,110,90,3000,95];
+function pctl(a,p){const s=a.slice().sort((x,y)=>x-y);if(!s.length)return 0;const i=Math.min(s.length-1,Math.ceil(p/100*s.length)-1);return s[Math.max(0,i)]}
+function pct(){$('#pctList').innerHTML=PV.map((v,i)=>`<button class="btn" data-pv="${i}" style="${v>500?'border-color:var(--bad);color:var(--bad)':''}">${v} ms</button>`).join('');
+ const m=PV.length?PV.reduce((a,b)=>a+b,0)/PV.length:0;$('#pMean').textContent=Math.round(m)+' ms';$('#p50').textContent=pctl(PV,50)+' ms';$('#p90').textContent=pctl(PV,90)+' ms';$('#p99').textContent=pctl(PV,99)+' ms';
+ $$('#pctList [data-pv]').forEach(b=>b.addEventListener('click',()=>{PV.splice(+b.dataset.pv,1);pct()}))}
+$('#pctAdd').addEventListener('click',()=>{if(PV.length>=30)PV.shift();PV.push(Math.random()<.12?Math.round(800+Math.random()*3000):Math.round(85+Math.random()*30));pct()});pct();
+function cost(){const h=+$('#hc').value,t=+$('#thr').value,o=+$('#opr').value,p=+$('#pf').value;$('#hcV').textContent='$'+h.toFixed(2)+'/h';$('#thrV').textContent=t+' tok/s';$('#oprV').textContent=o;$('#pfV').textContent=p;
+ const per=h/3600/t;const c1=per*1e6,cd=per*o*1000,cp=h/60/p*1000/60;$('#c1m').textContent='$'+c1.toFixed(3);$('#cdec').textContent='$'+cd.toFixed(2);$('#cpre').textContent='$'+cp.toFixed(2);$('#ctot').textContent='$'+(cd+cp).toFixed(2)}
+['#hc','#thr','#opr','#pf'].forEach(i=>rng(i,cost));cost();
+let GP=[];function gpNew(){GP=Array.from({length:100},()=>{const r=Math.random(),q=Math.random();return [Math.round(60+Math.pow(r,1.6)*840),Math.round(30+Math.pow(q,1.4)*150)]})}
+function gp(){const T=+$('#sT').value,P=+$('#sP').value;$('#sTV').textContent=T+' ms';$('#sPV').textContent=P+' ms';const s=$('#gpSvg');s.innerHTML='';const X=v=>50+v/1000*570,Y=v=>200-v/200*180;
+ s.appendChild(el('rect',{x:X(0),y:Y(P),width:X(T)-X(0),height:Y(0)-Y(P),fill:'var(--ok-soft)',stroke:'var(--ok)'}));
+ s.appendChild(el('line',{x1:50,y1:200,x2:620,y2:200,stroke:'var(--line)'}));s.appendChild(el('line',{x1:50,y1:200,x2:50,y2:20,stroke:'var(--line)'}));
+ s.appendChild(el('text',{x:620,y:220,'text-anchor':'end','font-size':11,fill:'var(--muted)'},'TTFT (ms) →'));s.appendChild(el('text',{x:54,y:16,'font-size':11,fill:'var(--muted)'},'TPOT (ms)'));
+ let ok=0;GP.forEach(([t,p])=>{const g=t<=T&&p<=P;if(g)ok++;s.appendChild(el('circle',{cx:X(t),cy:Y(p),r:4,fill:g?'var(--ok)':'var(--bad)',opacity:.8}))});
+ $('#gpTxt').innerHTML=`Throughput: 100 requests per minute. Goodput: <b>${ok}</b> per minute meet TTFT ≤ ${T} ms and TPOT ≤ ${P} ms. (The book's example: 100 completed, 30 within SLO, so goodput is 30.)`}
+$('#gpNew').addEventListener('click',()=>{gpNew();gp()});rng('#sT',gp);rng('#sP',gp);gpNew();gp();
+const UB=[1,2,4];function mbu(){const N=+$('#uN').value,b=UB[+$('#uB').value],t=+$('#uT').value,w=+$('#uW').value;$('#uNV').textContent=N+'B';$('#uBV').textContent=b+(b===1?' (8-bit)':b===2?' (16-bit)':' (32-bit)');$('#uTV').textContent=t;$('#uWV').textContent=w.toFixed(1)+' TB/s';
+ const used=N*b*t;const u=used/(w*1000)*100;$('#mbuOut').innerHTML=`${N}B × ${b} × ${t} = ${used.toLocaleString()} GB/s → MBU ${u>100?'<span class="badc">over 100%: impossible on this chip</span>':u.toFixed(0)+'%'}`}
+['#uN','#uB','#uT','#uW'].forEach(i=>rng(i,mbu));mbu();
+bars('#hBars',[{l:'TF32 Tensor Core',v:989,c:'mid',txt:'989 TFLOP/s'},{l:'BF16 Tensor Core',v:1979,c:'blue',txt:'1,979'},{l:'FP16 Tensor Core',v:1979,c:'blue',txt:'1,979'},{l:'FP8 Tensor Core',v:3958,c:'ok',txt:'3,958'}],3958);
+cards('#compCards',[{t:'Quantization',c:'blue',d:'Fewer bits per value (Chapter 7). Weight-only quantization is by far the most popular: easy, works out of the box for many models, and very effective.'},{t:'Distillation',c:'pencil',d:'Train a small model to mimic a big one (Chapter 8).'},{t:'Pruning',c:'ok',d:'Remove whole nodes (changes the architecture) or zero out the least useful parameters (sparsity). Studies have pruned 90%+ of parameters in some networks without accuracy loss, but it\'s less common in practice: it needs architecture know-how and sparse hardware support.'}]);
+function sdStats(){const K=+$('#sdK').value,a=+$('#sdA').value;$('#kV').textContent=K;$('#aV').textContent=Math.round(a*100)+'%';const E=a>=1?K+1:(1-Math.pow(a,K+1))/(1-a);const S=E/(1+K*1.8/14.1);$('#sdE').textContent=E.toFixed(2);$('#sdS').textContent=S.toFixed(2)+'×';return [K,a]}
+const SDW=['the','model','checks','all','draft','tokens','in','one','parallel','pass','and','keeps','the','longest','good','prefix','so','fewer'];let sdPos=0;
+function sdRun(){const [K,a]=sdStats();let h='';let ok=true,acc=0;for(let i=0;i<K;i++){const w=SDW[(sdPos+i)%SDW.length];if(ok&&Math.random()<a){h+=`<span class="acc">${w}</span>`;acc++}else{h+=`<span class="${ok?'rej':''}" ${ok?'':'style="opacity:.4"'}>${w}</span>`;ok=false}}
+ h+=`<span class="tgt">${SDW[(sdPos+acc)%SDW.length]}</span>`;sdPos+=acc+1;$('#sdToks').innerHTML=h+`<span class="small" style="border:0;background:none">→ ${acc+1} token${acc?'s':''} from one target pass (green: accepted draft, red: first rejection, blue: target's own token)</span>`}
+rng('#sdK',sdStats);rng('#sdA',sdStats);$('#sdRun').addEventListener('click',sdRun);sdRun();
+let kd=1;function kv(){const B=+$('#kb').value,S=Math.pow(2,+$('#ks').value),L=+$('#kl').value,H=+$('#kh').value;$('#kbV').textContent=B;$('#ksV').textContent=S.toLocaleString();$('#klV').textContent=L;$('#khV').textContent=H.toLocaleString();
+ const M=$('#kq').checked?1:2,x=$('#kx').checked?3:1;const base=2*B*S*L*H*2,v=2*B*S*L*H*M/kd/x;$('#kvOut').textContent=(v/1e9).toFixed(v<1e10?2:0)+' GB';
+ $('#kvTxt').textContent=(B===32&&S===2048&&L===40&&H===5120&&v===base?'Llama 2 13B (40 layers, dimension 5,120) at batch 32 and 2,048 tokens: 54 GB with no optimization, more than the 26 GB of weights. ':'')+(v<base?`${(base/v).toFixed(0)}× smaller than unoptimized. `:'')+'GQA/MQA and cross-layer sharing must be built in at training time; cache quantization can be added later. Divisors here are illustrative.'}
+['#kb','#ks','#kl','#kh'].forEach(i=>rng(i,kv));['#kq','#kx'].forEach(i=>$(i).addEventListener('change',kv));seg('[data-kd]',b=>{kd=+b.dataset.kd;kv()});kv();
+cards('#attCards',[{t:'Local windowed attention',c:'blue',d:'Attend only to nearby tokens. With 10,000-token sequences, a 1,000-token window cuts the cache 10×. Often interleaved with global attention.'},{t:'MQA, GQA, cross-layer',c:'blue',d:'Share key-value vectors across query heads (multi-query), groups of heads (grouped-query) or adjacent layers. Character.AI, with ~180-message average conversations, cut its KV cache over 20× by combining such designs.'},{t:'PagedAttention (vLLM)',c:'pencil',d:'Store the cache in non-contiguous blocks, like OS memory pages, cutting fragmentation and allowing memory sharing.'},{t:'Cache compression',c:'pencil',d:'Quantize the cache, compress it adaptively, or keep only selected entries.'},{t:'FlashAttention',c:'ok',d:'A kernel that fuses the attention steps to avoid slow memory trips. Later versions target newer GPUs such as H100.'}]);
+cards('#kCards',[{t:'Vectorization',c:'blue',d:'Process several adjacent elements in one instruction instead of one at a time.'},{t:'Parallelization',c:'blue',d:'Split arrays into independent chunks processed on different cores or threads.'},{t:'Loop tiling',c:'pencil',d:'Order data access to fit the hardware\'s cache and memory layout. Highly hardware-specific.'},{t:'Operator fusion',c:'ok',d:'Merge several operations into one pass to skip redundant memory reads and writes.'}]);
+(function(){$('#ptStep').insertAdjacentHTML('beforeend',stepHTML());const P=[['Baseline','Plain PyTorch inference of Llama-7B.'],['torch.compile','Compile the model into more efficient kernels.'],['INT8 weights','Quantize weights to 8 bits.'],['INT4 weights','Go further, to 4 bits.'],['Speculative decoding','Add a draft model on top.']];
+ stepper('#ptStep',P.map(p=>`<b>${p[0]}</b>`),i=>{$('#ptOut').innerHTML=`<div class="bars">${P.map((p,k)=>`<div class="bar"><span>${p[0]}</span><div class="track"><div class="fill" style="width:${k<=i?(k+1)*20:0}%;background:var(--${k<=i?'blue':'line'})"></div></div><span class="val">${k<=i?'✓':''}</span></div>`).join('')}</div><p>${P[i][1]} Each step raised throughput substantially in PyTorch's experiment; the effect on output quality wasn't reported. (Bar lengths here are illustrative, not measured.)</p>`})})();
+const RQ=[[0,6],[1,2],[2,7],[3,3],[5,4],[9,2],[10,6],[12,3]];let bt=0;
+function bsim(){const W=+$('#bw').value;$('#bwV').textContent=W+' units';const n=RQ.length,st=Array(n),en=Array(n),bs=4;
+ if(bt<2){let i=0,free=0;while(i<n){let j=i,launch;
+  if(bt===0){j=Math.min(n,i+bs);launch=Math.max(free,RQ[j-1][0])}else{const dl=RQ[i][0]+W;while(j<n&&j-i<bs&&RQ[j][0]<=Math.max(dl,free))j++;launch=j-i===bs?Math.max(free,RQ[j-1][0]):Math.max(free,dl)}
+  const len=Math.max(...RQ.slice(i,j).map(r=>r[1]));for(let k=i;k<j;k++){st[k]=launch;en[k]=launch+len}free=launch+len;i=j}}
+ else{const slot=Array(bs).fill(0);for(let k=0;k<n;k++){let si=0;for(let q=1;q<bs;q++)if(slot[q]<slot[si])si=q;st[k]=Math.max(RQ[k][0],slot[si]);en[k]=st[k]+RQ[k][1];slot[si]=en[k]}}
+ const s=$('#btSvg');s.innerHTML='';const maxT=Math.max(...en)+1,X=t=>90+t/Math.max(maxT,30)*530;for(let t=0;t<=Math.max(maxT,30);t+=5){s.appendChild(el('line',{x1:X(t),y1:18,x2:X(t),y2:280,stroke:'var(--grid)'}));s.appendChild(el('text',{x:X(t),y:294,'text-anchor':'middle','font-size':10,fill:'var(--muted)'},String(t)))}
+ let tot=0;RQ.forEach((r,k)=>{const y=24+k*32;s.appendChild(el('text',{x:8,y:y+15,'font-size':11,fill:'var(--ink)'},`req ${k+1} (${r[1]})`));
+  s.appendChild(el('rect',{x:X(r[0]),y,width:Math.max(0,X(st[k])-X(r[0])),height:20,fill:'var(--line)'}));
+  const busy=r[1];s.appendChild(el('rect',{x:X(st[k]),y,width:X(st[k]+busy)-X(st[k]),height:20,fill:'var(--blue)'}));
+  if(en[k]>st[k]+r[1])s.appendChild(el('rect',{x:X(st[k]+r[1]),y,width:X(en[k])-X(st[k]+r[1]),height:20,fill:'var(--pencil)',opacity:.6}));
+  tot+=en[k]-r[0]});
+ $('#btTxt').innerHTML=`Grey: waiting. Blue: generating. Orange: done but held until the whole batch finishes. Batch size 4. Average latency <b>${(tot/n).toFixed(1)}</b> time units. `+(bt===0?'Static: wait for a full batch, so early requests can wait a long time.':bt===1?'Dynamic: launch when the batch is full or the window has passed, so latency is bounded but batches may be under-filled.':'Continuous (in-flight): each finished request leaves at once and a waiting one takes its slot, as in Orca. No orange.')}
+seg('[data-bt]',b=>{bt=+b.dataset.bt;bsim()});rng('#bw',bsim);bsim();
+const PC=[['Chat with a book (100,000-token cached prompt)',11.5,2.4,90],['Many-shot prompting (10,000-token prompt)',1.6,1.1,86],['Multi-turn conversation (10 turns, long system prompt)',10,2.5,53]];
+function pcs(i){const p=PC[i];bars('#pcBars',[{l:'TTFT without cache',v:p[1],c:'bad',txt:p[1]+' s'},{l:'TTFT with cache',v:p[2],c:'ok',txt:p[2]+' s ('+Math.round((p[2]/p[1]-1)*100)+'%)'},{l:'Cost reduction',v:p[3]/100*12,c:'blue',txt:'−'+p[3]+'%'}],12);$('#pcTxt').textContent=p[0]+'. Pricing varies: as of writing, Gemini discounted cached input tokens by 75% but charged for cache storage.'}
+seg('[data-pc]',b=>pcs(+b.dataset.pc));pcs(0);
+quiz('#q','#qScore',[
+ {q:'Decoding a language model at batch size 1 is usually…',o:['Compute-bound','Memory bandwidth-bound','Network-bound'],a:1,why:'Each step loads all weights to produce one token.'},
+ {q:'TTFT 200 ms, TPOT 50 ms, 100 output tokens. Total latency?',o:['5.0 s','5.2 s','250 ms'],a:1,why:'0.2 + 0.05 × 100 = 5.2 s.'},
+ {q:'Of 100 requests per minute, 30 meet the SLO. Goodput is…',o:['100/min','70/min','30/min'],a:2,why:'Goodput counts only requests within the SLO.'},
+ {q:'Speculative decoding changes the target model\'s outputs.',o:['True','False'],a:1,why:'The target verifies every token, so outputs match its own.'},
+ {q:'Which batching returns each response as soon as it finishes?',o:['Static','Dynamic','Continuous'],a:2,why:'Continuous batching frees slots per request.'}]);
+
+})();
+</script>
+</body>
+</html>

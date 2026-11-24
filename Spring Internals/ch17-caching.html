@@ -1,0 +1,750 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Caching · Spring internals</title>
+<meta name="description" content="@Cacheable works exactly like @Transactional: a proxy checks the cache before calling your method. So it has the same self-invocation trap, plus its own questions about keys, eviction and stale data.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Spring internals visual guide. A lab-notebook reading column on blueprint grid paper.
+   Blue ink = the container and your beans, orange pencil = proxies and the advice they add, green = works, red = the trap.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code */
+pre.code{margin:0;background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--blue);border-radius:0 8px 8px 0;padding:12px 14px;overflow-x:auto;font-family:var(--mono);font-size:.82rem;line-height:1.55;tab-size:2;max-width:100%}
+pre.code.bad{border-left-color:var(--bad)} pre.code.good{border-left-color:var(--ok)}
+pre.code .k{color:var(--d5);font-weight:600} pre.code .c{color:var(--muted);font-style:italic} pre.code .s{color:var(--d2)} pre.code .a{color:var(--pencil)} pre.code .n{color:var(--d3)}
+pre.code .hl{background:var(--mid-soft);border-radius:3px;box-shadow:0 0 0 2px var(--mid-soft)}
+code{font-family:var(--mono);font-size:.88em;background:var(--blue-soft);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+pre code{background:none;padding:0;font-size:inherit;overflow-wrap:normal}
+.codecap{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;display:flex;gap:8px;align-items:center}
+.codecap b{color:var(--ok)} .codecap b.x{color:var(--bad)}
+.rule{border:1.5px solid var(--blue);border-radius:10px;padding:12px 16px;background:var(--blue-soft);font-weight:600;max-width:66ch}
+.rule::before{content:"Rule of thumb";display:block;font-family:var(--mono);font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:var(--blue);font-weight:600;margin-bottom:2px}
+/* thread lanes */
+.lanes{display:flex;flex-direction:column;gap:8px}
+.lane{display:grid;grid-template-columns:5.5rem minmax(0,1fr);gap:10px;align-items:center}
+.lane>b{font-family:var(--mono);font-size:.8rem}
+.lane .ops{display:flex;flex-wrap:wrap;gap:6px;min-height:34px;align-items:center}
+.op{font-family:var(--mono);font-size:.78rem;padding:4px 8px;border-radius:6px;border:1px solid var(--line);background:var(--paper)}
+.op.on{border-color:var(--blue);background:var(--blue-soft)}
+.op.badop{border-color:var(--bad);background:var(--bad-soft);color:var(--bad)}
+.op.okop{border-color:var(--ok);background:var(--ok-soft);color:var(--ok)}
+.memcell{display:inline-flex;flex-direction:column;align-items:center;gap:2px;border:1.5px solid var(--pencil);border-radius:8px;padding:6px 14px;background:var(--pencil-soft);font-family:var(--mono)}
+.memcell span{font-size:.7rem;color:var(--muted)}
+.memcell b{font-size:1.3rem}
+.themebtn{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted)}
+.themebtn:hover{border-color:var(--blue);color:var(--blue)}
+.sec-head h2,h1{min-width:0;overflow-wrap:break-word}
+/* flow diagrams */
+.fl-item{transition:opacity .35s ease}
+.fl-dim{opacity:.22}
+.fl-hide{opacity:0;pointer-events:none}
+.fl-node.fl-on rect:first-child{stroke-width:2.6}
+.fl-bad rect:first-child,.fl-bad path{stroke:var(--bad)!important}
+.fl-bad rect:first-child{fill:var(--bad-soft)!important}
+.fl-ok rect:first-child{stroke:var(--ok)!important;fill:var(--ok-soft)!important}
+.fl-lbl{paint-order:stroke;stroke:var(--surface);stroke-width:4px;stroke-linejoin:round}
+/* interview questions */
+.iqs{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+details.iq{border-bottom:1px solid var(--line)}
+details.iq summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:baseline;padding:12px 2px}
+details.iq summary::-webkit-details-marker{display:none}
+details.iq summary .qq{font-weight:600}
+details.iq summary::after{content:"+";font-family:var(--mono);color:var(--muted);grid-column:3;grid-row:1}
+details.iq[open] summary::after{content:"−"}
+details.iq .pg{display:none}
+.iqs.withpg details.iq summary{grid-template-columns:auto minmax(0,1fr) auto auto}
+.iqs.withpg details.iq .pg{display:inline;font-family:var(--mono);font-size:.7rem;color:var(--muted)}
+.iqs.withpg details.iq summary::after{grid-column:4}
+.lv{font-family:var(--mono);font-size:.66rem;letter-spacing:.06em;text-transform:uppercase;border:1px solid;border-radius:4px;padding:1px 6px;white-space:nowrap}
+details.iq .ans{padding:0 2px 14px;color:var(--ink);max-width:70ch;display:flex;flex-direction:column;gap:8px}
+details.iq .ans p{margin:0}
+.callout.bad{border-color:var(--bad);background:var(--bad-soft)}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:.85rem;color:var(--muted)}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.toggles{display:flex;flex-wrap:wrap;gap:8px}
+.tg{border:1.5px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 12px;font-size:.9rem;text-align:left}
+.tg[aria-pressed="true"]{border-color:var(--blue);background:var(--blue-soft);font-weight:600}
+.tg[aria-pressed="true"]::before{content:"✓ ";color:var(--blue)}
+.verdict{border-radius:10px;padding:12px 16px;border:1.5px solid var(--line);display:flex;flex-direction:column;gap:4px}
+.verdict.good{border-color:var(--ok);background:var(--ok-soft)}
+.verdict.badv{border-color:var(--bad);background:var(--bad-soft)}
+.verdict.midv{border-color:var(--mid);background:var(--mid-soft)}
+.verdict b.h{font-family:var(--display);font-size:1.05rem}
+.logbox{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:7em;max-height:16em;overflow:auto;white-space:pre-wrap}
+.logbox .lg-p{color:var(--pencil)} .logbox .lg-b{color:var(--blue)} .logbox .lg-ok{color:var(--ok)} .logbox .lg-bad{color:var(--bad)} .logbox .lg-m{color:var(--muted)}
+/* keep grid and flex children from forcing horizontal scroll on phones */
+.stack,.sheet>*,.two>*,.three>*,.bdcard>*,.hand>*,.lc>*,.simgrid>*,.onion>*,.ref>*{min-width:0}
+.dots{flex-wrap:wrap}
+html,body{overflow-x:clip}
+.stat span.big{font-size:clamp(2rem,6vw,2.8rem);color:var(--ink)}
+.stat span.big.blue{color:var(--blue)} .stat span.big.pencil{color:var(--pencil)} .stat span.big.okc{color:var(--ok)}
+.json{font-family:var(--mono);font-size:.78rem;background:#0f1722;color:#c9d6e3;border-radius:8px;padding:10px 12px;white-space:pre;overflow:auto;max-height:18em}
+
+/* page */
+
+.cgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
+@media (max-width:760px){.cgrid{grid-template-columns:1fr}}
+.cbtns{display:flex;flex-wrap:wrap;gap:6px}
+.cbtns button{font-family:var(--mono);font-size:.8rem}
+.ctab{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:.78rem}
+.ctab th,.ctab td{border-bottom:1px solid var(--line);padding:5px 8px;text-align:left}
+.ctab th{color:var(--muted);font-weight:600}
+.ctab tr.flash td{background:var(--ok-soft)}
+.ctab tr.stale td{background:var(--bad-soft)}
+.ctab td.e{color:var(--muted);font-style:italic}
+.cnt{display:flex;gap:12px;flex-wrap:wrap}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Spring internals · visual guide</a><span class="tag">Part V · Page 17 of 21</span><button class="themebtn" type="button">Theme: auto</button></div>
+  <h1>Caching</h1>
+  <p class="lede">@Cacheable works exactly like @Transactional: a proxy checks the cache before calling your method. So it has the same self-invocation trap, plus its own questions about keys, eviction and stale data.</p>
+  <nav class="toc" aria-label="Sections"><a href="#how">How it works</a><a href="#play">Cache simulator</a><a href="#keys">Keys</a><a href="#pitfalls">Pitfalls</a><a href="#interview">Interview Qs</a></nav>
+</header>
+
+<section id="how" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>@Cacheable is a proxy in front of your method</h2></div>
+  <p><code>@EnableCaching</code> registers the same kind of auto-proxy creator as @Transactional (page 7), with a <code>CacheInterceptor</code> as the advice. Step through one call that misses and one that hits.</p>
+  <pre class="code">
+@Service class ProductService {
+!!  @Cacheable("products")                  // key = id
+  public Product find(long id) { return repo.findById(id).orElseThrow(); }   // slow: hits the DB
+}</pre>
+  <div class="sheet">
+    <div class="svgbox"><svg id="hSvg" viewBox="0 0 720 265" role="img" aria-label="Caller calls the proxy; CacheInterceptor computes a key and asks the CacheManager's cache; on a miss it calls the real method and stores the result; on a hit it returns the cached value without calling the method"></svg></div>
+    <div class="stepper" id="hStep"></div>
+  </div>
+  <div class="rule">On a hit your method body does not run at all: no log line, no side effects, no breakpoint. And because it is a proxy, a call to <code>this.find(id)</code> from inside ProductService never touches the cache.</div>
+</section>
+
+<section id="play" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Play with the cache</h2></div>
+  <p>Call methods and watch the cache and the database counter. Then change how <code>updatePrice</code> is annotated and see what goes stale.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="updatePrice annotation"><button data-up="evict" aria-pressed="true">@CacheEvict(key="#id")</button><button data-up="put" aria-pressed="false">@CachePut(key="#id")</button><button data-up="none" aria-pressed="false">no cache annotation</button></div>
+    <div class="cbtns">
+      <button class="btn" data-c="f1">find(1)</button><button class="btn" data-c="f2">find(2)</button><button class="btn" data-c="u1">updatePrice(1, 25)</button><button class="btn" data-c="self">findTwice(1) via this</button><button class="btn" data-c="clr">@CacheEvict(allEntries=true)</button><button class="btn" data-c="rst">Reset</button>
+    </div>
+    <div class="cgrid">
+      <div class="stack"><div class="cnt"><div class="stat"><span class="big blue" id="nDb">0</span><span>DB queries</span></div><div class="stat"><span class="big okc" id="nHit">0</span><span>cache hits</span></div></div><div class="logbox" id="cLog"></div></div>
+      <div class="stack"><b class="small mono">cache "products"</b><table class="ctab"><thead><tr><th>key</th><th>value</th></tr></thead><tbody id="cTab"></tbody></table><b class="small mono" style="margin-top:.6rem">database</b><table class="ctab"><thead><tr><th>id</th><th>price</th></tr></thead><tbody id="dTab"></tbody></table></div>
+    </div>
+  </div>
+  <div class="tbl"><table class="t"><thead><tr><th>Annotation</th><th>Calls your method?</th><th>Cache effect</th></tr></thead><tbody>
+    <tr><td><code>@Cacheable</code></td><td>Only on a miss</td><td>Reads; stores the result on a miss</td></tr>
+    <tr><td><code>@CachePut</code></td><td>Always</td><td>Stores the result (overwrites)</td></tr>
+    <tr><td><code>@CacheEvict</code></td><td>Always</td><td>Removes the key (or all entries); after the call by default, before it with <code>beforeInvocation=true</code></td></tr>
+    <tr><td><code>@Caching</code></td><td colspan="2">Groups several of the above on one method</td></tr>
+  </tbody></table></div>
+</section>
+
+<section id="keys" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Keys: hit or miss?</h2></div>
+  <p>Without a <code>key</code>, <code>SimpleKeyGenerator</code> builds it from the arguments: no arguments → <code>SimpleKey.EMPTY</code>, one argument → the argument itself, several → <code>SimpleKey(a, b, ...)</code>. The method name is <b>not</b> part of the key.</p>
+  <div class="sheet"><div class="row between"><h3>Second call: hit or miss?</h3><span class="score" id="qScore"></span></div><div class="quiz" id="quiz"></div></div>
+</section>
+
+<section id="pitfalls" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Where caching goes wrong</h2></div>
+  <div class="tbl"><table class="t"><thead><tr><th>Pitfall</th><th>What happens</th><th>Fix</th></tr></thead><tbody>
+    <tr><td>Self-invocation, private or final methods</td><td>The proxy is bypassed: no caching, silently.</td><td>Call through another bean, or move the method.</td></tr>
+    <tr><td>Caching <code>null</code> or empty results</td><td>A miss is cached as null, so "not found yet" sticks.</td><td><code>unless = "#result == null"</code>; Optional is unwrapped automatically.</td></tr>
+    <tr><td>Cache stampede</td><td>A hot key expires and 500 threads all miss and hit the DB at once.</td><td><code>@Cacheable(sync = true)</code>: one thread loads, the others wait (per instance).</td></tr>
+    <tr><td>Local cache, many instances</td><td>Instance A evicts; instance B still serves the old price.</td><td>A shared cache (Redis), short TTLs, or eviction messages.</td></tr>
+    <tr><td>Mutating a cached object</td><td>With an in-memory cache you get the same instance back; changing it changes the cache.</td><td>Cache immutable objects (records). Redis returns copies.</td></tr>
+    <tr><td>No TTL</td><td>Spring's annotations have no expiry; the default ConcurrentMap cache grows forever.</td><td>Configure TTL and size in the provider: Caffeine spec or <code>spring.cache.redis.time-to-live</code>.</td></tr>
+  </tbody></table></div>
+  <pre class="code">
+# Boot picks a provider by classpath: JCache, Hazelcast, Couchbase, Infinispan, Redis, Caffeine, Cache2k, else a ConcurrentMap
+spring.cache.type=caffeine
+spring.cache.cache-names=products
+spring.cache.caffeine.spec=maximumSize=10000,expireAfterWrite=10m</pre>
+</section>
+
+<section id="interview" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Interview questions</h2></div>
+  <div class="iqs" id="iq"></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Original explanations, code and drawings, written against Spring Framework 6.x/7.x and Spring Boot 3.x/4.x. Class names are real Spring classes so you can find them in the source; the flows are simplified to the parts interviews ask about.</footer>
+  <nav class="pager" aria-label="Pages"><a class="pv" href="ch16-events-async.html"><span>Previous · Page 16</span><b>Events, @Async and @Scheduled</b></a><a class="home" href="index.html">All pages</a><a class="nx" href="ch18-configuration.html"><span>Next · Page 18</span><b>Configuration and Profiles</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+const PAGE='ch17-caching';
+/* Shared helpers for every Spring internals page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('spring:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('spring:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: auto -> light -> dark */
+(function(){const r=document.documentElement;let m=store.get('theme','auto');
+  function ap(){if(m==='auto')r.removeAttribute('data-theme');else r.setAttribute('data-theme',m);$$('.themebtn').forEach(b=>b.textContent='Theme: '+m)}
+  ap();$$('.themebtn').forEach(b=>b.addEventListener('click',()=>{m=m==='auto'?'light':m==='light'?'dark':'auto';store.set('theme',m);ap()}))})();
+/* tiny Java highlighter for <pre class="code">. Lines starting with "!!" are highlighted. */
+(function(){const KW='abstract|boolean|break|case|catch|class|char|continue|default|do|double|else|enum|extends|final|finally|for|if|implements|import|instanceof|int|interface|long|new|null|private|protected|public|return|static|super|switch|synchronized|this|throw|throws|true|false|try|var|void|volatile|while|byte|short|float';
+  const re=new RegExp('(//[^\\n]*|/\\*[\\s\\S]*?\\*/)|("(?:[^"\\\\\\n]|\\\\.)*"|\'(?:[^\'\\\\\\n]|\\\\.)*\')|(@[A-Za-z]+)|\\b('+KW+')\\b|\\b(\\d[\\d_]*L?)\\b','g');
+  const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  window.hlJava=function(p){const src=p.textContent.replace(/^\n/,'').replace(/\s+$/,'');
+    const lines=src.split('\n').map(l=>{const mark=l.startsWith('!!');if(mark)l=l.slice(2);
+      let out='',last=0;l.replace(re,(m,c,s,a,k,n,off)=>{out+=esc(l.slice(last,off));const cls=c?'c':s?'s':a?'a':k?'k':'n';out+=`<span class="${cls}">${esc(m)}</span>`;last=off+m.length;return m});out+=esc(l.slice(last));
+      return mark?`<span class="hl">${out}</span>`:out});
+    p.innerHTML='<code>'+lines.join('\n')+'</code>'};
+  $$('pre.code').forEach(hlJava)})();
+/* flow diagram: spec {nodes:[{id,x,y,w,h,t,sub,c,shape}], groups:[{id,x,y,w,h,t,c}], edges:[{id,f,t,pts,label,c,dash,bend}]}
+   x,y of nodes are centres; groups use top-left. api.set({on:[ids], hide:[ids], bad:[ids], ok:[ids], tok:[edgeIds], sub:{id:text}, tokc}) */
+function flow(sel,spec){
+  const svg=typeof sel==='string'?$(sel):sel;svg.innerHTML='';
+  const defs=el('defs');['muted','blue','pencil','ok','bad'].forEach(c=>{const m=el('marker',{id:'ah-'+c+'-'+svg.id,viewBox:'0 0 10 10',refX:9,refY:5,markerWidth:7,markerHeight:7,orient:'auto-start-reverse'});m.appendChild(el('path',{d:'M0,0 L10,5 L0,10 z',fill:`var(--${c})`}));defs.appendChild(m)});svg.appendChild(defs);
+  const G={},N={},E={};const gG=el('g'),gE=el('g'),gN=el('g'),gT=el('g');[gG,gE,gN,gT].forEach(g=>svg.appendChild(g));
+  (spec.groups||[]).forEach(g=>{const w=el('g',{class:'fl-item fl-group'});const c=g.c||'line';
+    w.appendChild(el('rect',{x:g.x,y:g.y,width:g.w,height:g.h,rx:12,fill:g.fill?`var(--${g.fill})`:'none',stroke:`var(--${c})`,'stroke-width':1.4,'stroke-dasharray':'6 5'}));
+    w.appendChild(el('text',{x:g.x+12,y:g.y+18,'font-size':11.5,class:'t-mono',fill:`var(--${c==='line'?'muted':c})`,'font-weight':600},g.t));gG.appendChild(w);G[g.id]=w});
+  spec.nodes.forEach(n=>{n.w=n.w||130;n.h=n.h||46;const c=n.c||'blue';const g=el('g',{class:'fl-item fl-node'});
+    const x=n.x-n.w/2,y=n.y-n.h/2;
+    if(n.shape==='db'){g.appendChild(el('rect',{x,y,width:n.w,height:n.h,rx:n.w/2>40?14:8,fill:'var(--surface)',stroke:`var(--${c})`,'stroke-width':1.6}))}
+    else if(n.shape==='pill'){g.appendChild(el('rect',{x,y,width:n.w,height:n.h,rx:n.h/2,fill:`var(--${c}-soft,var(--surface))`,stroke:`var(--${c})`,'stroke-width':1.6}))}
+    else{g.appendChild(el('rect',{x,y,width:n.w,height:n.h,rx:8,fill:'var(--surface)',stroke:`var(--${c})`,'stroke-width':1.6}));g.appendChild(el('rect',{x,y,width:5,height:n.h,rx:2,fill:`var(--${c})`}))}
+    const lines=n.t.split('\n');const hasSub=n.sub!=null;const total=lines.length+(hasSub?1:0);
+    lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+(n.shape?0:2),y:n.y+(i-(total-1)/2)*15+4.5,'text-anchor':'middle','font-size':n.fs||12.5,'font-weight':650,fill:'var(--ink)'},l)));
+    if(hasSub){const s=el('text',{x:n.x+(n.shape?0:2),y:n.y+(lines.length-(total-1)/2)*15+4,'text-anchor':'middle','font-size':10.5,class:'t-mono',fill:'var(--muted)'},n.sub);g.appendChild(s);n.subEl=s}
+    gN.appendChild(g);N[n.id]=n;n.g=g});
+  function clip(n,dx,dy){const hw=n.w/2+3,hh=n.h/2+3;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  (spec.edges||[]).forEach(e=>{const a=N[e.f],b=N[e.t];let pts=[];if(e.xy){e.pts=e.xy.slice(1,-1)}
+    const mid=e.pts||[];const first=mid.length?mid[0]:[b.x,b.y],last=mid.length?mid[mid.length-1]:[a.x,a.y];
+    let dx=first[0]-a.x,dy=first[1]-a.y,L=Math.hypot(dx,dy)||1;pts.push(clip(a,dx/L,dy/L));mid.forEach(p=>pts.push(p));
+    dx=last[0]-b.x;dy=last[1]-b.y;L=Math.hypot(dx,dy)||1;pts.push(clip(b,dx/L,dy/L));
+    if(e.xy)pts=e.xy.map(p=>p.slice());
+    let d='M'+pts.map(p=>p.join(',')).join(' L');
+    if(e.bend&&!mid.length){const [p,q]=[pts[0],pts[1]];const mx=(p[0]+q[0])/2,my=(p[1]+q[1])/2;const ux=q[0]-p[0],uy=q[1]-p[1];const l=Math.hypot(ux,uy)||1;const cx=mx-uy/l*e.bend,cy=my+ux/l*e.bend;d=`M${p[0]},${p[1]} Q${cx},${cy} ${q[0]},${q[1]}`}
+    const c=e.c||'muted';const g=el('g',{class:'fl-item fl-edge'});
+    const path=el('path',{d,fill:'none',stroke:`var(--${c})`,'stroke-width':1.8,'marker-end':`url(#ah-${c}-${svg.id})`});if(e.dash)path.setAttribute('stroke-dasharray','5 4');
+    g.appendChild(path);
+    if(e.label){const L2=path.getTotalLength?0:0;const lp=e.lp||null;let mx,my;
+      if(lp){mx=lp[0];my=lp[1]}else if(mid.length){const k=Math.floor((pts.length-1)/2);mx=(pts[k][0]+pts[k+1][0])/2;my=(pts[k][1]+pts[k+1][1])/2-6}else{mx=(pts[0][0]+pts[1][0])/2;my=(pts[0][1]+pts[1][1])/2-6}
+      g.appendChild(el('text',{x:mx,y:my,'text-anchor':'middle','font-size':10.5,class:'t-mono fl-lbl',fill:`var(--${c==='muted'?'muted':c})`},e.label))}
+    gE.appendChild(g);E[e.id]=Object.assign(e,{g,path})});
+  let raf=null;const tok=el('circle',{r:6,fill:'var(--pencil)',stroke:'var(--surface)','stroke-width':2,opacity:0});gT.appendChild(tok);
+  const reduce=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function play(list,c){cancelAnimationFrame(raf);tok.setAttribute('fill',`var(--${c||'pencil'})`);if(!list||!list.length){tok.setAttribute('opacity',0);return}
+    let i=0,t0=null;const dur=700;
+    function frame(ts){if(t0==null)t0=ts;const e=E[list[i]];if(!e){tok.setAttribute('opacity',0);return}const p=e.path;const L=p.getTotalLength();let f=Math.min(1,(ts-t0)/dur);if(reduce)f=1;
+      const pt=p.getPointAtLength(L*f);tok.setAttribute('cx',pt.x);tok.setAttribute('cy',pt.y);tok.setAttribute('opacity',1);
+      if(f>=1){if(i<list.length-1){i++;t0=ts;raf=requestAnimationFrame(frame)}}else raf=requestAnimationFrame(frame)}
+    raf=requestAnimationFrame(frame)}
+  const all=()=>[...Object.entries(N).map(([k,v])=>[k,v.g]),...Object.entries(E).map(([k,v])=>[k,v.g]),...Object.entries(G)];
+  const api={N,E,G,set(s){s=s||{};const on=s.on?new Set(s.on):null;const hide=new Set(s.hide||[]);const bad=new Set(s.bad||[]),ok=new Set(s.ok||[]);
+    all().forEach(([id,g])=>{g.classList.toggle('fl-dim',!!on&&!on.has(id));g.classList.toggle('fl-hide',hide.has(id));g.classList.toggle('fl-bad',bad.has(id));g.classList.toggle('fl-ok',ok.has(id));g.classList.toggle('fl-on',!!on&&on.has(id))});
+    Object.values(E).forEach(e=>e.path.classList.toggle('flow',!!on&&on.has(e.id)&&!hide.has(e.id)));
+    Object.values(N).forEach(n=>{if(n.subEl)n.subEl.textContent=(s.sub&&s.sub[n.id]!=null)?s.sub[n.id]:n.sub});
+    play(s.tok,s.tokc)}};
+  api.set(spec.start||{});return api;
+}
+/* interview questions: list [{q,a,l}] l = core | deep | trap */
+const LVL={core:['Core','blue'],deep:['Deeper','d5'],trap:['Trap','pencil']};
+function iqList(sel,list,opts){const r=typeof sel==='string'?$(sel):sel;opts=opts||{};
+  r.innerHTML=list.map((x,i)=>{const L=LVL[x.l||'core'];return `<details class="iq"${opts.open?' open':''}><summary><span class="lv" style="color:var(--${L[1]});border-color:var(--${L[1]})">${L[0]}</span><span class="qq">${x.q}</span>${x.p?`<span class="pg">${x.p}</span>`:''}</summary><div class="ans">${x.a}</div></details>`}).join('')}
+
+/* Interview question bank shared by every page. l: core | deep | trap */
+const IQ={
+'ch01-big-picture':[
+ {l:'core',q:'What is Inversion of Control, and how is it different from Dependency Injection?',a:'<p><b>IoC</b> is the principle: your code stops creating and controlling its collaborators; something else (a framework) does it and calls you. <b>DI</b> is one way to implement IoC: the container passes dependencies in through constructors, setters or fields instead of your class looking them up or calling <code>new</code>.</p><p>Other IoC forms exist: template methods, event callbacks, service locators. Spring uses DI for wiring and callbacks (lifecycle hooks, listeners) for the rest.</p>'},
+ {l:'core',q:'What is a Spring bean?',a:'<p>Any object whose lifecycle is managed by the Spring container: Spring creates it from a BeanDefinition, injects its dependencies, runs its lifecycle callbacks, possibly wraps it in a proxy, and destroys it on shutdown. An object you create with <code>new</code> is not a bean, even if its class has <code>@Component</code>.</p>'},
+ {l:'core',q:'What does the Spring container actually do for you?',a:'<p>Four jobs: <b>wiring</b> (build objects and inject dependencies), <b>lifecycle</b> (init and destroy callbacks, scopes), <b>decoration</b> (wrap beans in proxies for transactions, security, caching, async), and <b>configuration</b> (the Environment: properties, profiles, placeholders).</p>'},
+ {l:'core',q:'Spring Framework vs Spring Boot: what is the difference?',a:'<p>Spring Framework is the container plus modules (MVC, data access, AOP, transactions). Spring Boot sits on top and adds <b>auto-configuration</b>, <b>starters</b> (curated dependency sets), an <b>embedded server</b>, externalized configuration conventions and production features (Actuator). Boot does not replace the container; it configures it for you.</p>'},
+ {l:'trap',q:'If I annotate a class with @Component and then call new MyService(), will its @Autowired fields be injected?',a:'<p>No. Injection only happens to instances the container creates. A hand-made instance has null <code>@Autowired</code> fields and no proxy, so <code>@Transactional</code> on it does nothing either. (AspectJ with <code>@Configurable</code> can change this, but that is rare.)</p>'},
+ {l:'deep',q:'Why is the Spring approach good for testing?',a:'<p>Because dependencies come in from outside, a test can pass in fakes or mocks directly (especially with constructor injection) without any container. With Spring in the test, <code>@MockitoBean</code> (formerly <code>@MockBean</code>) swaps a bean in the context.</p>'},
+],
+'ch02-container':[
+ {l:'core',q:'BeanFactory vs ApplicationContext?',a:'<p><code>BeanFactory</code> is the basic container interface: get beans, lazily by default. <code>ApplicationContext</code> extends it and adds eager singleton creation at startup, automatic registration of BeanPostProcessors and BeanFactoryPostProcessors, events (<code>ApplicationEventPublisher</code>), i18n (<code>MessageSource</code>), resource loading and the <code>Environment</code>. In practice you always use an ApplicationContext; internally it delegates bean work to a <code>DefaultListableBeanFactory</code>.</p>'},
+ {l:'core',q:'What is a BeanDefinition?',a:'<p>The recipe for a bean: class name (or factory method), scope, lazy flag, primary flag, constructor arguments, property values, init and destroy method names, depends-on. Spring first collects all definitions into a registry (a map from bean name to definition) and only then creates objects from them. BeanFactoryPostProcessors can change definitions before any bean exists.</p>'},
+ {l:'core',q:'What bean scopes exist and which is the default?',a:'<p><b>singleton</b> (default: one instance per container), <b>prototype</b> (new instance on every lookup or injection), and for web apps <b>request</b>, <b>session</b>, <b>application</b> and <b>websocket</b>. Note that a Spring singleton is one per container, not one per JVM like the GoF pattern.</p>'},
+ {l:'trap',q:'You inject a prototype bean into a singleton. How many prototype instances do you get?',a:'<p>One. Injection happens once, when the singleton is built, so the singleton holds the same prototype instance forever. To get a fresh one each time use <code>ObjectProvider&lt;T&gt;.getObject()</code>, <code>@Lookup</code> method injection, or a scoped proxy (<code>@Scope(value="prototype", proxyMode=TARGET_CLASS)</code>).</p>'},
+ {l:'deep',q:'How can a request-scoped bean be injected into a singleton controller?',a:'<p>Through a <b>scoped proxy</b>. The singleton gets a proxy; on each method call the proxy looks up the real bean for the current request (from a ThreadLocal-bound request attributes holder) and delegates. In Spring MVC, <code>@RequestScope</code> already uses <code>proxyMode = TARGET_CLASS</code>.</p>'},
+ {l:'core',q:'When are singleton beans created?',a:'<p>Eagerly, during <code>refresh()</code>, in the step <code>finishBeanFactoryInitialization</code>, unless marked <code>@Lazy</code> (or <code>spring.main.lazy-initialization=true</code> in Boot). Eager creation means configuration errors surface at startup instead of on the first request.</p>'},
+ {l:'deep',q:'Are singleton beans thread-safe?',a:'<p>Spring does nothing to make them thread-safe. One instance serves every request thread, so a singleton must be stateless or guard its mutable state. That is why services hold only other beans and config, and keep per-request data in locals.</p>'},
+ {l:'deep',q:'What is the difference between BeanFactoryPostProcessor and BeanPostProcessor?',a:'<p>A <b>BeanFactoryPostProcessor</b> runs once, before any regular bean is created, and edits BeanDefinitions (for example <code>PropertySourcesPlaceholderConfigurer</code> resolving <code>${...}</code>, or <code>ConfigurationClassPostProcessor</code> parsing @Configuration and @ComponentScan). A <b>BeanPostProcessor</b> runs for every bean instance, around its initialization, and can modify or replace the instance (this is where proxies are created).</p>'},
+],
+'ch03-dependency-injection':[
+ {l:'core',q:'Constructor, setter or field injection: which do you prefer and why?',a:'<p><b>Constructor injection</b>: dependencies can be <code>final</code>, the object is never half-built, required dependencies are explicit, and tests can call the constructor without Spring. With a single constructor, <code>@Autowired</code> is optional. Setter injection suits optional dependencies. Field injection is concise but hides dependencies and needs reflection to test.</p>'},
+ {l:'core',q:'Two beans implement the same interface. How does Spring decide which one to inject?',a:'<p>It first finds all candidates by <b>type</b>. If more than one: a <code>@Qualifier</code> at the injection point narrows it; else a bean marked <code>@Primary</code> wins; else (lower) <code>@Priority</code>; else it falls back to matching the <b>parameter or field name</b> against bean names. If still ambiguous: <code>NoUniqueBeanDefinitionException</code>. If none: <code>NoSuchBeanDefinitionException</code> (unless optional).</p>'},
+ {l:'core',q:'How do you inject all implementations of an interface?',a:'<p>Ask for <code>List&lt;PaymentGateway&gt;</code> (ordered by <code>@Order</code>/<code>Ordered</code>) or <code>Map&lt;String, PaymentGateway&gt;</code> keyed by bean name. This is the usual way to build a strategy pattern.</p>'},
+ {l:'deep',q:'How does Spring resolve a circular dependency between two singletons?',a:'<p>Only for setter or field injection. While creating A, Spring instantiates it, then puts an <b>ObjectFactory for an early reference</b> into the third-level cache (<code>singletonFactories</code>) before populating fields. When B asks for A, Spring finds A in creation, calls that factory (which can create an early proxy if A needs one), moves the result to <code>earlySingletonObjects</code>, and gives it to B. B finishes, A gets B, A finishes and lands in <code>singletonObjects</code>.</p>'},
+ {l:'trap',q:'Does a circular dependency with constructor injection work?',a:'<p>No. To call A\'s constructor Spring needs B, and to call B\'s constructor it needs A, and neither object exists yet to hand out early. You get <code>BeanCurrentlyInCreationException</code>. Fixes: redesign (usually the right answer), inject one side lazily (<code>@Lazy</code> on the parameter creates a lazy proxy), or use <code>ObjectProvider</code>.</p>'},
+ {l:'trap',q:'My circular dependency worked in Spring Boot 2.5 and fails after upgrading. Why?',a:'<p>Since Spring Boot 2.6, circular references are <b>prohibited by default</b>. You can turn them back on with <code>spring.main.allow-circular-references=true</code>, but Boot is nudging you to remove the cycle.</p>'},
+ {l:'deep',q:'Why are there three caches and not two?',a:'<p>The third level stores a <b>factory</b>, not an object, so the early reference can be post-processed lazily: if A will be proxied (say it is @Transactional), the factory asks the auto-proxy creator for the proxy now, so B gets the proxy and not the raw object. The factory only runs if someone actually needs the early reference.</p>'},
+ {l:'core',q:'What is the difference between @Autowired, @Inject and @Resource?',a:'<p><code>@Autowired</code> (Spring) and <code>@Inject</code> (Jakarta) resolve by type first, then qualifiers. <code>@Resource</code> (Jakarta) resolves by <b>name</b> first, then type. <code>@Autowired(required=false)</code> has no direct <code>@Inject</code> equivalent; use <code>Optional</code> or <code>ObjectProvider</code>.</p>'},
+],
+'ch04-bean-lifecycle':[
+ {l:'core',q:'Walk me through the Spring bean lifecycle.',a:'<p>Definition registered → BeanFactoryPostProcessors → <b>instantiate</b> (constructor) → <b>populate</b> properties (@Autowired) → Aware callbacks (BeanNameAware, BeanFactoryAware, ApplicationContextAware) → BeanPostProcessor <b>before</b> init (this runs <code>@PostConstruct</code>) → <code>InitializingBean.afterPropertiesSet()</code> → custom init-method → BeanPostProcessor <b>after</b> init (<b>proxies created here</b>) → bean ready → on shutdown <code>@PreDestroy</code> → <code>DisposableBean.destroy()</code> → custom destroy-method.</p>'},
+ {l:'core',q:'Why not do initialization in the constructor?',a:'<p>With field or setter injection, dependencies are still null inside the constructor. <code>@PostConstruct</code> runs after injection, so everything is in place. (With constructor injection the dependencies are available, but proxies and Aware callbacks are not yet.)</p>'},
+ {l:'trap',q:'Inside @PostConstruct you call a @Transactional method on this. Is there a transaction?',a:'<p>No, twice over. It is a self-call on <code>this</code>, which never goes through a proxy, and the proxy does not even exist yet: it is created in <code>postProcessAfterInitialization</code>, after @PostConstruct. Use an <code>ApplicationReadyEvent</code> listener or <code>SmartInitializingSingleton</code> and call through another bean.</p>'},
+ {l:'deep',q:'Where in the lifecycle does Spring create AOP proxies?',a:'<p>In <code>BeanPostProcessor.postProcessAfterInitialization</code>, implemented by <code>AbstractAutoProxyCreator</code> (in Boot, <code>AnnotationAwareAspectJAutoProxyCreator</code>). It checks whether any advisor matches the bean; if so it returns a proxy instead of the bean, and the container stores and injects the proxy. The one exception is an early reference handed out during a circular dependency.</p>'},
+ {l:'deep',q:'Name some built-in BeanPostProcessors and what they do.',a:'<p><code>AutowiredAnnotationBeanPostProcessor</code> (@Autowired, @Value, @Inject), <code>CommonAnnotationBeanPostProcessor</code> (@PostConstruct, @PreDestroy, @Resource), <code>ApplicationContextAwareProcessor</code> (ApplicationContextAware and friends), <code>AnnotationAwareAspectJAutoProxyCreator</code> (proxies for aspects, @Transactional, @Cacheable), <code>AsyncAnnotationBeanPostProcessor</code> (@Async), <code>ConfigurationPropertiesBindingPostProcessor</code> in Boot.</p>'},
+ {l:'trap',q:'Is @PreDestroy called for prototype beans?',a:'<p>No. The container hands out prototypes and forgets them, so it never calls their destroy callbacks. The client owns cleanup. Init callbacks do run for prototypes.</p>'},
+ {l:'core',q:'If a bean has @PostConstruct, afterPropertiesSet() and an initMethod, in which order do they run?',a:'<p><code>@PostConstruct</code> first (it runs inside a BeanPostProcessor\'s before-init step), then <code>afterPropertiesSet()</code>, then the custom init method. Destroy mirrors it: <code>@PreDestroy</code>, <code>destroy()</code>, custom destroy method.</p>'},
+ {l:'deep',q:'How would you run code after all singletons are created?',a:'<p>Implement <code>SmartInitializingSingleton.afterSingletonsInstantiated()</code>, listen for <code>ContextRefreshedEvent</code>, or in Boot use <code>ApplicationRunner</code>/<code>CommandLineRunner</code> or an <code>ApplicationReadyEvent</code> listener (fires once the app is ready to serve).</p>'},
+],
+'ch05-proxies':[
+ {l:'core',q:'What is the difference between a JDK dynamic proxy and a CGLIB proxy?',a:'<p>A <b>JDK dynamic proxy</b> is built at runtime by <code>java.lang.reflect.Proxy</code>: a new class that <b>implements the bean\'s interfaces</b> and sends every call to an <code>InvocationHandler</code>. It can only proxy interface methods. A <b>CGLIB proxy</b> is a generated <b>subclass</b> of the bean\'s class that overrides its methods and sends calls to a <code>MethodInterceptor</code>. It works without interfaces but cannot override <code>final</code> or <code>private</code> methods, and cannot subclass a <code>final</code> class.</p>'},
+ {l:'core',q:'Which one does Spring use by default?',a:'<p>Plain Spring Framework: JDK proxy if the bean implements at least one interface, CGLIB otherwise. <b>Spring Boot</b> sets <code>spring.aop.proxy-target-class=true</code> by default, so Boot apps use CGLIB even when there is an interface. You can force CGLIB with <code>@EnableAspectJAutoProxy(proxyTargetClass = true)</code>.</p>'},
+ {l:'trap',q:'With a JDK proxy, what happens if you inject the implementation class instead of the interface?',a:'<p>Startup fails with "bean is expected to be of type OrderServiceImpl but was actually of type jdk.proxy2.$Proxy42". The proxy implements the interface; it is not an instance of the implementation class. This is one reason Boot defaults to CGLIB.</p>'},
+ {l:'trap',q:'A method in a CGLIB-proxied service is final. What happens when you call it?',a:'<p>The proxy cannot override it, so the call runs the proxy object\'s own copy of the method, with no advice. Worse, the proxy instance\'s fields were never injected (Spring creates it via Objenesis without calling your constructor), so the method often throws a <b>NullPointerException</b> on a dependency. Kotlin classes are final by default, hence the <code>kotlin-spring</code> (all-open) plugin.</p>'},
+ {l:'deep',q:'In a CGLIB proxy, does the proxy call super.method()?',a:'<p>For AOP proxies, no. The proxy holds a reference to a <b>separate target instance</b> (the real bean) and the interceptor chain ends by invoking the method on that target. That is why a call from inside the target to <code>this.other()</code> is not intercepted: <code>this</code> is the target, not the proxy. (@Configuration class enhancement is different: there the subclass does call super.)</p>'},
+ {l:'deep',q:'Why does calling one @Bean method from another in a @Configuration class return the same singleton?',a:'<p>Because full-mode @Configuration classes are enhanced with CGLIB. The subclass intercepts each @Bean method: if the bean already exists in the container it returns that instance instead of running your method body again. With <code>@Configuration(proxyBeanMethods = false)</code> (lite mode, common in Boot auto-configs) this interception is off and the method really is called twice.</p>'},
+ {l:'core',q:'How can you tell at runtime whether you hold a proxy?',a:'<p><code>AopUtils.isAopProxy(bean)</code>, <code>isJdkDynamicProxy</code>, <code>isCglibProxy</code>; or print <code>bean.getClass()</code> and look for <code>$Proxy</code> or <code>$$SpringCGLIB$$</code>. <code>AopUtils.getTargetClass(bean)</code> gives the real class.</p>'},
+],
+'ch06-aop':[
+ {l:'core',q:'Explain aspect, join point, pointcut, advice and weaving.',a:'<p>An <b>aspect</b> is a module for a cross-cutting concern (a class with <code>@Aspect</code>). A <b>join point</b> is a point in execution where advice could run; in Spring AOP it is always a <b>method execution</b> on a bean. A <b>pointcut</b> is an expression that selects join points. <b>Advice</b> is the code that runs there (before, after, around...). <b>Weaving</b> links aspects to targets; Spring does it at runtime by creating proxies.</p>'},
+ {l:'core',q:'What advice types are there and when does each run?',a:'<p><code>@Before</code> (before the method), <code>@AfterReturning</code> (after a normal return, can see the result), <code>@AfterThrowing</code> (after an exception), <code>@After</code> (always, like finally) and <code>@Around</code> (wraps the call; you decide whether and when to call <code>pjp.proceed()</code>, and can change arguments, result or exceptions).</p>'},
+ {l:'core',q:'Spring AOP vs AspectJ?',a:'<p>Spring AOP is proxy-based, runtime, method-execution join points on Spring beans only, no special compiler. AspectJ weaves bytecode at compile time or load time, supports field access, constructors, static methods, calls from any object, and self-invocation, and has no proxy overhead. Spring uses AspectJ\'s annotation and pointcut <i>syntax</i> but not its weaver unless you enable it.</p>'},
+ {l:'trap',q:'Your @Around advice forgets to call proceed(). What happens?',a:'<p>The target method never runs, and the caller receives whatever the advice returns (often null). Around advice is the only advice that can skip or repeat the call, which is exactly how retry and caching aspects work.</p>'},
+ {l:'deep',q:'Two aspects advise the same method. Which runs first?',a:'<p>Order them with <code>@Order</code> or by implementing <code>Ordered</code>. The <b>lowest</b> order value has the highest precedence: it is the <b>outermost</b> layer, so its before-part runs first and its after-part runs last. Without an order, precedence is undefined. Transaction advice has <code>Ordered.LOWEST_PRECEDENCE</code> by default, so most custom aspects wrap outside the transaction.</p>'},
+ {l:'deep',q:'How is an aspect turned into something a proxy can execute?',a:'<p>Each advice method becomes an <b>Advisor</b> (pointcut plus advice). The auto-proxy creator finds advisors whose pointcut matches the bean, builds a proxy, and at call time the proxy builds (and caches) a chain of <code>MethodInterceptor</code>s for that method. A <code>ReflectiveMethodInvocation</code> walks the chain: each interceptor calls <code>proceed()</code> to pass control inward until the target method runs.</p>'},
+ {l:'core',q:'Read this pointcut: execution(* com.shop..*Service.*(..))',a:'<p>Any return type (<code>*</code>), any class in <code>com.shop</code> or a sub-package (<code>..</code>) whose name ends with <code>Service</code>, any method name, any arguments (<code>(..)</code>). Other designators: <code>within</code>, <code>@annotation</code>, <code>@within</code>, <code>bean(name)</code>, <code>args</code>, <code>this</code>, <code>target</code>.</p>'},
+],
+'ch07-transactions':[
+ {l:'core',q:'How does @Transactional work internally?',a:'<p>At startup an auto-proxy creator sees the annotation and wraps the bean in a proxy whose chain includes <code>TransactionInterceptor</code>. On each call the interceptor reads the transaction attributes, asks the <code>PlatformTransactionManager</code> to begin (get a connection, <code>setAutoCommit(false)</code>, bind it to the thread via <code>TransactionSynchronizationManager</code>), calls your method, then commits or rolls back. Repositories and <code>JdbcTemplate</code> find the same connection through that ThreadLocal.</p>'},
+ {l:'trap',q:'Why does calling a @Transactional method from another method in the same class not start a transaction?',a:'<p>The proxy only sees calls that come in <b>through the proxy</b>. Inside the bean, <code>this.saveAudit()</code> calls the target object directly, bypassing the interceptor. So <code>REQUIRES_NEW</code>, <code>readOnly</code>, rollback rules and even the whole transaction on the inner method are silently ignored.</p>'},
+ {l:'core',q:'How do you fix self-invocation?',a:'<p>Best: move the method to a <b>separate bean</b> and inject it. Alternatives: use <code>TransactionTemplate</code> programmatically; inject the bean into itself (<code>@Lazy</code> self-reference) and call through it; <code>@EnableAspectJAutoProxy(exposeProxy = true)</code> plus <code>AopContext.currentProxy()</code>; or switch to AspectJ weaving, which has no proxy.</p>'},
+ {l:'trap',q:'A @Transactional method throws a checked exception. Does it roll back?',a:'<p>No, by default it <b>commits</b>. Only <code>RuntimeException</code> and <code>Error</code> trigger rollback (the EJB convention). Use <code>@Transactional(rollbackFor = Exception.class)</code> to roll back on checked ones.</p>'},
+ {l:'trap',q:'The outer method catches an exception thrown by an inner REQUIRED method, then returns normally. What happens at commit?',a:'<p><code>UnexpectedRollbackException: Transaction silently rolled back because it has been marked as rollback-only</code>. Both methods share one physical transaction; when the inner interceptor saw the exception it marked the transaction rollback-only. Catching the exception does not unmark it, so the outer commit turns into a rollback and Spring tells you.</p>'},
+ {l:'core',q:'Explain REQUIRED, REQUIRES_NEW and NESTED.',a:'<p><b>REQUIRED</b> (default): join the current transaction or start one. <b>REQUIRES_NEW</b>: suspend the current one and run in a brand-new physical transaction with its own connection; it commits or rolls back independently. <b>NESTED</b>: same physical transaction with a <b>savepoint</b>; an inner failure rolls back to the savepoint only (JDBC DataSourceTransactionManager, not JPA). Others: SUPPORTS, NOT_SUPPORTED, MANDATORY, NEVER.</p>'},
+ {l:'trap',q:'Does @Transactional work on a private method?',a:'<p>No. A proxy cannot intercept private methods. Since Spring 6.0, protected and package-private methods work with class-based (CGLIB) proxies; interface-based proxies only ever see public interface methods.</p>'},
+ {l:'deep',q:'Why must a transaction stay on one thread?',a:'<p>Because the connection is bound to the current thread in a ThreadLocal. Work you hand to another thread (<code>@Async</code>, a <code>CompletableFuture</code>, a parallel stream) does not see that connection and runs outside the transaction.</p>'},
+ {l:'deep',q:'What does readOnly = true actually do?',a:'<p>It is a hint. With JPA/Hibernate it sets the session flush mode to manual (no dirty checking, faster), and the JDBC connection may be marked read-only, which some drivers and routing data sources use to go to a replica. It does not by itself stop you writing.</p>'},
+],
+'ch08-auto-configuration':[
+ {l:'core',q:'What does @SpringBootApplication do?',a:'<p>It combines three annotations: <code>@SpringBootConfiguration</code> (a <code>@Configuration</code>), <code>@EnableAutoConfiguration</code> (load auto-configuration classes) and <code>@ComponentScan</code> (scan the package of the main class and below).</p>'},
+ {l:'core',q:'How does Spring Boot auto-configuration work?',a:'<p><code>@EnableAutoConfiguration</code> imports <code>AutoConfigurationImportSelector</code>. It reads the list of candidate classes from <code>META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports</code> in every jar, removes exclusions, quickly filters them by class conditions, then registers the rest. Each is an ordinary @Configuration whose <code>@Conditional...</code> annotations decide whether it, and each @Bean inside, applies.</p>'},
+ {l:'core',q:'Name the common @Conditional annotations.',a:'<p><code>@ConditionalOnClass</code> / <code>OnMissingClass</code> (is a library on the classpath?), <code>@ConditionalOnBean</code> / <code>OnMissingBean</code> (did you or someone define a bean?), <code>@ConditionalOnProperty</code>, <code>@ConditionalOnWebApplication</code>, <code>@ConditionalOnResource</code>, <code>@ConditionalOnSingleCandidate</code>, <code>@ConditionalOnExpression</code>.</p>'},
+ {l:'deep',q:'How does @ConditionalOnMissingBean see my beans if auto-configs are imported too?',a:'<p><code>AutoConfigurationImportSelector</code> is a <b>DeferredImportSelector</b>: it runs after all your own @Configuration classes and component scanning have been processed. So your bean definitions are already registered when the auto-config checks for them, and "back off if the user defined one" works. Auto-configs are also ordered among themselves with <code>@AutoConfiguration(before=..., after=...)</code>.</p>'},
+ {l:'core',q:'How do you see which auto-configurations were applied and why?',a:'<p>Start with <code>--debug</code> or <code>debug=true</code> to print the <b>Condition Evaluation Report</b> (positive and negative matches with reasons), or use the Actuator <code>/actuator/conditions</code> endpoint.</p>'},
+ {l:'core',q:'How do you disable a specific auto-configuration?',a:'<p><code>@SpringBootApplication(exclude = DataSourceAutoConfiguration.class)</code> or the property <code>spring.autoconfigure.exclude</code>. Often you do not need to: defining your own bean makes the conditional one back off.</p>'},
+ {l:'deep',q:'What is a starter, and how would you write your own auto-configuration?',a:'<p>A starter is a dependency-only module that pulls a coherent set of libraries (plus the matching autoconfigure module). To write your own: create an <code>@AutoConfiguration</code> class with conditions, list it in <code>META-INF/spring/...AutoConfiguration.imports</code>, bind settings with <code>@ConfigurationProperties</code>, and mark beans <code>@ConditionalOnMissingBean</code> so users can override them.</p>'},
+ {l:'trap',q:'Where did spring.factories go?',a:'<p>Until Boot 2.7 auto-configs were listed under <code>EnableAutoConfiguration</code> in <code>META-INF/spring.factories</code>. Boot 2.7 introduced the <code>AutoConfiguration.imports</code> file and Boot 3 removed support for the old key. <code>spring.factories</code> is still used for other things, such as listeners, initializers and EnvironmentPostProcessors.</p>'},
+],
+'ch09-boot-startup':[
+ {l:'core',q:'What happens when you call SpringApplication.run()?',a:'<p>Construct <code>SpringApplication</code>: deduce web type (servlet, reactive, none) from the classpath, load initializers and listeners from <code>spring.factories</code>. Then <code>run</code>: create the bootstrap context, fire <code>starting</code>, prepare the <b>Environment</b> (command line, env vars, application.yml, profiles), print the banner, <b>create</b> the ApplicationContext for the web type, <b>prepare</b> it (initializers, register the main class), <b>refresh</b> it (all beans, embedded server), call <code>ApplicationRunner</code>s and <code>CommandLineRunner</code>s, fire <code>ApplicationReadyEvent</code>.</p>'},
+ {l:'core',q:'What are the main steps of ApplicationContext.refresh()?',a:'<p>prepareRefresh, obtain and prepare the BeanFactory, <b>invokeBeanFactoryPostProcessors</b> (parse @Configuration, scan components, import auto-configs, resolve placeholders), <b>registerBeanPostProcessors</b>, init MessageSource and event multicaster, <b>onRefresh</b> (Boot creates the web server here), register listeners, <b>finishBeanFactoryInitialization</b> (create all non-lazy singletons), <b>finishRefresh</b> (start Lifecycle beans, so the server starts listening, then publish ContextRefreshedEvent).</p>'},
+ {l:'core',q:'Where does the embedded Tomcat come from and when does it start?',a:'<p><code>ServletWebServerFactoryAutoConfiguration</code> defines a <code>TomcatServletWebServerFactory</code> when Tomcat is on the classpath. In <code>onRefresh()</code> the <code>ServletWebServerApplicationContext</code> asks the factory for a web server and registers the DispatcherServlet and filters with it. It starts accepting connections in <code>finishRefresh()</code>, after all singletons exist.</p>'},
+ {l:'core',q:'CommandLineRunner vs ApplicationRunner?',a:'<p>Both run once, after the context is refreshed and before <code>ApplicationReadyEvent</code>. <code>CommandLineRunner.run(String... args)</code> gets raw arguments; <code>ApplicationRunner.run(ApplicationArguments)</code> gets parsed options. Order them with <code>@Order</code>.</p>'},
+ {l:'deep',q:'In what order are configuration properties applied?',a:'<p>Later sources override earlier ones. Roughly, from strongest: command-line args, <code>SPRING_APPLICATION_JSON</code>, OS environment variables, profile-specific <code>application-{profile}.yml</code> outside then inside the jar, <code>application.yml</code> outside then inside the jar, <code>@PropertySource</code>, defaults. Interviewers mostly want: command line beats env vars beats files, and profile-specific beats default.</p>'},
+ {l:'deep',q:'Name the application events in startup order.',a:'<p><code>ApplicationStartingEvent</code>, <code>ApplicationEnvironmentPreparedEvent</code>, <code>ApplicationContextInitializedEvent</code>, <code>ApplicationPreparedEvent</code>, (context refresh: <code>ContextRefreshedEvent</code>, <code>WebServerInitializedEvent</code>), <code>ApplicationStartedEvent</code>, <code>ApplicationReadyEvent</code>; or <code>ApplicationFailedEvent</code> on failure. The early ones fire before beans exist, so their listeners must be registered via spring.factories, not as @Component.</p>'},
+ {l:'trap',q:'Your app takes 40 seconds to start. How do you find out why?',a:'<p>Use <code>BufferingApplicationStartup</code> with the Actuator <code>/actuator/startup</code> endpoint to see time per step and per bean; look for slow @PostConstruct work, eager connections, big component scans. Options: lazy initialization, trim auto-configs, class data sharing (CDS), AOT, or GraalVM native image.</p>'},
+],
+'ch10-request-journey':[
+ {l:'core',q:'Describe the flow of a request in Spring MVC.',a:'<p>Tomcat takes a thread from its pool, runs the <b>filter chain</b>, then <code>DispatcherServlet</code>. It asks <b>HandlerMappings</b> for a handler plus interceptors, runs interceptors\' <code>preHandle</code>, finds a <b>HandlerAdapter</b>, which resolves arguments (path variables, <code>@RequestBody</code> via an <b>HttpMessageConverter</b> such as Jackson), calls the controller, and writes the return value back through a converter. Then <code>postHandle</code> and <code>afterCompletion</code>, and the filters unwind.</p>'},
+ {l:'core',q:'Filter vs HandlerInterceptor vs AOP aspect?',a:'<p>A <b>Filter</b> is Servlet-level: it sees every request (including static resources and errors) before Spring MVC, works on raw request and response; Spring Security lives here. A <b>HandlerInterceptor</b> is Spring MVC-level: it knows which handler will run, with preHandle, postHandle and afterCompletion. An <b>aspect</b> works at bean-method level anywhere (services, repositories), not tied to HTTP.</p>'},
+ {l:'core',q:'What is DispatcherServlet?',a:'<p>The <b>front controller</b> of Spring MVC: one servlet that receives every request and delegates to pluggable strategies (HandlerMapping, HandlerAdapter, HandlerExceptionResolver, ViewResolver, message converters). Boot registers it at <code>/</code> via <code>DispatcherServletAutoConfiguration</code>.</p>'},
+ {l:'deep',q:'How does @ControllerAdvice / @ExceptionHandler fit in?',a:'<p>When the handler throws, DispatcherServlet asks its <code>HandlerExceptionResolver</code>s. <code>ExceptionHandlerExceptionResolver</code> looks for a matching <code>@ExceptionHandler</code> in the controller, then in <code>@ControllerAdvice</code> beans, and renders its return value like a normal handler result.</p>'},
+ {l:'deep',q:'How does Spring Security plug into this flow?',a:'<p>Through one Servlet filter, <code>DelegatingFilterProxy</code>, which delegates to the <code>FilterChainProxy</code> bean, which runs a <code>SecurityFilterChain</code> of security filters (authentication, authorization, CSRF...). The user is stored in <code>SecurityContextHolder</code>, a ThreadLocal, for the rest of the request. Method security (<code>@PreAuthorize</code>) is AOP on beans.</p>'},
+ {l:'trap',q:'Is a controller instance created per request?',a:'<p>No. Controllers are singletons by default. One instance serves all request threads concurrently, so a controller must not keep request data in fields.</p>'},
+],
+};
+
+/* Interview questions for pages 11 to 14, merged into IQ */
+Object.assign(IQ,{
+'ch11-security':[
+ {l:'core',q:'How does Spring Security plug into a Spring Boot application?',a:'<p>Through the Servlet filter chain. Boot registers one filter, <code>DelegatingFilterProxy</code> (named <code>springSecurityFilterChain</code>), which looks up the <code>FilterChainProxy</code> bean. <code>FilterChainProxy</code> holds one or more <code>SecurityFilterChain</code>s, picks the first whose request matcher fits the URL, and runs its ordered list of security filters before the request reaches DispatcherServlet.</p>'},
+ {l:'core',q:'Why DelegatingFilterProxy? Why not register the security filters directly?',a:'<p>The servlet container creates filters before the Spring context exists and does not know about beans. <code>DelegatingFilterProxy</code> is a plain filter the container can create; on each request it delegates to a Spring bean, so the real security filters can be beans with injection, configuration and lifecycle.</p>'},
+ {l:'core',q:'Walk through username/password authentication.',a:'<p>An authentication filter (<code>UsernamePasswordAuthenticationFilter</code> for forms, <code>BasicAuthenticationFilter</code> for Basic) builds an unauthenticated <code>Authentication</code> token and calls the <code>AuthenticationManager</code> (usually <code>ProviderManager</code>). It loops through <code>AuthenticationProvider</code>s; <code>DaoAuthenticationProvider</code> loads the user with <code>UserDetailsService</code> and checks the password with a <code>PasswordEncoder</code>. On success an authenticated token with authorities is stored in the <code>SecurityContextHolder</code> (and the session, for stateful apps).</p>'},
+ {l:'core',q:'What is the SecurityContextHolder and how is it stored?',a:'<p>It holds the <code>SecurityContext</code>, which holds the current <code>Authentication</code>. The default strategy is a <b>ThreadLocal</b>, so any code on the request thread can read the current user. <code>SecurityContextHolderFilter</code> loads it at the start of the request (from the session, or empty for stateless JWT) and it is cleared at the end.</p>'},
+ {l:'core',q:'What is the difference between authentication and authorization, and where does each happen?',a:'<p>Authentication answers "who are you" (authentication filters, AuthenticationManager). Authorization answers "may you do this": for URLs in <code>AuthorizationFilter</code> near the end of the chain, using <code>AuthorizationManager</code>s from <code>authorizeHttpRequests</code>; for methods via <code>@PreAuthorize</code>, which is AOP on beans (a proxy, like @Transactional).</p>'},
+ {l:'deep',q:'What does ExceptionTranslationFilter do?',a:'<p>It sits just before <code>AuthorizationFilter</code> and catches security exceptions thrown after it. <code>AuthenticationException</code>, or <code>AccessDeniedException</code> for an anonymous user, starts authentication through the <code>AuthenticationEntryPoint</code> (redirect to login, or 401 with WWW-Authenticate). <code>AccessDeniedException</code> for a logged-in user goes to the <code>AccessDeniedHandler</code> (403).</p>'},
+ {l:'deep',q:'How does JWT (resource server) authentication differ from session login?',a:'<p><code>BearerTokenAuthenticationFilter</code> reads the <code>Authorization: Bearer</code> header, a <code>JwtAuthenticationProvider</code> validates the signature and claims with a <code>JwtDecoder</code>, and the resulting <code>JwtAuthenticationToken</code> is put in the SecurityContext for this request only. Nothing is stored in the session (stateless), so every request carries and re-validates the token.</p>'},
+ {l:'trap',q:'@PreAuthorize on a method is ignored. Why?',a:'<p>Same causes as @Transactional, because it is also proxy-based: method security not enabled (<code>@EnableMethodSecurity</code>), self-invocation, a private method, or an object not managed by Spring. Also check the order: method security runs inside the proxy, after URL authorization already passed.</p>'},
+ {l:'trap',q:'Why can the SecurityContext be empty in an @Async method?',a:'<p>It is a ThreadLocal on the request thread; the async method runs on a pool thread. Use <code>DelegatingSecurityContextExecutor</code> / <code>DelegatingSecurityContextAsyncTaskExecutor</code>, or the <code>MODE_INHERITABLETHREADLOCAL</code> strategy (careful with pools), to carry it over.</p>'},
+ {l:'core',q:'Why is CSRF protection on by default and when can you disable it?',a:'<p>Browsers send cookies automatically, so a malicious site can make a logged-in user\'s browser submit a state-changing request. <code>CsrfFilter</code> requires a token the attacker cannot read. A stateless API authenticated only by a bearer token in a header (no cookies) is not exposed in the same way, so CSRF is commonly disabled there.</p>'},
+],
+'ch12-data-jpa':[
+ {l:'core',q:'You declare an interface extending JpaRepository and never implement it. Where does the implementation come from?',a:'<p>At startup Spring Data scans for repository interfaces (<code>@EnableJpaRepositories</code>, auto-configured in Boot) and registers a <code>JpaRepositoryFactoryBean</code> for each. The factory creates a <b>JDK dynamic proxy</b> implementing your interface. CRUD methods are forwarded to <code>SimpleJpaRepository</code>; query methods are routed to a <code>RepositoryQuery</code> built once at startup from the method name, <code>@Query</code> or a named query.</p>'},
+ {l:'core',q:'How does Spring Data turn findByEmailAndStatus into a query?',a:'<p><code>PartTree</code> parses the method name at startup: subject (<code>find…By</code>), then properties and operators (<code>Email</code>, <code>And</code>, <code>Status</code>, <code>OrderBy…</code>, <code>Between</code>, <code>Containing</code>...). It is validated against the entity, so a typo in a property name fails startup. At call time it becomes a JPA Criteria query with your arguments bound.</p>'},
+ {l:'core',q:'What is the persistence context?',a:'<p>The <code>EntityManager</code>\'s first-level cache and unit of work: a map from entity id to managed instance for the current transaction. Loading the same id twice returns the same object without a second SELECT; changes to managed entities are detected by <b>dirty checking</b> and flushed as UPDATEs at commit or before a query. In Spring it is bound to the transaction (via the same ThreadLocal mechanism as the connection).</p>'},
+ {l:'core',q:'Do you need to call save() after changing a loaded entity?',a:'<p>Not inside a transaction. The entity is managed, so dirty checking writes the change at flush. <code>save()</code> on an existing entity calls <code>merge()</code>, which is only needed for detached entities. Outside a transaction the entity is detached and nothing is written.</p>'},
+ {l:'core',q:'What is the N+1 select problem and how do you fix it?',a:'<p>Loading N parents with one query, then touching a lazy association on each, fires one more query per parent: 1 + N. Fixes: <code>JOIN FETCH</code> in JPQL, <code>@EntityGraph</code> on the repository method, batch fetching (<code>hibernate.default_batch_fetch_size</code>) to turn N queries into a few IN queries, or a DTO projection that selects only what you need.</p>'},
+ {l:'trap',q:'LazyInitializationException: what is it and what is the wrong fix?',a:'<p>A lazy association was touched after the persistence context closed (outside the transaction), so the proxy cannot load. Wrong fixes: switching to <code>FetchType.EAGER</code> (loads too much everywhere) or relying on Open Session In View. Right fixes: fetch what the use case needs inside the transaction (JOIN FETCH, entity graph, DTO projection).</p>'},
+ {l:'trap',q:'What is Open Session In View and why does Boot warn about it?',a:'<p><code>spring.jpa.open-in-view</code> is <b>true by default</b>: an interceptor keeps the EntityManager open for the whole web request, so lazy loading works in controllers and JSON serialization. The cost: lazy loads run outside any transaction, one query at a time, hold a connection for the whole request, and hide N+1 problems. Boot logs a warning at startup; many teams set it to false.</p>'},
+ {l:'deep',q:'Are repository methods transactional?',a:'<p>Yes. <code>SimpleJpaRepository</code> is annotated <code>@Transactional(readOnly = true)</code> at class level, and its write methods (<code>save</code>, <code>delete</code>...) override with <code>@Transactional</code>. If your service method has a transaction, the repository joins it (REQUIRED).</p>'},
+ {l:'deep',q:'Why do two loads of the same entity in one transaction return the same instance but in two transactions different instances?',a:'<p>The persistence context guarantees identity within its scope (one transaction). A new transaction has a new, empty persistence context, so it loads a fresh instance. This is also why caches of entities across transactions cause detached-entity bugs.</p>'},
+],
+'ch13-webflux':[
+ {l:'core',q:'How does WebFlux handle requests differently from Spring MVC?',a:'<p>Spring MVC on Tomcat uses <b>thread-per-request</b>: a thread is held for the whole request, including while it waits on I/O. WebFlux on Netty uses a small number of <b>event-loop</b> threads (about one per core). A handler returns a <code>Mono</code> or <code>Flux</code> immediately; the event loop moves on and comes back when data is ready. Same container, same beans; different request model.</p>'},
+ {l:'core',q:'Mono vs Flux?',a:'<p>Both are Reactive Streams <code>Publisher</code>s from Project Reactor. <code>Mono</code> emits 0 or 1 item then completes (or errors); <code>Flux</code> emits 0 to N items then completes (or errors). Neither does anything until something <b>subscribes</b>; in WebFlux the framework subscribes to what your handler returns.</p>'},
+ {l:'core',q:'What is backpressure?',a:'<p>The consumer tells the producer how many items it can take, with <code>Subscription.request(n)</code>, so a fast producer cannot overwhelm a slow consumer. Operators like <code>limitRate</code>, <code>onBackpressureBuffer</code> and <code>onBackpressureDrop</code> decide what happens when demand runs out.</p>'},
+ {l:'trap',q:'What happens if you call a blocking JDBC repository inside a WebFlux handler?',a:'<p>You block an event-loop thread. With only a handful of them, a few slow queries stall every request on the server. Use reactive drivers (R2DBC, reactive Mongo, WebClient), or move the blocking call to <code>Schedulers.boundedElastic()</code> with <code>subscribeOn</code>. Reactor\'s BlockHound can detect blocking calls in tests.</p>'},
+ {l:'trap',q:'Nothing happens when this runs: repository.save(user).map(...); Why?',a:'<p>Nothing subscribed. Reactive pipelines are lazy: building them does no work. Return the publisher from your handler (so WebFlux subscribes) or chain it into one that is returned. Calling <code>.subscribe()</code> yourself inside a handler is usually a bug too, because errors and completion are lost.</p>'},
+ {l:'deep',q:'How do ThreadLocal-based features (security context, transactions, MDC) work in WebFlux?',a:'<p>They cannot rely on ThreadLocals, because one request hops between threads. Reactor has a <b>Context</b> that travels with the subscription. Spring Security uses <code>ReactiveSecurityContextHolder</code> (Context-based), reactive transactions use <code>ReactiveTransactionManager</code>, and Micrometer context propagation bridges MDC and tracing.</p>'},
+ {l:'core',q:'When would you choose WebFlux over Spring MVC?',a:'<p>Many concurrent, I/O-bound connections (gateways, streaming, server-sent events, calling many slow services) where a full reactive stack exists end to end. For typical CRUD over JDBC, Spring MVC is simpler to write, debug and test, and with Java 21 virtual threads it handles high concurrency without the reactive programming model.</p>'},
+ {l:'deep',q:'What does WebClient give you over RestTemplate?',a:'<p>Non-blocking HTTP calls returning <code>Mono</code>/<code>Flux</code>, so many calls can run concurrently on few threads, plus streaming bodies. In blocking apps, the newer <code>RestClient</code> is the modern synchronous option; RestTemplate is in maintenance mode.</p>'},
+],
+'ch14-actuator':[
+ {l:'core',q:'What is Spring Boot Actuator?',a:'<p>Production-ready features added by <code>spring-boot-starter-actuator</code>: endpoints such as <code>/actuator/health</code>, <code>/metrics</code>, <code>/info</code>, <code>/env</code>, <code>/beans</code>, <code>/conditions</code>, <code>/loggers</code>, <code>/threaddump</code>, <code>/prometheus</code>, plus metrics and tracing through Micrometer. Endpoints are auto-configured beans, enabled and exposed through properties.</p>'},
+ {l:'core',q:'Enabled vs exposed: why can I not see /actuator/beans?',a:'<p>An endpoint must be <b>available</b> (enabled) and <b>exposed</b> over a technology (HTTP or JMX). Over HTTP only <code>health</code> is exposed by default. Expose more with <code>management.endpoints.web.exposure.include=health,info,metrics,prometheus</code>, and never expose <code>env</code>, <code>heapdump</code> or <code>beans</code> publicly without security.</p>'},
+ {l:'core',q:'How is the health status calculated?',a:'<p>Every <code>HealthIndicator</code> bean (database, disk space, Redis, Kafka... each auto-configured when its library is present) returns a status. A <code>StatusAggregator</code> combines them, worst wins by default (DOWN beats OUT_OF_SERVICE beats UP), and an HTTP status mapper turns DOWN into 503. You can add your own by implementing <code>HealthIndicator</code>.</p>'},
+ {l:'core',q:'Liveness vs readiness?',a:'<p><b>Liveness</b> (<code>/actuator/health/liveness</code>): is the app broken beyond recovery? If it fails, Kubernetes restarts the pod. <b>Readiness</b> (<code>/health/readiness</code>): can it take traffic right now? If it fails, the pod is removed from the load balancer but not restarted. Readiness becomes ACCEPTING_TRAFFIC at ApplicationReadyEvent and REFUSING_TRAFFIC during graceful shutdown. Do not put external dependencies like the database in liveness.</p>'},
+ {l:'core',q:'How do metrics work in Spring Boot?',a:'<p>Through <b>Micrometer</b>, a facade like SLF4J for metrics. Code records to a <code>MeterRegistry</code> (counters, timers, gauges, distribution summaries); Boot auto-configures a registry for the backend on the classpath (Prometheus, Datadog, OTLP...) and binds built-in metrics: JVM memory and GC, HTTP server requests, Hikari pool, Tomcat threads, cache hits.</p>'},
+ {l:'deep',q:'Why must you be careful with metric tags?',a:'<p>Every distinct combination of tag values is a separate time series. Tagging by user ID, order ID or raw URL creates unbounded <b>cardinality</b>, which can blow up memory and the monitoring bill. Use bounded values: the URI template (<code>/orders/{id}</code>), status, method, outcome.</p>'},
+ {l:'deep',q:'What does the Observation API add?',a:'<p>Since Boot 3, Micrometer\'s <code>Observation</code> instruments an operation once and produces both a timer metric and a trace span (and log correlation). Spring MVC, WebClient, RestClient, Spring Data and Kafka are instrumented this way; tracing exports via Micrometer Tracing to Zipkin or OpenTelemetry.</p>'},
+ {l:'trap',q:'Actuator is on the same port as the API. What is the risk and the fix?',a:'<p>Sensitive endpoints become reachable wherever the API is. Put them on a separate port (<code>management.server.port</code>) reachable only internally, expose only what you need, and secure the rest with Spring Security (an <code>EndpointRequest</code> matcher).</p>'},
+],
+});
+
+/* Interview questions for pages 15 to 21, merged into IQ */
+Object.assign(IQ,{
+'ch15-exceptions':[
+ {l:'core',q:'How do you handle exceptions globally in a Spring Boot REST API?',a:'<p>A <code>@RestControllerAdvice</code> class with <code>@ExceptionHandler</code> methods, one per exception type, each returning a <code>ResponseEntity</code> or a <code>ProblemDetail</code>. Extending <code>ResponseEntityExceptionHandler</code> adds consistent handling of Spring MVC\'s own exceptions (validation, 405, 415...). Keep a final <code>@ExceptionHandler(Exception.class)</code> that logs and returns a generic 500 without leaking details.</p>'},
+ {l:'core',q:'What happens inside Spring MVC when a controller throws?',a:'<p><code>DispatcherServlet</code> catches it in <code>processHandlerException()</code> and asks its <code>HandlerExceptionResolver</code>s in order: <code>ExceptionHandlerExceptionResolver</code> (@ExceptionHandler methods, controller first, then advice), <code>ResponseStatusExceptionResolver</code> (@ResponseStatus, ResponseStatusException), <code>DefaultHandlerExceptionResolver</code> (standard Spring MVC exceptions to 4xx). The first non-null result wins. If all return null the exception is rethrown to the container, which forwards to Boot\'s <code>/error</code> (BasicErrorController).</p>'},
+ {l:'deep',q:'Two @ControllerAdvice classes both have a matching handler. Which one runs?',a:'<p>Handlers in the throwing controller are checked first. Then advice beans in <code>@Order</code>/<code>Ordered</code> priority: the first advice that has <i>any</i> matching handler is used, and within it the closest exception type wins (<code>ExceptionDepthComparator</code>). So a high-priority advice with <code>@ExceptionHandler(Exception.class)</code> beats a specific handler in a lower-priority advice. Without explicit order the result is not guaranteed. You can also narrow an advice with <code>basePackages</code>, <code>assignableTypes</code> or <code>annotations</code>.</p>'},
+ {l:'trap',q:'An exception class has @ResponseStatus(NOT_FOUND) but the API returns 500. Why?',a:'<p>An <code>@ExceptionHandler</code> for a supertype (often <code>RuntimeException</code> or <code>Exception</code>) handled it first. <code>ExceptionHandlerExceptionResolver</code> runs before <code>ResponseStatusExceptionResolver</code>, so the annotation was never consulted. Add a specific handler, or have the catch-all check for <code>@ResponseStatus</code>.</p>'},
+ {l:'trap',q:'Why doesn\'t my @ControllerAdvice catch an exception thrown in a servlet Filter?',a:'<p>Filters run before <code>DispatcherServlet</code>; HandlerExceptionResolvers only cover exceptions thrown while DispatcherServlet handles the request. A filter exception goes to the container and ends up at <code>/error</code>. Handle it in the filter, or for security let <code>ExceptionTranslationFilter</code>, an <code>AuthenticationEntryPoint</code> and an <code>AccessDeniedHandler</code> produce the response. (You can also delegate to a <code>HandlerExceptionResolver</code> bean from the filter.)</p>'},
+ {l:'deep',q:'What is ProblemDetail and how do you enable it?',a:'<p>An implementation of RFC 9457 (which replaced 7807): a standard JSON error body with <code>type</code>, <code>title</code>, <code>status</code>, <code>detail</code>, <code>instance</code> and custom properties, served as <code>application/problem+json</code>. Spring 6 has <code>ProblemDetail</code>, <code>ErrorResponse</code> and <code>ErrorResponseException</code>; handlers can return a ProblemDetail directly. <code>spring.mvc.problemdetails.enabled=true</code> makes Boot register a ResponseEntityExceptionHandler advice so Spring MVC\'s exceptions use the format.</p>'},
+ {l:'core',q:'Where does the Whitelabel Error Page come from?',a:'<p>Boot\'s <code>ErrorMvcAutoConfiguration</code> registers an error page at <code>/error</code> handled by <code>BasicErrorController</code>. When an exception escapes Spring MVC or <code>sendError()</code> is called, Tomcat does an ERROR dispatch there; it returns HTML for browsers and JSON for other clients, filled by <code>ErrorAttributes</code>. Customise with templates such as <code>error/404.html</code>, an <code>ErrorAttributes</code> bean, or <code>server.error.*</code> properties.</p>'}],
+'ch16-events-async':[
+ {l:'core',q:'How do Spring application events work, and are they asynchronous?',a:'<p><code>ApplicationEventPublisher.publishEvent()</code> passes the event to the <code>ApplicationEventMulticaster</code>, which calls every matching listener (<code>@EventListener</code> methods or <code>ApplicationListener</code> beans). By default they run <b>synchronously</b>, on the publisher\'s thread, inside its transaction, before publishEvent returns; a listener exception propagates to the publisher. Make one asynchronous with <code>@Async</code> (plus <code>@EnableAsync</code>) or by giving the multicaster a TaskExecutor.</p>'},
+ {l:'core',q:'What is @TransactionalEventListener for?',a:'<p>It binds the listener to the publisher\'s transaction: publishing registers a <code>TransactionSynchronization</code>, and the listener runs at the chosen phase, <code>AFTER_COMMIT</code> by default (also <code>AFTER_ROLLBACK</code>, <code>AFTER_COMPLETION</code>, <code>BEFORE_COMMIT</code>). Use it for side effects that must only happen if the data was committed: emails, messages, cache eviction. With no transaction active the event is dropped unless <code>fallbackExecution = true</code>.</p>'},
+ {l:'trap',q:'An AFTER_COMMIT listener saves an entity, but nothing reaches the database. Why?',a:'<p>After commit the transaction is finished but its resources are still bound to the thread, so a repository call joins a transaction that will not commit again. Annotate the listener method (or the service it calls) with <code>@Transactional(propagation = REQUIRES_NEW)</code>, or run it <code>@Async</code> in its own transaction.</p>'},
+ {l:'core',q:'How does @Async work internally?',a:'<p><code>@EnableAsync</code> registers <code>AsyncAnnotationBeanPostProcessor</code>, which proxies beans with @Async methods. The proxy\'s <code>AsyncExecutionInterceptor</code> submits the call to a TaskExecutor (the one named in <code>@Async("x")</code>, an <code>AsyncConfigurer</code>, or Boot\'s <code>applicationTaskExecutor</code>) and returns immediately, with a <code>CompletableFuture</code> if the method returns one. Self-invocation bypasses it, like any proxy.</p>'},
+ {l:'trap',q:'What is lost when work moves to an @Async thread?',a:'<p>Everything in ThreadLocals: the transaction (the async method needs its own @Transactional), the <code>SecurityContext</code> (unless you use <code>DelegatingSecurityContextAsyncTaskExecutor</code> or MODE_INHERITABLETHREADLOCAL), the MDC logging context and request attributes. A <code>TaskDecorator</code> can copy them. Exceptions from <code>void</code> methods go to the <code>AsyncUncaughtExceptionHandler</code> and are only logged.</p>'},
+ {l:'deep',q:'Explain core size, queue capacity and max size of a ThreadPoolTaskExecutor.',a:'<p>New tasks start core threads until there are <code>corePoolSize</code>; then they go to the queue; only when the queue is full are threads added up to <code>maxPoolSize</code>; then the <code>RejectedExecutionHandler</code> runs (AbortPolicy by default; CallerRunsPolicy runs it on the caller). With Boot\'s default unbounded queue the pool never grows past core (8), so max-size has no effect.</p>'},
+ {l:'deep',q:'fixedRate vs fixedDelay vs cron, and what goes wrong with @Scheduled?',a:'<p><code>fixedRate</code> schedules from the start of each run, <code>fixedDelay</code> from the end, <code>cron</code> by calendar. Runs of one method do not overlap. Boot\'s scheduler has a single thread, so a slow job delays all others: raise <code>spring.task.scheduling.pool.size</code>. And every instance of the app runs every job: use ShedLock or a clustered scheduler for run-once semantics.</p>'}],
+'ch17-caching':[
+ {l:'core',q:'How does @Cacheable work?',a:'<p><code>@EnableCaching</code> adds an advisor whose <code>CacheInterceptor</code> wraps beans with cache annotations in a proxy. On a call it computes the key (SpEL <code>key</code> or <code>KeyGenerator</code>), looks it up in the named cache from the <code>CacheManager</code>, returns the value on a hit without calling the method, or calls the method and stores the result on a miss.</p>'},
+ {l:'core',q:'@Cacheable vs @CachePut vs @CacheEvict?',a:'<p><code>@Cacheable</code> calls the method only on a miss. <code>@CachePut</code> always calls it and stores the result (keep the cache fresh after an update). <code>@CacheEvict</code> always calls it and removes a key or all entries, after the call unless <code>beforeInvocation = true</code>. Do not put @Cacheable and @CachePut on the same method.</p>'},
+ {l:'core',q:'How is the default cache key built?',a:'<p><code>SimpleKeyGenerator</code>: no parameters → <code>SimpleKey.EMPTY</code>; one parameter → that parameter; several → a <code>SimpleKey</code> of all of them. The method name is not included, so two methods sharing a cache name and the same arguments collide. Key objects need proper <code>equals</code>/<code>hashCode</code>.</p>'},
+ {l:'trap',q:'Why is my @Cacheable method executed every time?',a:'<p>Usually one of: the call is self-invocation (<code>this.find()</code>) so the proxy is skipped; the method is private or final; <code>@EnableCaching</code> is missing; the key changes on every call (an argument without equals/hashCode, or a timestamp); or an <code>unless</code>/<code>condition</code> excludes it.</p>'},
+ {l:'deep',q:'What is a cache stampede and how does Spring help?',a:'<p>When a popular entry expires, many concurrent requests miss at the same moment and all hit the database. <code>@Cacheable(sync = true)</code> lets only one thread compute the value while the others wait for it (per JVM, provider-dependent). Other mitigations: refresh-ahead (Caffeine <code>refreshAfterWrite</code>), jittered TTLs.</p>'},
+ {l:'deep',q:'Local cache or distributed cache?',a:'<p>Local (Caffeine): nanosecond reads, no network, but each instance has its own copy, so evictions on one instance leave stale data on others, and memory is per instance. Distributed (Redis): one shared copy, survives restarts, but every read is a network call plus serialisation. Common answer: local with short TTL for read-mostly reference data, Redis for shared or larger data, sometimes both in two levels.</p>'}],
+'ch18-configuration':[
+ {l:'core',q:'In what order does Spring Boot resolve properties?',a:'<p>Highest first, roughly: test properties, command-line arguments, <code>SPRING_APPLICATION_JSON</code>, Java system properties, OS environment variables, profile-specific files outside the jar, profile-specific files inside the jar, application files outside then inside the jar, <code>@PropertySource</code>, default properties. The first source containing the key wins.</p>'},
+ {l:'core',q:'What do profiles do?',a:'<p>Two things: they load <code>application-{profile}.properties/yml</code> on top of the base file, and they include or exclude beans annotated <code>@Profile</code> (with expressions like <code>!prod</code> or <code>dev &amp; eu</code>). Activate with <code>spring.profiles.active</code>; with none active the <code>default</code> profile is used. Profile groups (<code>spring.profiles.group.prod=db,mq</code>) activate several at once.</p>'},
+ {l:'core',q:'@Value or @ConfigurationProperties?',a:'<p><code>@ConfigurationProperties</code> for anything beyond a value or two: typed binding of a whole prefix (records work), full relaxed binding including env vars, conversion to Duration/DataSize/lists, JSR-303 validation at startup with <code>@Validated</code>, and IDE metadata. <code>@Value</code> is fine for a single value and is the one that supports SpEL.</p>'},
+ {l:'deep',q:'What is relaxed binding?',a:'<p>Boot\'s Binder maps different spellings to the same property: <code>app.mail.retry-count</code> (canonical kebab-case), <code>app.mail.retryCount</code>, <code>app.mail.retry_count</code>, and the environment variable <code>APP_MAIL_RETRYCOUNT</code> (uppercase, dots to underscores, dashes removed). This is what lets Kubernetes or Docker override any property with an env var.</p>'},
+ {l:'trap',q:'Two profiles are active and both files set the same key. Which wins?',a:'<p>The profile listed last in <code>spring.profiles.active</code>: profile files are applied in order, later overriding earlier. And any profile-specific file overrides the plain <code>application.yml</code>.</p>'},
+ {l:'deep',q:'How does Spring Cloud Config or Vault fit into this?',a:'<p>Through <code>spring.config.import</code> (for example <code>configserver:</code>, <code>vault://</code>, <code>optional:file:./extra.yml</code>). Boot\'s ConfigData API loads them early, before the context is created, as ordinary PropertySources, so @Value and @ConfigurationProperties read them like any other source.</p>'}],
+'ch19-testing':[
+ {l:'core',q:'What is a test slice? Give examples.',a:'<p>An annotation that starts a partial application context: Boot auto-configuration restricted to one layer plus a component-scan filter. <code>@WebMvcTest</code> (controllers, advice, filters, Jackson, MockMvc), <code>@DataJpaTest</code> (JPA, repositories, an embedded DB, rollback per test), <code>@JsonTest</code>, <code>@RestClientTest</code>, <code>@WebFluxTest</code>, <code>@DataRedisTest</code>. Anything outside the slice must be mocked or imported.</p>'},
+ {l:'core',q:'@SpringBootTest vs @WebMvcTest?',a:'<p><code>@SpringBootTest</code> starts the whole application context (mock servlet environment by default, or a real server with <code>RANDOM_PORT</code>): realistic and slow. <code>@WebMvcTest</code> loads only the web layer and gives you MockMvc: fast, focused on routing, validation, serialisation and error handling, with services provided as <code>@MockitoBean</code>s.</p>'},
+ {l:'deep',q:'How does test context caching work?',a:'<p>The TestContext framework caches contexts in a static map for the JVM, keyed by <code>MergedContextConfiguration</code>: configuration classes, active profiles, property sources, initializers and context customizers (which include the set of <code>@MockitoBean</code>s). Tests with the same key reuse the context. Default size is 32 (LRU). <code>@DirtiesContext</code> removes and closes a context.</p>'},
+ {l:'trap',q:'Why did adding one @MockBean make the test suite much slower?',a:'<p>Mock definitions are part of the context cache key. A class with a different set of mocked beans gets its own full context, so a single extra <code>@MockBean</code>/<code>@MockitoBean</code> on a <code>@SpringBootTest</code> can add another full startup. Centralise mocks in a shared base class or configuration.</p>'},
+ {l:'deep',q:'MockMvc vs a real server (RANDOM_PORT)?',a:'<p>MockMvc calls the real DispatcherServlet in-process with mock request/response objects: no network, same thread as the test, so a <code>@Transactional</code> test rolls back the request\'s writes. RANDOM_PORT starts embedded Tomcat and the test uses HTTP (TestRestTemplate, WebTestClient): more realistic, but requests run on server threads, so the test transaction does not cover them and data must be cleaned up explicitly.</p>'},
+ {l:'core',q:'How do you test against a real database?',a:'<p>Testcontainers: start PostgreSQL (or the real engine) in Docker, and with Boot 3.1+ annotate the container field with <code>@ServiceConnection</code> so Boot configures the DataSource from it. With <code>@DataJpaTest</code> add <code>@AutoConfigureTestDatabase(replace = NONE)</code> so it is not swapped for an embedded database. Reuse the container across classes to keep the context cache effective.</p>'}],
+'ch20-spring-cloud':[
+ {l:'core',q:'What problems does Spring Cloud solve?',a:'<p>The ones that appear with many services: centralised configuration (Config Server), service discovery (Eureka, Consul, or Kubernetes), client-side load balancing (Spring Cloud LoadBalancer), an edge gateway (Spring Cloud Gateway), declarative HTTP clients (OpenFeign), resilience (Circuit Breaker with Resilience4j), plus distributed tracing via Micrometer. Each is a Boot starter with auto-configuration.</p>'},
+ {l:'core',q:'How does service discovery with Eureka work?',a:'<p>Each service registers its name, host and port with the Eureka server on startup and renews with a heartbeat (30 s by default); missing renewals get it evicted. Clients fetch and cache the registry and refresh it periodically. A call to <code>lb://order-service</code> (or a @LoadBalanced client) resolves the name from the local cache and Spring Cloud LoadBalancer picks an instance, round-robin by default. On Kubernetes, its own Services and DNS often replace Eureka.</p>'},
+ {l:'core',q:'Explain the circuit breaker states.',a:'<p>CLOSED: calls pass and outcomes are recorded in a sliding window. When the failure rate (or slow-call rate) reaches the threshold after the minimum number of calls, it goes OPEN: calls fail immediately with <code>CallNotPermittedException</code> and the fallback runs. After <code>waitDurationInOpenState</code> it goes HALF_OPEN and lets a few trial calls through: if they succeed it closes, otherwise it opens again.</p>'},
+ {l:'deep',q:'Retry and circuit breaker together: what should you watch?',a:'<p>Retries multiply load on a service that is already failing, so keep them few with exponential backoff and jitter, and only for idempotent operations. In Resilience4j\'s default order Retry wraps CircuitBreaker, so when the breaker is open the retry would retry rejected calls: exclude <code>CallNotPermittedException</code> from retries. Always pair with timeouts.</p>'},
+ {l:'deep',q:'What does an API gateway do, and how does Spring Cloud Gateway work?',a:'<p>A single entry point that routes requests to services and handles cross-cutting concerns: authentication (often JWT validation), rate limiting, CORS, header rewriting, retries and circuit breakers. Spring Cloud Gateway matches each request against routes using <b>predicates</b> (path, host, header, method) and applies a chain of <b>filters</b> before and after proxying to the URI, which can be <code>lb://name</code> for discovery-based load balancing. It runs on WebFlux, and there is also a Servlet/MVC variant.</p>'},
+ {l:'trap',q:'How do you refresh configuration from the Config Server without a restart?',a:'<p>Beans marked <code>@RefreshScope</code> (and all <code>@ConfigurationProperties</code> beans) are rebuilt when a refresh is triggered: <code>POST /actuator/refresh</code> on one instance, or Spring Cloud Bus broadcasting the event to all instances. Plain <code>@Value</code> fields in normal singletons do not change. Many teams instead roll out a restart, which is simpler to reason about.</p>'}],
+'ch21-virtual-threads':[
+ {l:'core',q:'What are virtual threads and why do they matter for Spring apps?',a:'<p>Lightweight threads (Java 21, Project Loom) managed by the JVM and scheduled on a few carrier platform threads. When one blocks on I/O it unmounts and the carrier runs another, so you can have hundreds of thousands of them. Thread-per-request apps with blocking code (JDBC, RestClient) get WebFlux-like concurrency without reactive code.</p>'},
+ {l:'core',q:'How do you enable them in Spring Boot and what changes?',a:'<p><code>spring.threads.virtual.enabled=true</code> (Boot 3.2+, Java 21+). Tomcat/Jetty handle each request on a new virtual thread; <code>applicationTaskExecutor</code> (@Async) and the task scheduler become virtual-thread based (<code>SimpleAsyncTaskExecutor</code>), as do messaging listener containers. Because virtual threads are daemons, set <code>spring.main.keep-alive=true</code> if nothing else keeps the JVM alive.</p>'},
+ {l:'trap',q:'We enabled virtual threads but throughput did not improve. Why?',a:'<p>The thread pool was not the bottleneck. Typically the database connection pool is (10 connections serve the same number of queries whatever the thread count), or a downstream rate limit, or the work is CPU-bound. Virtual threads help when requests mostly wait on I/O and the thread limit was what queued them.</p>'},
+ {l:'deep',q:'What is pinning?',a:'<p>A virtual thread that cannot unmount while blocked, so it holds its carrier. On JDK 21 to 23 this happened when blocking inside a <code>synchronized</code> block or method (fix: <code>ReentrantLock</code>); JDK 24 (JEP 491) removed that case. Native method calls still pin. With few carriers, pinning can stall the whole app. Diagnose with the <code>jdk.VirtualThreadPinned</code> JFR event.</p>'},
+ {l:'deep',q:'Virtual threads or WebFlux?',a:'<p>Both handle many concurrent I/O-bound requests with few OS threads. Virtual threads keep the simple blocking style, normal stack traces, ThreadLocal-based features (transactions, security) and existing libraries. WebFlux still offers streaming, backpressure and fine-grained composition of async calls. For a typical CRUD/REST service, virtual threads are the simpler choice now.</p>'},
+ {l:'trap',q:'Should you pool virtual threads or limit them with a small executor?',a:'<p>No: they are cheap to create and meant to be one per task. To protect a scarce resource, limit concurrency on that resource with a <code>Semaphore</code>, a bulkhead or the connection pool itself. Also avoid caching expensive objects in ThreadLocals, since there may be millions of threads.</p>'}]
+});
+
+const PAGE_TITLES={'ch01-big-picture': 'The Big Picture', 'ch02-container': 'The Container', 'ch03-dependency-injection': 'Dependency Injection', 'ch04-bean-lifecycle': 'The Bean Lifecycle', 'ch05-proxies': 'Proxies: JDK Dynamic vs CGLIB', 'ch06-aop': 'AOP: Aspects, Pointcuts, Advice', 'ch07-transactions': '@Transactional and Self-Invocation', 'ch08-auto-configuration': 'Spring Boot Auto-Configuration', 'ch09-boot-startup': 'Spring Boot Startup', 'ch10-request-journey': "A Request's Journey", 'ch11-security': 'Spring Security Internals', 'ch12-data-jpa': 'Spring Data JPA', 'ch13-webflux': 'WebFlux and Reactive', 'ch14-actuator': 'Actuator and Observability', 'ch15-exceptions': 'Exception Handling', 'ch16-events-async': 'Events, @Async and @Scheduled', 'ch17-caching': 'Caching', 'ch18-configuration': 'Configuration and Profiles', 'ch19-testing': 'Testing Spring Boot', 'ch20-spring-cloud': 'Microservices with Spring Cloud', 'ch21-virtual-threads': 'Virtual Threads in Boot', 'resources': 'Videos and Visual Reading', 'interview-drill': 'Interview Drill'};
+
+
+const H=flow('#hSvg',{nodes:[
+ {id:'c',x:85,y:80,w:140,h:46,t:'Caller',c:'pencil'},
+ {id:'p',x:290,y:80,w:170,h:46,t:'ProductService proxy',sub:'CacheInterceptor',fs:12},
+ {id:'k',x:290,y:190,w:170,h:46,t:'KeyGenerator',sub:'find(1) → key 1',fs:12},
+ {id:'cm',x:520,y:80,w:180,h:46,t:'Cache "products"',sub:'via CacheManager',c:'d2'},
+ {id:'t',x:520,y:190,w:180,h:46,t:'ProductService (target)',sub:'SELECT ... (slow)',c:'d5',fs:12},
+ {id:'db',x:670,y:245,w:80,h:26,t:'DB',fs:11,c:'d4'}],
+ edges:[{id:'h1',f:'c',t:'p',label:'find(1)',xy:[[155,70],[205,70]],lp:[180,60]},{id:'h2',f:'p',t:'k'},{id:'h3',f:'p',t:'cm',label:'get(1)',xy:[[375,80],[430,80]],lp:[402,72]},{id:'h4',f:'p',t:'t',label:'miss: invoke'},{id:'h5',f:'t',t:'db'},{id:'h6',f:'p',t:'cm',label:'put(1, product)',xy:[[340,57],[340,22],[560,22],[560,57]],lp:[450,16],c:'ok'},{id:'h7',f:'p',t:'c',label:'product',c:'ok',xy:[[205,92],[155,92]],lp:[180,110]}]});
+const HS=[
+ ['The caller has the proxy. <code>find(1)</code> enters <code>CacheInterceptor</code>, which reads the cache operations parsed from the annotations (<code>CacheOperationSource</code>).',{on:['c','p','h1'],tok:['h1']}],
+ ['It builds the key. No <code>key</code> attribute and one argument, so the key is just <code>1</code>. A <code>condition</code> SpEL expression could skip caching here.',{on:['p','k','h2'],tok:['h2']}],
+ ['First call: <code>cache.get(1)</code> on the cache named "products" from the <code>CacheManager</code>. Nothing there: a <b>miss</b>.',{on:['p','cm','h3'],tok:['h3'],bad:['cm'],sub:{cm:'miss'}}],
+ ['On a miss the interceptor calls the real method, which queries the database.',{on:['p','t','db','h4','h5'],tok:['h4','h5'],tokc:'d5'}],
+ ['It stores the result under key 1 (unless an <code>unless</code> expression says not to) and returns it.',{on:['p','cm','c','h6','h7'],tok:['h6','h7'],tokc:'ok',ok:['cm'],sub:{cm:'1 → Product'}}],
+ ['Second call to <code>find(1)</code>: same key, <code>cache.get(1)</code> finds it, a <b>hit</b>. The proxy returns the cached value and the target is never called: no SQL.',{on:['c','p','cm','h1','h3','h7'],tok:['h1','h3','h7'],tokc:'ok',ok:['cm'],hide:[],sub:{cm:'hit'}}]];
+$('#hStep').innerHTML=stepHTML();stepper('#hStep',HS.map(s=>s[0]),i=>H.set(HS[i][1]));
+
+let up='evict',db,cache,nDb,nHit;
+function rst(){db={1:20,2:35};cache={};nDb=0;nHit=0;$('#cLog').innerHTML='<span class="lg-m">Call a method.</span>';draw()}
+function draw(fl){$('#nDb').textContent=nDb;$('#nHit').textContent=nHit;
+ const ks=Object.keys(cache);$('#cTab').innerHTML=ks.length?ks.map(k=>`<tr class="${cache[k]!==db[k]?'stale':(k===fl?'flash':'')}"><td>${k}</td><td>Product(${k}, price ${cache[k]})${cache[k]!==db[k]?' ⚠ stale':''}</td></tr>`).join(''):'<tr><td class="e" colspan="2">empty</td></tr>';
+ $('#dTab').innerHTML=Object.keys(db).map(k=>`<tr><td>${k}</td><td>${db[k]}</td></tr>`).join('')}
+function log(h){const L=$('#cLog');if(L.textContent==='Call a method.')L.innerHTML='';L.innerHTML+=(L.innerHTML?'\n':'')+h;L.scrollTop=1e5}
+function find(id,viaThis){if(!viaThis&&id in cache){nHit++;log(`<span class="lg-ok">find(${id}) → cache HIT, method not called</span>`);return}
+ nDb++;log(`<span class="lg-b">find(${id})${viaThis?' (this.find, proxy bypassed)':' → MISS'} → SELECT * FROM product WHERE id=${id}</span>`);if(!viaThis){cache[id]=db[id];log(`<span class="lg-m">  put(${id})</span>`)}}
+function act(c){
+ if(c==='rst')return rst();
+ if(c==='f1'){find('1');return draw('1')}
+ if(c==='f2'){find('2');return draw('2')}
+ if(c==='clr'){cache={};log('<span class="lg-p">evict all entries in "products"</span>');return draw()}
+ if(c==='self'){log('<span class="lg-m">findTwice(1) calls this.find(1) twice:</span>');find('1',true);find('1',true);log('<span class="lg-bad">  2 queries; the cache was never consulted</span>');return draw()}
+ if(c==='u1'){db['1']=db['1']===25?30:25;log(`<span class="lg-b">updatePrice(1, ${db['1']}) → UPDATE product SET price=${db['1']} WHERE id=1</span>`);
+  if(up==='evict'){delete cache['1'];log('<span class="lg-ok">  @CacheEvict: key 1 removed; next find(1) reloads</span>')}
+  else if(up==='put'){cache['1']=db['1'];log('<span class="lg-ok">  @CachePut: return value stored under key 1</span>')}
+  else if('1' in cache)log('<span class="lg-bad">  cache untouched: find(1) now returns the OLD price</span>');
+  return draw('1')}}
+$$('[data-c]').forEach(b=>b.addEventListener('click',()=>act(b.dataset.c)));
+seg('[data-up]',b=>{up=b.dataset.up});rst();
+
+quiz('#quiz','#qScore',[
+ {q:'<code>@Cacheable("products") find(long id)</code>: find(7), then find(7)',a:0,why:'Same single argument, same key 7.'},
+ {q:'<code>@Cacheable("products") search(String q, int page)</code>: search("tv", 0), then search("tv", 1)',a:1,why:'Key is SimpleKey("tv", 0) vs SimpleKey("tv", 1): different.'},
+ {q:'Two methods share cache "products": <code>findById(long id)</code> and <code>findStock(long id)</code>. findById(7), then findStock(7)',a:0,why:'A hit, and a bug: the key is just 7 in both, so findStock returns a Product. Use separate cache names or key="\'stock:\' + #id".'},
+ {q:'<code>@Cacheable("reports") build(Filter f)</code>, where Filter has no equals/hashCode. Two calls with new Filter("q1")',a:1,why:'The key is the Filter object itself; without equals/hashCode two equal-looking filters are different keys, so it never hits (and the cache fills up).'},
+ {q:'Same find(7) twice, but the second call comes from <code>this.find(7)</code> inside ProductService',a:1,why:'Self-invocation skips the proxy entirely: the method runs and queries again.'}],['Hit','Miss']);
+iqList('#iq',IQ[PAGE]);
+
+})();
+</script>
+</body>
+</html>

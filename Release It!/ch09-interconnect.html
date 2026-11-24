@@ -1,0 +1,450 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Interconnect</title>
+<meta name="description" content="Instances only become a system when they can find and reach each other. This chapter tours the layer that joins them: names, load balancers, ways to reject load before it kills you, routes and discovery.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Release It! companion. Layout: an operations logbook on blueprint grid paper.
+   Blue ink = structure and healthy flow, orange pencil = load and stress, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+.callout.missing{border-color:var(--bad);background:var(--bad-soft)}
+.callout.missing b.h{color:var(--bad)}
+em.miss{font-style:normal;font-family:var(--mono);font-size:.72rem;color:var(--bad);border:1px solid var(--bad);border-radius:4px;padding:0 5px;margin-left:4px;white-space:nowrap}
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;max-height:220px;overflow:auto;display:flex;flex-direction:column;gap:2px}
+.log .e{color:var(--bad)} .log .w{color:var(--mid)} .log .g{color:var(--ok)}
+
+/* page */
+
+.lbgrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+@media (max-width:620px){.lbgrid{grid-template-columns:1fr 1fr}}
+.inst{border:1.5px solid var(--ok);border-radius:8px;padding:8px;text-align:center;font-size:.85rem;background:var(--surface);transition:all .3s}
+.inst b{display:block;font-family:var(--mono);font-size:1.1rem}
+.inst.dead{border-color:var(--bad);background:var(--bad-soft)}
+.inst.hot{border-color:var(--mid);background:var(--mid-soft)}
+.scale3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+@media (max-width:620px){.scale3{grid-template-columns:1fr}}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Release It! · visual companion</a><span class="tag">Part II · Design for Production · Chapter 9 of 17</span></div>
+  <h1>Interconnect</h1>
+  <p class="lede">Instances only become a system when they can find and reach each other. This chapter tours the layer that joins them: names, load balancers, ways to reject load before it kills you, routes and discovery.</p>
+  <nav class="toc" aria-label="Sections"><a href="#scale">Right scale</a><a href="#dns">DNS</a><a href="#lb">Load balancing</a><a href="#demand">Demand control</a><a href="#routing">Routing</a><a href="#discovery">Service discovery</a><a href="#vip">Migratory VIPs</a><a href="#check">Quick check</a></nav>
+  
+</header>
+
+<section id="scale" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Solutions at different scales</h2></div>
+  <p>Standalone instances are castaways; the interconnect layer joins them into a system through traffic management, load balancing and discovery. It's where high availability is really built. The right tools depend on your size: judge each option by the <b>rate of change</b> it supports, the <b>operational support</b> it needs and how much <b>global knowledge</b> it assumes. Describe your organization.</p>
+  <div class="sheet">
+    <label class="rng"><span>Number of services: <b id="svV"></b></span><input type="range" id="sv" min="1" max="500" value="8"></label>
+    <label class="rng"><span>Instance changes per day: <b id="chV"></b></span><input type="range" id="ch" min="0" max="200" value="1"></label>
+    <label class="row small"><input type="checkbox" id="ops"> We have a dedicated operations or platform team</label>
+    <div class="detail" id="scTxt" aria-live="polite"></div>
+  </div>
+  <p class="small">The balance point keeps moving: big companies open-source powerful platforms (Kubernetes, Consul, Spinnaker), and what once needed a platform team gets easier for small teams. Monitoring, once expensive, is now something every team must have.</p>
+</section>
+
+<section id="dns" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>DNS: simple, global, and easy to neglect</h2></div>
+  <p>With DNS, "discovery" is a human protocol: find the owners, get the name (perhaps for a six-pack), put it in config. Always call a <b>logical service name</b>, even if it's only an alias, so a move changes one record instead of every consumer. <b>Round-robin DNS</b> hands out several addresses for one name; cheap, but every instance must be routable, DNS knows nothing of health or load, and long-running clients often cache the first address forever. Try it.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn primary" id="rr">20 new clients resolve and connect</button><button class="btn" id="rrKill">Instance 3 dies</button><button class="btn" id="rrReset">Reset</button><label class="row small"><input type="checkbox" id="rrCache"> clients cache first address</label></div>
+    <div class="lbgrid" id="rrG"></div>
+    <p class="small" id="rrTxt" aria-live="polite"></p>
+  </div>
+  <h3>Where DNS shines: global server load balancing</h3>
+  <p>Specialized DNS servers at each location track the health of their pools and answer only with addresses of healthy ones, preferring the location nearest the caller. After resolution, DNS is out of the picture; the local load balancer handles the actual traffic. Pick the client's location and a site outage.</p>
+  <div class="sheet">
+    <div class="row"><div class="seg" role="group" aria-label="Client"><button data-c="eu" aria-pressed="true">Client in Europe</button><button data-c="na" aria-pressed="false">Client in North America</button></div><label class="row small"><input type="checkbox" id="euDown"> European pool down</label></div>
+    <div class="svgbox"><svg id="gSvg" viewBox="0 0 640 200" role="img" aria-label="Global server load balancing"></svg></div>
+    <p id="gTxt" aria-live="polite" class="small"></p>
+  </div>
+  <div class="callout"><b class="h">DNS availability</b><span>If nobody can resolve your name, your uptime doesn't matter. Host DNS away from your production infrastructure, use more than one provider in different places, and put your status page on yet another.</span></div>
+</section>
+
+<section id="lb" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Active load balancing</h2></div>
+  <p>An active load balancer sits between callers and instances. It listens on <b>virtual IPs</b>, each mapped to a pool with a policy: algorithm, health checks, stickiness, and what to do when no member is healthy. Clients shouldn't be able to tell it's there; instances must generate URLs with the VIP's name, and log the client from <span class="mono">X-Forwarded-For</span>, since the source address is now the proxy. Configure a pool.</p>
+  <div class="sheet">
+    <div class="row"><div class="seg" role="group" aria-label="Health check"><button data-h="none" aria-pressed="false">No health check</button><button data-h="port" aria-pressed="false">Port open?</button><button data-h="deep" aria-pressed="true">Real health check</button></div></div>
+    <div class="row"><div class="seg" role="group" aria-label="Stickiness"><button data-s="0" aria-pressed="true">No stickiness</button><button data-s="1" aria-pressed="false">Sticky sessions</button></div><button class="btn primary" id="lbGo">Send 40 requests</button></div>
+    <div class="lbgrid" id="lbG"></div>
+    <p class="small" id="lbTxt" aria-live="polite"></p>
+  </div>
+  <div class="scale3">
+    <div class="stat"><b>Software (reverse proxy)</b><span>HAProxy, nginx, Apache, Squid. Cheap, easy, can cache responses. In every request path, so it can become the bottleneck.</span></div>
+    <div class="stat"><b>Hardware</b><span>Layers 4 to 7, any connection protocol, much higher throughput, can fail a whole site over. Five- to six-figure prices and specialist skills.</span></div>
+    <div class="stat"><b>Content-based routing</b><span>Send searches to one pool, signups to another, long queries to their own machines.</span></div>
+  </div>
+</section>
+
+<section id="demand" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Demand control: reject work at the edge</h2></div>
+  <p>The world can crush your system at any time; there's no natural protection. Every failing system starts with a queue backing up: sockets held longer under load (fewer available just when most are needed), full NIC buffers, the listen queue. A single edge request fans out into a tree of internal calls, and once responses pass callers' timeouts, the retries arrive exactly when they hurt most. So <b>shed load as early as possible</b>, ideally at the load balancer, which answers 503 when health checks say every instance is too slow.</p>
+  <h3>Size the listen queue</h3>
+  <p>Response time callers see is <b>residence time</b>: queue wait plus processing. Teams that measure only processing time think all is well while consumers complain. The book's rule of thumb for a starting queue length: (max wait ÷ mean processing time + 1) × threads × 1.5.</p>
+  <div class="sheet">
+    <label class="rng"><span>Maximum acceptable wait: <b id="mwV"></b> ms</span><input type="range" id="mw" min="50" max="2000" step="50" value="100"></label>
+    <label class="rng"><span>Mean processing time: <b id="ptV"></b> ms</span><input type="range" id="pt" min="5" max="500" step="5" value="25"></label>
+    <label class="rng"><span>Request-handling threads: <b id="thV"></b></span><input type="range" id="th" min="10" max="400" step="10" value="100"></label>
+    <div class="stat"><span>Starting listen queue length</span><span class="big blue" id="lq"></span></div>
+    <p class="small">When overloaded, a "listen queue purge" (accept and immediately answer a canned 503) beats letting connections age in the queue. For services inside a data center, a shorter TIME_WAIT frees ephemeral sockets faster; TIME_WAIT exists to guard against late stray packets ("bogons").</p>
+  </div>
+</section>
+
+<section id="routing" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Network routing: consistent errors beat intermittent success</h2></div>
+  <p>Multihomed hosts pick an interface per destination from a routing table built from advertisements. Usually it just works. But imagine a partner integration carrying personal data over a VPN, while the public network also advertises a route. Depending on the order advertisements arrive, packets go over the VPN, or in cleartext over the internet, and the service appears to work either way.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn primary" id="boot">Reboot the host</button><label class="row small"><input type="checkbox" id="static"> static route to partner via VPN</label></div>
+    <div class="svgbox"><svg id="rSvg" viewBox="0 0 640 150" role="img" aria-label="Route to partner over VPN or public network"></svg></div>
+    <p id="rTxt" aria-live="polite" class="small"></p>
+  </div>
+  <p class="small">Another trap: two identical machines that numbered their ports differently, so one sent all its traffic out the admin network. Keep a record of every remote connection (destination name, address, desired route); someone will need it for firewall rules anyway. Static routes or software-defined networking are the usual fixes.</p>
+</section>
+
+<section id="discovery" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Discovering services</h2></div>
+  <p>Discovery matters when there are too many services to manage by DNS, or instances change constantly (containers do both). It has two halves: instances <b>announce</b> themselves to join pools, and callers <b>look up</b> an address. Discovery is itself a service that can fail, so clients should cache results briefly, and nobody should build their own.</p>
+  <div class="sheet">
+    <div class="row"><div class="seg" role="group" aria-label="Store"><button data-d="cp" aria-pressed="true">CP store (ZooKeeper-like)</button><button data-d="ap" aria-pressed="false">AP store (Consul-like)</button></div><label class="row small"><input type="checkbox" id="part"> network partition</label></div>
+    <div class="detail" id="dTxt" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="vip" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Migratory virtual IP addresses</h2></div>
+  <p>"Virtual IP" means two things. Load balancers use VIPs to put many services on few interfaces. Clusters use a <b>migratory</b> VIP: an address that moves to the standby node when the active one dies (new MAC address, advertised by ARP). Clients connect by the VIP's name and never notice which node holds it, but in-memory state and uncommitted transactions are lost. Some drivers re-run queries; updates can't be blindly replayed. Expect an exception in an odd place, and retry against the new node within a circuit breaker's limits.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn primary" id="fo">Active node fails</button><button class="btn" id="foR">Reset</button></div>
+    <div class="svgbox"><svg id="vSvg" viewBox="0 0 640 170" role="img" aria-label="Virtual IP moving between cluster nodes"></svg></div>
+    <p id="vTxt" class="small" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Release It! Design and Deploy Production-Ready Software</i>, second edition, by Michael T. Nygard (Pragmatic Bookshelf, 2018). Explanations, examples, code snippets and drawings are original summaries; nothing here is copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch08-processes-on-machines.html"><span>Previous · Chapter 8</span><b>Processes on Machines</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch10-control-plane.html"><span>Next · Chapter 10</span><b>Control Plane</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('rel:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('rel:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>{if(data[i])f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%'})))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+
+function sc(){const sv=+$('#sv').value,ch=+$('#ch').value,ops=$('#ops').checked;$('#svV').textContent=sv;$('#chV').textContent=ch;
+  const dyn=sv>60||ch>20;$('#scTxt').innerHTML=dyn&&ops?'<h3 class="okc">Dynamic discovery fits</h3><p>High rate of change and many services: static config would be edited several times a day, and no one knows everyone\'s changes. A platform team can amortize running Consul or a container platform across many teams.</p>':dyn?'<h3 class="midc">You need dynamism, but who runs it?</h3><p>A discovery service adds operational surface. Without an ops or platform team, prefer a managed platform that does registration for you.</p>':'<h3 class="blue">Plain DNS entries</h3><p>Few services, slow change, developers who lunch together. Logical DNS names in config are cheapest and simplest.</p>'}
+['sv','ch'].forEach(k=>$('#'+k).addEventListener('input',sc));$('#ops').addEventListener('change',sc);sc();
+
+let rr=[0,0,0,0],rrDead=-1,rrN=0;
+function drawRR(){$('#rrG').innerHTML=rr.map((v,i)=>`<div class="inst ${i===rrDead?'dead':v>12?'hot':''}">shipping-${i+1}<b>${v}</b>${i===rrDead?'dead, still in DNS':'connections'}</div>`).join('')}
+$('#rr').addEventListener('click',()=>{const cache=$('#rrCache').checked;let fail=0;for(let k=0;k<20;k++){const i=cache?0:(rrN++)%4;if(i===rrDead)fail++;else rr[i]++}drawRR();
+  $('#rrTxt').textContent=(cache?'Clients cached the first address they got: one instance takes everything. ':'Connections spread evenly (though not the work they carry). ')+(fail?`${fail} clients were handed the dead instance's address and failed; DNS has no idea it\'s down.`:'')});
+$('#rrKill').addEventListener('click',()=>{rrDead=2;drawRR()});$('#rrReset').addEventListener('click',()=>{rr=[0,0,0,0];rrDead=-1;rrN=0;drawRR();$('#rrTxt').textContent=''});drawRR();
+
+let gc='eu';function drawG(){const s=$('#gSvg');s.innerHTML='';const down=$('#euDown').checked;
+  const site=(x,t,ip,bad)=>{s.appendChild(el('rect',{x,y:100,width:200,height:80,rx:10,fill:bad?'var(--bad-soft)':'var(--surface)',stroke:bad?'var(--bad)':'var(--blue)','stroke-width':2}));s.appendChild(el('text',{x:x+100,y:122,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--ink)'},t));s.appendChild(el('text',{x:x+100,y:140,'text-anchor':'middle','font-size':10.5,fill:'var(--muted)',class:'t-mono'},'VIP '+ip));s.appendChild(el('text',{x:x+100,y:160,'text-anchor':'middle','font-size':10.5,fill:bad?'var(--bad)':'var(--muted)'},bad?'pool failing health checks':'GSLB DNS + load balancer'))};
+  site(40,'Europe','192.0.2.10',down);site(400,'North America','198.51.100.20',false);
+  const cx=gc==='eu'?140:500;s.appendChild(el('circle',{cx,cy:30,r:14,fill:'var(--pencil)'}));s.appendChild(el('text',{x:cx+22,y:35,'font-size':11.5,fill:'var(--ink)'},'client asks: price.example.com'));
+  const tgt=gc==='eu'&&!down?140:500;s.appendChild(el('line',{x1:cx,y1:44,x2:tgt,y2:100,stroke:'var(--ok)','stroke-width':3,class:'flow'}));
+  $('#gTxt').textContent=gc==='eu'?(down?'The European GSLB server withholds its own pool\'s address; the client is sent across the ocean. Slower, but working.':'The nearby European server answers first with its pool\'s VIP.'):'North American clients get the North American VIP. Both servers know all pools but prefer local ones.'}
+seg('[data-c]',b=>{gc=b.dataset.c;drawG()});$('#euDown').addEventListener('change',drawG);drawG();
+
+let hc='deep',sticky=0;
+function lb(){const st=['ok','sick','ok','ok'];const cnt=[0,0,0,0],fail=[0,0,0,0];for(let k=0;k<40;k++){let i=sticky?(k<24?0:k%4):k%4;
+  if(hc==='deep'&&i===1)i=[0,2,3][k%3];cnt[i]++;if(st[i]==='sick')fail[i]++}
+  $('#lbG').innerHTML=cnt.map((c,i)=>`<div class="inst ${st[i]==='sick'?'dead':c>15?'hot':''}">app-${i+1}<b>${c}</b>${st[i]==='sick'?(hc==='deep'?'out of pool':'listening, but hung'):'requests'}</div>`).join('');
+  const f=fail.reduce((a,b)=>a+b,0);$('#lbTxt').textContent=(hc==='none'?`No health check: ${f} requests sent to a hung instance. `:hc==='port'?`The port is open on app-2 even though every thread is hung, so the check passes and ${f} requests fail. `:'The real health check takes app-2 out; no failures. ')+(sticky?'Sticky sessions pinned several long sessions to app-1, which now runs hot.':'')}
+seg('[data-h]',b=>{hc=b.dataset.h;lb()});seg('[data-s]',b=>{sticky=+b.dataset.s;lb()});$('#lbGo').addEventListener('click',lb);lb();
+
+function lq(){const mw=+$('#mw').value,pt=+$('#pt').value,th=+$('#th').value;$('#mwV').textContent=mw;$('#ptV').textContent=pt;$('#thV').textContent=th;$('#lq').textContent=Math.round((mw/pt+1)*th*1.5).toLocaleString()}
+['mw','pt','th'].forEach(k=>$('#'+k).addEventListener('input',lq));lq();
+
+let boots=0;function drawR(){const s=$('#rSvg');s.innerHTML='';const st=$('#static').checked;const vpn=st||boots%3!==2;
+  s.appendChild(el('rect',{x:20,y:55,width:120,height:44,rx:8,fill:'var(--surface)',stroke:'var(--blue)','stroke-width':2}));s.appendChild(el('text',{x:80,y:82,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--ink)'},'our service'));
+  s.appendChild(el('rect',{x:500,y:55,width:120,height:44,rx:8,fill:'var(--surface)',stroke:'var(--blue)','stroke-width':2}));s.appendChild(el('text',{x:560,y:82,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--ink)'},'partner API'));
+  s.appendChild(el('path',{d:'M140,70 C250,10 390,10 500,70',fill:'none',stroke:vpn?'var(--ok)':'var(--line)','stroke-width':vpn?4:1.5,class:vpn?'flow':''}));s.appendChild(el('text',{x:320,y:28,'text-anchor':'middle','font-size':11,fill:'var(--ok)'},'VPN (encrypted)'));
+  s.appendChild(el('path',{d:'M140,85 C250,145 390,145 500,85',fill:'none',stroke:!vpn?'var(--bad)':'var(--line)','stroke-width':!vpn?4:1.5,class:!vpn?'flow':''}));s.appendChild(el('text',{x:320,y:140,'text-anchor':'middle','font-size':11,fill:'var(--bad)'},'public internet (cleartext)'));
+  $('#rTxt').textContent=st?'The static route always sends partner traffic through the VPN.':boots===0?'Reboot a few times and watch which route wins.':vpn?`Boot ${boots}: route advertisements arrived in the "right" order. VPN used.`:`Boot ${boots}: the public route won. Personal data is crossing the internet in cleartext, and every call still succeeds, so nobody notices.`}
+$('#boot').addEventListener('click',()=>{boots++;drawR()});$('#static').addEventListener('change',drawR);drawR();
+
+let dm='cp';function ds(){const p=$('#part').checked;$('#dTxt').innerHTML=dm==='cp'?(p?'<h3 class="midc">Consistent, not available</h3><p>During a partition some nodes refuse reads and writes. Clients need a fallback: other nodes, or recently cached results. Wrap the store in a library so every client doesn\'t have to get this right.</p>':'<h3 class="blue">ZooKeeper or etcd as the base</h3><p>Distributed data stores you wrap with a library for registration and lookup. Consistent answers when the network is healthy.</p>'):(p?'<h3 class="midc">Available, possibly stale</h3><p>Nodes keep answering, but some answers may be out of date. Callers must tolerate addresses that no longer work.</p>':'<h3 class="blue">Consul-style</h3><p>Prefers availability; also runs health checks. Platform schedulers like Docker Swarm can register instances automatically.</p>')}
+seg('[data-d]',b=>{dm=b.dataset.d;ds()});$('#part').addEventListener('change',ds);ds();
+
+let failed=false;function drawV(){const s=$('#vSvg');s.innerHTML='';
+  [[120,'db-node-1',!failed],[480,'db-node-2',failed]].forEach(([x,t,act],k)=>{const dead=k===0&&failed;s.appendChild(el('rect',{x:x-80,y:90,width:160,height:60,rx:8,fill:dead?'var(--bad-soft)':'var(--surface)',stroke:dead?'var(--bad)':act?'var(--ok)':'var(--muted)','stroke-width':2}));
+    s.appendChild(el('text',{x,y:114,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--ink)'},t));s.appendChild(el('text',{x,y:134,'text-anchor':'middle','font-size':10.5,fill:'var(--muted)'},dead?'no heartbeat':act?'active · holds VIP':'standby'))});
+  const vx=failed?480:120;s.appendChild(el('rect',{x:vx-60,y:50,width:120,height:26,rx:13,fill:'var(--blue)'}));s.appendChild(el('text',{x:vx,y:68,'text-anchor':'middle','font-size':11,'font-weight':700,fill:'var(--surface)',class:'t-mono'},'VIP 10.0.5.50'));
+  s.appendChild(el('text',{x:320,y:24,'text-anchor':'middle','font-size':11.5,fill:'var(--ink)'},'app connects to db.example.com → 10.0.5.50'));s.appendChild(el('line',{x1:320,y1:30,x2:vx,y2:50,stroke:'var(--blue)','stroke-width':2,class:'flow'}));
+  $('#vTxt').textContent=failed?'The standby noticed the missing heartbeat, mounted the storage, started the database and claimed the address. Same name, same IP; but the in-flight transaction was lost and the app saw an exception it must handle.':'Clients only know the virtual address.'}
+$('#fo').addEventListener('click',()=>{failed=true;drawV()});$('#foR').addEventListener('click',()=>{failed=false;drawV()});drawV();
+
+quiz('#qQuiz','#qScore',[
+ {q:'Round-robin DNS stops sending clients to an instance that has crashed.',a:1,why:'DNS knows nothing about instance health.'},
+ {q:'A load balancer health check should verify requests can succeed, not just that a port is open.',a:0,why:'A hung app still listens on its port.'},
+ {q:'The best place to shed load is as close to the edge as possible.',a:0,why:'Every tier a request reaches ties up more resources before it is rejected.'},
+ {q:'A service measuring only its own processing time knows what its callers experience.',a:1,why:'Callers see residence time, including the listen queue.'},
+ {q:'An intermittently wrong route is worse than one that consistently fails.',a:0,why:'Consistent errors get noticed and fixed; intermittent success can leak data silently.'}],['True','False']);
+
+})();
+</script>
+</body>
+</html>

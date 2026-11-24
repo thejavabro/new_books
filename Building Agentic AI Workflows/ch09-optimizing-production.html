@@ -1,0 +1,502 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Optimizing AI Models for Production</title>
+<meta name="description" content="The last mile is all trade-offs: bits per weight against accuracy, a small model against a large one, latency against cost. These are the levers, and the experiments that tell you which to pull.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Building Agentic AI companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = the model and its data, orange pencil = prompts, people and agents, green = good outcome, red = failure or cost.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* additions for this companion */
+button.tag{cursor:pointer}
+button.tag:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)} pre.code .p{color:var(--pencil)}
+.tok{display:inline-block;font-family:var(--mono);font-size:.85rem;padding:2px 6px;margin:2px 1px;border-radius:4px;border:1px solid var(--line);background:var(--paper)}
+.msg{border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:.93rem;background:var(--surface);display:flex;flex-direction:column;gap:3px}
+.msg .who{font-family:var(--mono);font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.msg.user{border-left:4px solid var(--pencil)} .msg.ai{border-left:4px solid var(--blue)} .msg.tool{border-left:4px solid var(--d2);background:var(--paper)} .msg.sys{border-left:4px solid var(--d5)}
+.chat{display:flex;flex-direction:column;gap:8px}
+.meter{height:12px;border-radius:6px;background:var(--paper);border:1px solid var(--line);overflow:hidden}
+.meter i{display:block;height:100%;background:var(--blue);transition:width .4s}
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+.missing{border-left:4px solid var(--bad);background:var(--bad-soft);padding:12px 16px;border-radius:0 8px 8px 0;font-size:.95rem}
+.stack,.sheet>*,.two>*{min-width:0}
+
+/* page */
+
+.toks{display:flex;flex-wrap:wrap;gap:4px;min-height:2.4em}
+.toks span{font-family:var(--mono);font-size:.82rem;padding:3px 7px;border-radius:5px;border:1px solid var(--line);background:var(--paper);transition:background .3s}
+.toks span.ok{background:var(--ok-soft);border-color:var(--ok)}
+.toks span.bad{background:var(--bad-soft);border-color:var(--bad);text-decoration:line-through}
+.toks span.fix{background:var(--blue-soft);border-color:var(--blue)}
+.stack-bar{display:flex;height:30px;border-radius:6px;overflow:hidden;border:1px solid var(--line)}
+.stack-bar div{display:grid;place-items:center;font-size:.72rem;font-family:var(--mono);color:var(--surface);transition:flex .3s;white-space:nowrap;overflow:hidden}
+.wer{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media (max-width:640px){.wer{grid-template-columns:1fr}}
+.wer input{font:inherit;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);width:100%}
+.dolls{display:flex;align-items:flex-end;gap:6px;height:110px}
+.dolls i{display:block;border-radius:50% 50% 40% 40%;background:var(--pencil-soft);border:2px solid var(--pencil);transition:all .3s}
+.dolls i.on{background:var(--pencil)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Building Agentic AI · visual companion</a><span class="tag">Part III · Chapter 9 of 9</span><button class="tag themebtn" type="button" data-theme-toggle aria-label="Toggle light or dark theme">Theme</button></div>
+  <h1>Optimizing AI Models for Production</h1>
+  <p class="lede">The last mile is all trade-offs: bits per weight against accuracy, a small model against a large one, latency against cost. These are the levers, and the experiments that tell you which to pull.</p>
+  <nav class="toc" aria-label="Sections"><a href="#vram">VRAM math</a><a href="#quant">Quantization</a><a href="#distill">Distillation</a><a href="#spec">Speculative decoding</a><a href="#voice">Case: voice bot</a><a href="#matryoshka">Matryoshka embeddings</a><a href="#next">Case N + 1</a><a href="#check">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="vram" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>How much GPU memory does a model need?</h2></div>
+  <p>Production needs more than accuracy: speed, cost and data governance. The first constraint is usually GPU memory (VRAM). Rule of thumb: <b>parameters × (bits ÷ 8) × 1.2</b>, where the 1.2 is a finger-in-the-wind 20% headroom for activations and runtime overhead. An 8B model at FP16 works out to about 19.2 billion bytes, roughly 17.9 GB.</p>
+  <div class="sheet">
+    <div class="two">
+      <div class="stack">
+        <label class="rng"><span>Parameters: <b id="pV"></b></span><input type="range" id="pIn" min="0.5" max="70" step="0.5" value="8"></label>
+        <div class="seg" role="group" aria-label="Precision"><button data-b="32" aria-pressed="false">FP32</button><button data-b="16" aria-pressed="true">FP16</button><button data-b="8" aria-pressed="false">INT8</button><button data-b="4" aria-pressed="false">4-bit</button></div>
+        <pre class="code" id="vF"></pre>
+      </div>
+      <div class="stack"><div class="stat"><span>Estimated VRAM to load</span><b class="big blue" id="vOut"></b></div><div class="bars" id="gpu"></div></div>
+    </div>
+  </div>
+  <p>Running data adds more on top. In the book's measurement, an 8B model at 16 bits peaked around 26 GB for a single query, against about 6 GB once quantized to 4 bits; for a batch of 32, roughly 30 GB against 9 GB.</p>
+</section>
+
+<section id="quant" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Quantization: fewer bits per weight</h2></div>
+  <p>Quantization stores each weight in fewer bits: 32 → 8 cuts memory 75%, and 4 bits halves it again. It isn't just chopping decimals. Algorithms such as <b>NF4</b> (NormalFloat4, from the QLoRA work that pairs it with LoRA) map weights onto a small set of levels chosen to fit their typical bell-shaped distribution. You need the weights to do it, it's quick, and it runs models on small GPUs or even CPUs (Ollama runs quantized models fully offline). The price: a different model, so some accuracy loss is near-certain, commonly 5–15% on benchmarks, more on maths and reasoning. Fine-tuning can win some back.</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="qSvg" viewBox="0 0 640 200" role="img" aria-label="Weights snapped to quantization levels"></svg></div>
+    <label class="rng"><span>Bits per weight: <b id="qbV"></b></span><input type="range" id="qb" min="1" max="8" value="4"></label>
+    <p class="small" id="qTxt"></p>
+  </div>
+</section>
+
+<section id="distill" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Distillation: a small student copies a big teacher</h2></div>
+  <p>Distillation trains a smaller <b>student</b> to reproduce a larger <b>teacher</b>'s outputs. <b>Task-agnostic</b> distillation copies general language modelling, giving a lean new base model (BERT → DistilBERT). <b>Task-specific</b> distillation trains on one narrow labelled task. A common recipe chains them: distill a 9B teacher into an ~800M general student, then distill again on core task data. Distilled models can then be quantized as well.</p>
+  <div class="sheet stepper" id="dsStep"><div class="svgbox"><svg id="dsSvg" viewBox="0 0 640 170" role="img" aria-label="Two-stage distillation"></svg></div><div id="dsCtl"></div></div>
+  <div class="tbl"><table class="t"><thead><tr><th></th><th>Quantization</th><th>Distillation</th></tr></thead><tbody>
+    <tr><td><b>Pros</b></td><td>4–8× smaller, less memory and compute; runs on small GPUs/CPUs; fast, no retraining</td><td>New, smaller model with strong performance; task-specific students can stay close to the teacher</td></tr>
+    <tr><td><b>Cons</b></td><td>Accuracy almost always drops (5–15% typical); maths and reasoning suffer more</td><td>Expensive retraining, data and engineering; inherits the teacher's biases; often generalises worse</td></tr>
+    <tr><td><b>Use when</b></td><td>Quick deployment on constrained hardware; a small drop is tolerable; edge or local CPU</td><td>You want a long-term efficient model and can afford training; specialised small models</td></tr>
+  </tbody></table></div>
+</section>
+
+<section id="spec" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Case study: speculative decoding</h2></div>
+  <p>A small <b>assistant</b> model drafts several tokens the normal way; the big <b>base</b> model checks the whole draft in one forward pass instead of one pass per token. Matching tokens are kept, and at the first mismatch the base model supplies its own token and drafting restarts. The output distribution is unchanged; the speed-up depends on how often the two agree. Disagree enough and it's slower than not bothering.</p>
+  <div class="sheet">
+    <div class="two">
+      <label class="rng"><span>Agreement rate between the models: <b id="arV"></b></span><input type="range" id="ar" min="0.2" max="0.98" step="0.02" value="0.8"></label>
+      <label class="rng"><span>Tokens drafted per round: <b id="kdV"></b></span><input type="range" id="kd" min="1" max="10" value="4"></label>
+    </div>
+    <div class="toks" id="specT" aria-live="polite"></div>
+    <div class="row between"><span class="small" id="specTxt"></span><button class="btn primary" id="specGo">Generate 30 tokens</button></div>
+    <p class="small">Toy cost model: an assistant token costs 0.15 of a base forward pass; each verification costs one pass.</p>
+  </div>
+  <p>The experiment: Qwen3-8B fine-tuned on policies (from Chapter 8) as base, the off-the-shelf Qwen3-0.6B as assistant, 4 drafted tokens, six prompt categories.</p>
+  <div class="sheet"><div class="bars" id="catBars"></div><p class="small">Schematic change in seconds per token with assistance (longer = faster). The direction for each category is from the book.</p></div>
+  <div class="callout"><b class="h">Alignment is everything</b><span>On policy questions the untuned assistant kept drafting plausible-sounding wrong text that the fine-tuned base kept rejecting, so it ran <b>slower</b>. Distilling the fine-tuned base into its own assistant should help. In practice speculative decoding is mostly used with large foundation models; for a 10–25% gain it can be simpler to add another GPU.</span></div>
+</section>
+
+<section id="voice" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Case study: a phone bot that answers in under a second</h2></div>
+  <p>Audio-to-audio models exist but weren't ready: hard to customise voices, and quality drifts over long calls. So the phone bot <b>grounds</b> in text (Chapter 6): Twilio streams call audio over WebSockets; after a pause of more than 500 ms the buffered audio goes to speech-to-text; the text goes to an LLM (possibly an agent); the reply goes to text-to-speech and streams back to the caller.</p>
+  <div class="sheet">
+    <div class="row between"><h3>Latency budget for one reply</h3><span class="mono" id="lbT"></span></div>
+    <div class="stack-bar" id="lb"></div>
+    <div class="three">
+      <label class="rng"><span>Speech-to-text: <b id="l1V"></b></span><input type="range" id="l1" min="50" max="1500" step="25" value="150"></label>
+      <label class="rng"><span>LLM reply (60 tokens): <b id="l2V"></b></span><input type="range" id="l2" min="50" max="2000" step="25" value="200"></label>
+      <label class="rng"><span>Text-to-speech: <b id="l3V"></b></span><input type="range" id="l3" min="50" max="1500" step="25" value="200"></label>
+    </div>
+    <p class="small" id="lbTxt"></p>
+  </div>
+  <p>To pick providers, a script sent test phrases through every TTS and then every STT model, timing each leg (seconds per word) and scoring accuracy as 1 − <b>word error rate</b> on the round trip. Groq's hosted models were fastest on both sides; a distilled Whisper for STT was about <b>7.5× faster</b> than a small GPT-4o-class transcriber with barely any accuracy change. Voice quality wasn't judged, only speed. The final stack: distil-whisper (STT), Llama 4 Scout at around 750 tokens/s (LLM) and PlayAI TTS, all on Groq.</p>
+  <div class="sheet">
+    <h3>Word error rate</h3>
+    <div class="wer"><label class="rng"><span>What was said</span><input id="w1" value="please move my booking to friday at noon"></label><label class="rng"><span>What came back after TTS → STT</span><input id="w2" value="please move my bookings to friday at new"></label></div>
+    <div class="kv"><div class="stat"><span>WER</span><b class="big badc" id="werO"></b></div><div class="stat"><span>Accuracy (1 − WER)</span><b class="big okc" id="accO"></b></div></div>
+    <p class="small" id="werTxt"></p>
+  </div>
+</section>
+
+<section id="matryoshka" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Case study: Matryoshka embeddings</h2></div>
+  <p>Last optimisation: embeddings. Normally an embedder always outputs the same length. A <b>Matryoshka</b> embedder is trained so the <i>first</i> 64, 128, 256 or 512 dimensions also work on their own, like nested dolls. Truncate when you need speed and memory; use more when you need fidelity.</p>
+  <div class="sheet">
+    <div class="two">
+      <div class="stack">
+        <label class="rng"><span>Dimensions kept: <b id="mdV"></b></span><input type="range" id="md" min="0" max="4" value="4"></label>
+        <div class="dolls" id="dolls" aria-hidden="true"></div>
+        <div class="kv"><div class="stat"><span>Disk, 1M float32 vectors</span><b class="blue" id="mDisk" style="font-family:var(--display);font-size:1.5rem"></b></div><div class="stat"><span>Search cost vs. 1,024</span><b class="pencil" id="mLat" style="font-family:var(--display);font-size:1.5rem"></b></div></div>
+      </div>
+      <div class="stack"><div class="bars" id="mRec"></div><p class="small">Recall@10 on held-out questions (schematic shape of the book's result).</p></div>
+    </div>
+    <p class="small">The book measured a 1M-vector database at 64–1,024 dimensions: going from 1,024 to 64 cut disk use by nearly 20× and search latency sharply, for cosine and dot product alike.</p>
+  </div>
+  <p>The data: Victor Hugo's <i>Les Misérables</i> (public domain) standing in for company docs. Chunk it, have an LLM write trivia questions each chunk answers, and you have <b>positive pairs</b>. Negatives come free from <b>multiple negatives ranking loss</b>: within a batch, every other pair's passage counts as a negative for this question.</p>
+  <div class="sheet">
+    <div class="svgbox fit"><svg id="mnrl" viewBox="0 0 360 230" role="img" aria-label="In-batch negatives matrix"></svg></div>
+    <p class="small">Green: the true pair, pulled together. Grey: in-batch negatives, pushed apart. Orange: a <b>false negative</b>, another passage that also answers the question but gets pushed away anyway. In-batch negatives are also often too easy; <b>hard negatives</b> mined with a second model teach more, but that model can mislabel too.</p>
+  </div>
+  <p><b>MatryoshkaLoss</b> just applies that loss to the full vector and to each truncated prefix (1,024, 512, 256, 128, 64) and sums them, which pushes the most important information into the first dimensions, much like principal components. The base model was BAAI's bge-large-en-v1.5. Two recipes were compared: masked-language-model pre-training on the raw text (15% of tokens masked) <i>then</i> the embedding fine-tune, versus the fine-tune alone. They came out <b>the same</b>. Probably there was no new jargon to learn in a classic novel; in a jargon-heavy or cross-lingual domain the extra step might pay. Not every idea pans out, and that's fine.</p>
+</section>
+
+<section id="next" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Case study N + 1: what comes next</h2></div>
+  <p>The book closes by zooming out. Shrink a model? Quantize. Speed it up? Maybe speculative decoding. More control? Fine-tune on your own data. Privacy? Self-host. A weird edge case nobody else cares about? Bake it in with domain adaptation. Underneath all of it: the field rewards people who <b>try things</b> and measure them.</p>
+  <div class="cardgrid" id="nextCards"></div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b class="blue">VRAM rule</b><span>params × bits/8 × 1.2. 8B at FP16 ≈ 18 GB before any data.</span></div>
+    <div><b>Quantize</b><span>Fast, big memory savings, some accuracy loss. Needs the weights.</span></div>
+    <div><b class="pencil">Distill</b><span>Train a student on a teacher's outputs; general then task-specific.</span></div>
+    <div><b class="okc">Speculate</b><span>Small model drafts, big model verifies. Only wins when they agree.</span></div>
+    <div><b>Voice</b><span>STT → LLM → TTS, streamed; choose the fastest legs by measured WER and latency.</span></div>
+    <div><b class="pencil">Matryoshka</b><span>Train nested prefixes; cut dimensions ~16× with little recall loss.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Building Agentic AI: Workflows, Fine-Tuning, Optimization, and Deployment</i> by Sinan Ozdemir (Pearson / Addison-Wesley, 2026). Explanations, examples, code snippets and drawings are original summaries; charts are schematic redrawings of the trends the book reports, not copies of its figures.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch08-fine-tuning.html"><span>Previous · Chapter 8</span><b>Fine-Tuning AI for Calibrated Performance</b></a><a class="home" href="index.html">All chapters</a><span></span></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('baw:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('acc:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" data-w="${Math.max(0,Math.min(100,d.v/max*100))}" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach(f=>f.style.width=f.dataset.w+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: cycles auto -> light -> dark, remembered per viewer */
+(function(){const r=document.documentElement;const t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+  const b=document.querySelector('[data-theme-toggle]');if(!b)return;
+  const lab=()=>{const v=r.getAttribute('data-theme');b.textContent=v==='dark'?'Theme: dark':v==='light'?'Theme: light':'Theme: auto'};lab();
+  b.addEventListener('click',()=>{const v=r.getAttribute('data-theme');const n=v==null?'light':v==='light'?'dark':null;if(n)r.setAttribute('data-theme',n);else r.removeAttribute('data-theme');store.set('theme',n);lab()})})();
+function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+
+
+function box(s,x,y,w,h,t,c,sub,cls){const g=el('g',{class:'fade '+(cls||'')});g.appendChild(el('rect',{x,y,width:w,height:h,rx:8,fill:'var(--surface)',stroke:`var(--${c})`,'stroke-width':1.6}));g.appendChild(el('text',{x:x+w/2,y:y+h/2+(sub?-3:5),'text-anchor':'middle','font-size':12.5,'font-weight':600,class:'s-ink'},t));if(sub)g.appendChild(el('text',{x:x+w/2,y:y+h/2+13,'text-anchor':'middle','font-size':10.5,class:'s-muted'},sub));s.appendChild(g);return g}
+function arrow(s,x1,y1,x2,y2,on,c){c=c||'var(--muted)';const l=el('line',{x1,y1,x2,y2,stroke:c,'stroke-width':2});if(on)l.setAttribute('class','flow');s.appendChild(l);const a=Math.atan2(y2-y1,x2-x1);s.appendChild(el('polygon',{points:`${x2},${y2} ${x2-10*Math.cos(a-.4)},${y2-10*Math.sin(a-.4)} ${x2-10*Math.cos(a+.4)},${y2-10*Math.sin(a+.4)}`,fill:c}))}
+/* VRAM */
+let bits=16;function vram(){const p=+$('#pIn').value;$('#pV').textContent=p+'B';const bytes=p*1e9*bits/8*1.2;const gb=bytes/1024**3;$('#vOut').textContent=gb.toFixed(1)+' GB';
+  $('#vF').textContent=`${p}e9 × (${bits}/8) × 1.2 = ${(bytes/1e9).toFixed(1)}e9 bytes\n÷ 1024³ ≈ ${gb.toFixed(2)} GB`;
+  bars('#gpu',[{l:'Laptop GPU (8 GB)',v:Math.min(100,gb/8*100),c:gb<=8?'ok':'bad',txt:gb<=8?'fits':'too big'},{l:'Consumer GPU (24 GB)',v:Math.min(100,gb/24*100),c:gb<=24?'ok':'bad',txt:gb<=24?'fits':'too big'},{l:'Data-centre GPU (80 GB)',v:Math.min(100,gb/80*100),c:gb<=80?'ok':'bad',txt:gb<=80?'fits':'too big'}],100)}
+$('#pIn').addEventListener('input',vram);seg('[data-b]',b=>{bits=+b.dataset.b;vram()});vram();
+/* quantization */
+const W=[...Array(40)].map((_,i)=>{const u=Math.sin(i*7.13)*.5+Math.sin(i*2.7)*.35;return Math.max(-.98,Math.min(.98,u))});
+function quant(){const b=+$('#qb').value;$('#qbV').textContent=b;const L=2**b;const s=$('#qSvg');s.innerHTML='';const X=i=>30+i*14.6,Y=v=>100-v*85;
+  const levels=[...Array(L)].map((_,i)=>-1+2*(i+.5)/L);if(L<=32)levels.forEach(l=>s.appendChild(el('line',{x1:20,x2:620,y1:Y(l),y2:Y(l),stroke:'var(--line)','stroke-width':.8})));
+  let err=0;W.forEach((w,i)=>{const q=levels.reduce((a,l)=>Math.abs(l-w)<Math.abs(a-w)?l:a,levels[0]);err+=Math.abs(q-w);s.appendChild(el('line',{x1:X(i),y1:Y(w),x2:X(i),y2:Y(q),stroke:'var(--bad)','stroke-width':1.5}));
+    s.appendChild(el('circle',{cx:X(i),cy:Y(w),r:3,fill:'var(--muted)'}));s.appendChild(el('circle',{cx:X(i),cy:Y(q),r:3.5,fill:'var(--blue)'}))});
+  $('#qTxt').innerHTML=`${L} levels. Grey = original weight, blue = stored value, red = rounding error (mean ${(err/W.length).toFixed(3)}). Memory vs FP32: <b>${(b/32*100).toFixed(1)}%</b>. Uniform levels here for simplicity; NF4 spaces them to match the weight distribution.`}
+$('#qb').addEventListener('input',quant);quant();
+/* distillation */
+$('#dsCtl').innerHTML=stepHTML();
+stepper('#dsStep',['Start with a large general teacher (say 9B parameters).','<b>Task-agnostic</b> distillation: a much smaller student (~800M) learns to match the teacher on general text. It becomes a new lean base model.','<b>Task-specific</b> distillation: a teacher fine-tuned on your task labels the task data; the small base learns to match it.','The result: a tiny specialist. Optionally quantize it as well.'],i=>{const s=$('#dsSvg');s.innerHTML='';
+  box(s,20,50,140,70,'Teacher 9B','d4','general',i>=0?'':'off');box(s,250,50,140,70,'Student 800M','d1','general base',i>=1?'':'off');box(s,480,50,140,70,'Task student','ok','tiny specialist',i>=2?'':'off');
+  arrow(s,160,85,248,85,i===1);arrow(s,390,85,478,85,i===2);s.appendChild(el('text',{x:204,y:76,'text-anchor':'middle','font-size':10,class:'s-muted'},'general text'));s.appendChild(el('text',{x:434,y:76,'text-anchor':'middle','font-size':10,class:'s-muted'},'task data'));
+  if(i===3)s.appendChild(el('text',{x:550,y:145,'text-anchor':'middle','font-size':11,class:'s-pencil','font-weight':700},'+ 4-bit'))});
+/* speculative */
+const SENT='the quick answer is that the refund depends on when you cancelled and which policy the host chose for this listing so check the booking page first and then contact support if it still looks wrong today'.split(' ');
+let spT=null;function spec(){clearInterval(spT);const a=+$('#ar').value,k=+$('#kd').value;let pos=0,cost=0,rounds=0;const out=[];const box2=$('#specT');box2.innerHTML='';
+  function round(){if(pos>=30){clearInterval(spT);const base=30;$('#specTxt').innerHTML=`${rounds} base passes instead of 30. Cost ≈ <b>${cost.toFixed(1)}</b> vs 30 unassisted → <b class="${cost<30?'okc':'badc'}">${cost<30?((1-cost/30)*100).toFixed(0)+'% faster':((cost/30-1)*100).toFixed(0)+'% slower'}</b>.`;return}
+    rounds++;cost+=1+.15*k;let acc=0;for(let j=0;j<k&&pos+j<30;j++){if(Math.random()<a)acc++;else break}
+    for(let j=0;j<acc;j++)box2.insertAdjacentHTML('beforeend',`<span class="ok">${SENT[pos+j]}</span>`);pos+=acc;
+    if(pos<30&&acc<k){box2.insertAdjacentHTML('beforeend',`<span class="bad">${['a','very','maybe','so'][rounds%4]}</span><span class="fix">${SENT[pos]}</span>`);pos++}}
+  spT=setInterval(round,260)}
+function specLbl(){$('#arV').textContent=Math.round(+$('#ar').value*100)+'%';$('#kdV').textContent=$('#kd').value}
+['#ar','#kd'].forEach(x=>$(x).addEventListener('input',specLbl));specLbl();$('#specGo').addEventListener('click',spec);$('#specTxt').textContent='Green = accepted draft tokens; red = rejected; blue = the base model\'s correction.';
+bars('#catBars',[{l:'Reciting from memory',v:25,c:'ok',txt:'faster (10–25%)'},{l:'Maths & science',v:20,c:'ok',txt:'faster'},{l:'General knowledge',v:15,c:'ok',txt:'faster'},{l:'Entertainment',v:5,c:'mid',txt:'small change'},{l:'Casual conversation',v:4,c:'mid',txt:'small change'},{l:'Policy questions',v:2,c:'bad',txt:'slower'}],30);
+/* latency budget */
+function lb(){const v=[+$('#l1').value,+$('#l2').value,+$('#l3').value];['l1','l2','l3'].forEach((k,i)=>$('#'+k+'V').textContent=v[i]+' ms');const tot=500+v.reduce((a,b)=>a+b);
+  const parts=[['pause 500',500,'line'],['STT',v[0],'d1'],['LLM',v[1],'pencil'],['TTS',v[2],'d2']];$('#lb').innerHTML=parts.map(([t,ms,c])=>`<div style="flex:${ms};background:var(--${c});${c==='line'?'color:var(--ink)':''}">${t}</div>`).join('');
+  $('#lbT').textContent=(tot/1000).toFixed(2)+' s';$('#lbTxt').innerHTML=tot-500<1000?'<b class="okc">Sub-second</b> from the end of the pause: feels conversational. The book\'s Groq stack averaged sub-second responses.':'<b class="badc">Over a second</b> after the pause: callers start talking over the bot. Swap in faster legs.'}
+['#l1','#l2','#l3'].forEach(x=>$(x).addEventListener('input',lb));lb();
+/* WER */
+function wer(){const a=$('#w1').value.toLowerCase().split(/\s+/).filter(Boolean),b=$('#w2').value.toLowerCase().split(/\s+/).filter(Boolean);
+  const D=[...Array(a.length+1)].map((_,i)=>[...Array(b.length+1)].map((_,j)=>i===0?j:j===0?i:0));for(let i=1;i<=a.length;i++)for(let j=1;j<=b.length;j++)D[i][j]=Math.min(D[i-1][j]+1,D[i][j-1]+1,D[i-1][j-1]+(a[i-1]===b[j-1]?0:1));
+  const w=a.length?D[a.length][b.length]/a.length:0;$('#werO').textContent=(w*100).toFixed(0)+'%';$('#accO').textContent=Math.max(0,(1-w)*100).toFixed(0)+'%';$('#werTxt').textContent=`${D[a.length][b.length]} word edits (substitutions, insertions, deletions) over ${a.length} original words.`}
+['#w1','#w2'].forEach(x=>$(x).addEventListener('input',wer));wer();
+/* matryoshka */
+const DIMS=[64,128,256,512,1024];
+function mat(){const i=+$('#md').value,d=DIMS[i];$('#mdV').textContent=d;$('#dolls').innerHTML=DIMS.map((x,k)=>`<i class="${k<=i?'on':''}" style="width:${16+k*9}px;height:${30+k*18}px"></i>`).join('');
+  const mb=1e6*d*4/1024**2;$('#mDisk').textContent=mb>=1024?(mb/1024).toFixed(2)+' GB':Math.round(mb)+' MB';$('#mLat').textContent=(d/1024*100).toFixed(0)+'%';
+  const base=[.42,.55,.68,.76,.8][i],ft=[.86,.89,.91,.92,.93][i];bars('#mRec',[{l:'Base embedder',v:base*100,c:'line',txt:Math.round(base*100)+'%'},{l:'Fine-tuned (Matryoshka)',v:ft*100,c:'ok',txt:Math.round(ft*100)+'%'},{l:'MLM + fine-tuned',v:(ft-.005)*100,c:'d2',txt:'≈ same'}],100)}
+$('#md').addEventListener('input',mat);mat();
+(function(){const s=$('#mnrl');const n=5,o=60,c=32;const Q=['q1','q2','q3','q4','q5'],P=['p1','p2','p3','p4','p5'];
+  P.forEach((p,j)=>s.appendChild(el('text',{x:o+j*c+c/2,y:o-8,'text-anchor':'middle','font-size':11,class:'s-muted t-mono'},p)));
+  Q.forEach((q,i)=>{s.appendChild(el('text',{x:o-8,y:o+i*c+c/2+4,'text-anchor':'end','font-size':11,class:'s-muted t-mono'},q));P.forEach((p,j)=>{const fn=(i===1&&j===3);s.appendChild(el('rect',{x:o+j*c+2,y:o+i*c+2,width:c-4,height:c-4,rx:4,fill:i===j?'var(--ok)':fn?'var(--pencil)':'var(--line)',opacity:i===j||fn?.9:.6}))})});
+  s.appendChild(el('text',{x:o+n*c+12,y:o+20,'font-size':11,class:'s-ok'},'■ positive'));s.appendChild(el('text',{x:o+n*c+12,y:o+40,'font-size':11,class:'s-muted'},'■ in-batch negative'));s.appendChild(el('text',{x:o+n*c+12,y:o+60,'font-size':11,class:'s-pencil'},'■ false negative'))})();
+cards('#nextCards',[{t:'Responsibility',c:'d4',d:'Every workflow or agent you ship shapes the safety, privacy and fairness of someone\'s experience. Testing and monitoring are not optional.'},{t:'Skepticism',c:'d3',d:'Models hallucinate, sound overconfident and carry biases you never meant to add. Check what they are really doing.'},{t:'The real world is messy',c:'d1',d:'Users will do things you never imagined. The job is to be aware, keep iterating and keep adapting, not to be perfect.'},{t:'Keep building',c:'ok',d:'Read the papers, but don\'t be afraid of your own weird little hack. Multimodal, contextual, agentic, or whatever comes next.'}]);
+quiz('#qQuiz','#qScore',[
+ {q:'Roughly how much VRAM does a 4B model need at 8 bits, by the rule of thumb?',o:['≈ 4.5 GB','≈ 9 GB','≈ 18 GB'],a:0,why:'4e9 × 1 byte × 1.2 ≈ 4.8e9 bytes ≈ 4.5 GB.'},
+ {q:'Which technique needs no retraining?',o:['Quantization','Distillation'],a:0,why:'Quantization converts existing weights in place; distillation trains a new student.'},
+ {q:'Why were policy questions slower with speculative decoding?',o:['The assistant hadn\'t learned the policies, so its drafts kept getting rejected','Policy answers are longer'],a:0,why:'Speed depends on agreement; a misaligned assistant forces constant corrections.'},
+ {q:'"move my booking to friday" comes back as "move my bookings to friday". WER?',o:['20%','5%','0%'],a:0,why:'One substitution over five words = 0.2.'},
+ {q:'What does MatryoshkaLoss sum over?',o:['Several different models','The same loss on truncated prefixes of the embedding'],a:1,why:'Applying the loss at 1,024, 512, 256, 128 and 64 dims pushes key information to the front.'}]);
+
+})();
+</script>
+</body>
+</html>

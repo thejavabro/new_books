@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>How to Use Terraform as a Team</title>
+<meta name="description" content="Tools are the easy part. Getting a team to adopt IaC, review it, test it and deploy it the same way every time is the real work, and infrastructure code needs a slightly different workflow from app code.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Terraform: Up & Running companion. Blueprint grid paper; blue ink = infrastructure and code,
+   orange pencil = people and process, green = healthy / good outcome, red = broken / bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code and terminal */
+pre.code,pre.term{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;padding:14px 16px;border-radius:8px;overflow-x:auto;max-width:100%;white-space:pre}
+pre.code{background:var(--paper);border:1px solid var(--line);color:var(--ink)}
+pre.term{background:#0d1726;color:#d6e2f0;border:1px solid #23354d}
+pre.term .p{color:#7fb2f0} pre.term .g{color:#7fd497} pre.term .r{color:#f2877c} pre.term .y{color:#e8c060} pre.term .m{color:#8ea3bb}
+.code .k{color:var(--d5);font-weight:600} .code .s{color:var(--d2)} .code .c{color:var(--muted);font-style:italic} .code .n{color:var(--d3)} .code .hl{background:var(--mid-soft);border-radius:3px}
+code{font-family:var(--mono);font-size:.88em;background:var(--blue-soft);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+.themebtn{cursor:pointer}
+.missing{border:2px dashed var(--bad);background:var(--bad-soft);border-radius:10px;padding:14px 16px}
+
+/* page */
+
+.wf{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}
+@media (max-width:720px){.wf{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media (max-width:420px){.wf{grid-template-columns:1fr 1fr}}
+.wf button{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:8px 6px;font-size:.82rem;text-align:center;line-height:1.25}
+.wf button b{display:block;font-family:var(--mono);color:var(--blue);font-size:.72rem}
+.wf button[aria-pressed="true"]{background:var(--blue);color:var(--surface)}
+.wf button[aria-pressed="true"] b{color:var(--surface)}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:560px){.cmp{grid-template-columns:1fr}}
+.cmp>div{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--surface);display:flex;flex-direction:column;gap:6px;min-width:0}
+.cmp h3{font-size:1rem}
+.cmp ul{margin:0;padding-left:1.1em;font-size:.93rem;display:flex;flex-direction:column;gap:3px}
+.golden{font-family:var(--display);font-weight:800;font-size:clamp(1.25rem,4vw,1.75rem);line-height:1.2;padding:18px 20px;border:2px solid var(--mid);border-radius:12px;background:var(--mid-soft);text-align:center}
+.pods{display:flex;gap:6px;flex-wrap:wrap;min-height:46px;align-items:center}
+.pods i{display:grid;place-items:center;width:46px;height:40px;border-radius:6px;font-style:normal;font-family:var(--mono);font-size:.75rem;font-weight:700;transition:all .3s}
+.pods i.v1{background:var(--blue-soft);border:1.5px solid var(--blue);color:var(--blue)}
+.pods i.v2{background:var(--ok-soft);border:1.5px solid var(--ok);color:var(--ok)}
+.pods i.boot{background:var(--mid-soft);border:1.5px dashed var(--mid);color:var(--mid)}
+.pods i.canary{outline:3px solid var(--pencil);outline-offset:2px}
+.pods .lbl{font-size:.8rem;color:var(--muted);width:100%}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Terraform: Up &amp; Running · visual companion</a><span class="tag">Chapter 10 of 10</span><button class="tag themebtn" id="themeBtn" type="button">Theme</button></div>
+  <h1>How to Use Terraform as a Team</h1>
+  <p class="lede">Tools are the easy part. Getting a team to adopt IaC, review it, test it and deploy it the same way every time is the real work, and infrastructure code needs a slightly different workflow from app code.</p>
+  <nav class="toc" aria-label="Sections"><a href="#adopt">Adopting IaC</a><a href="#incremental">Incrementally</a><a href="#workflows">Two workflows</a><a href="#strategies">Deploy strategies</a><a href="#golden">Golden Rule</a><a href="#infra">Infra pipeline</a><a href="#terragrunt">Terragrunt</a><a href="#check">Quick check</a></nav>
+</header>
+
+<section id="adopt" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Convincing your boss</h2></div>
+  <p>A familiar story: a developer discovers Terraform, shows it around full of excitement, and the boss says no. That isn't stupidity. From the boss's side, adopting IaC has real <b>costs</b>. Open each card, then try two different pitches.</p>
+  <div class="cardgrid" id="costCards"></div>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Pitch"><button data-pt="0" aria-pressed="true">Pitch the tool's features</button><button data-pt="1" aria-pressed="false">Pitch a fix for their problem</button></div>
+    <div class="svgbox"><svg id="balSvg" viewBox="0 0 640 200" role="img" aria-label="Balance weighing costs against benefits"></svg></div>
+    <p id="ptTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="incremental" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Work incrementally, for real</h2></div>
+  <p>Most large software projects fail. The book cites figures showing about 3 out of 4 small IT projects (under $1 million) succeed, while only 1 in 10 large ones (over $10 million) finish on time and on budget, and more than a third are never finished at all. So adopt IaC in pieces, and make sure each piece delivers value on its own. The trap is <b>false incrementalism</b>: small steps that pay off only once the last one ships. Cancel the project at any point and compare.</p>
+  <div class="sheet">
+    <label class="rng"><span>Project cancelled after step <b id="cutV">2</b> of 4</span><input type="range" id="cut" min="1" max="4" value="2"></label>
+    <div class="svgbox"><svg id="incSvg" viewBox="0 0 640 210" role="img" aria-label="Value delivered over time with true and false incrementalism"></svg></div>
+    <p class="small" id="incTxt"></p>
+  </div>
+  <div class="callout"><b class="h">Give the team time to learn</b><span>If people don't know the new tools, the next outage gets fixed by hand in the console. Now the code no longer matches reality, the next apply is scary, more fixes happen by hand, and soon everyone has quietly gone back to ClickOps. Budget real time for docs, training and practice.</span></div>
+</section>
+
+<section id="workflows" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>App code workflow versus infrastructure workflow</h2></div>
+  <p>Both workflows have the same seven steps. The differences are in the details, and they matter. Tap a step.</p>
+  <div class="sheet">
+    <div class="wf" id="wf"></div>
+    <div class="cmp"><div><h3 class="blue">Application code</h3><ul id="wfApp"></ul></div><div><h3 class="pencil">Infrastructure code</h3><ul id="wfInf"></ul></div></div>
+  </div>
+</section>
+
+<section id="strategies" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Deployment strategies for apps</h2></div>
+  <p>Five copies of v1 are running; ship v2. App deployments can be done in several safe ways, each with its own trade-offs. Pick a strategy and play it.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Strategy"><button data-st="0" aria-pressed="true">Rolling with replacement</button><button data-st="1" aria-pressed="false">Rolling without replacement</button><button data-st="2" aria-pressed="false">Blue-green</button><button data-st="3" aria-pressed="false">Canary</button></div>
+    <div class="pods" id="pods"></div>
+    <div class="row"><button class="btn primary" id="stPlay">Play</button><span class="small" id="stCap"></span></div>
+    <p class="small" id="stTxt"></p>
+  </div>
+  <p>Infrastructure changes mostly don't get these luxuries: there's no blue-green deployment for a VPC and no feature toggle for a database. <code>terraform apply</code> either works or it doesn't, and it doesn't roll back. So plan for failure: retry known transient errors, know that a failed state write leaves an <code>errored.tfstate</code> to push back with <code>terraform state push</code>, and use <code>terraform force-unlock</code> if a crashed run leaves a lock behind.</p>
+</section>
+
+<section id="golden" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>The Golden Rule of Terraform</h2></div>
+  <p>A quick health check: go to your live repo, pick a few folders at random, run <code>terraform plan</code>. If it always says "no changes", great. Small diffs and excuses ("someone tweaked that by hand") mean trouble ahead. The goal is:</p>
+  <div class="golden">The main branch of the live repository should be a 1:1 representation of what's actually deployed in production.</div>
+  <p>That rules out two things. <b>Out-of-band changes</b>: once you use Terraform, all changes go through Terraform. And <b>long-lived branches deployed to shared environments</b>: there's one environment, so there should be one branch. Watch what happens when two branches both apply to staging.</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="brSvg" viewBox="0 0 640 200" role="img" aria-label="Two branches applying conflicting changes to one environment"></svg></div>
+    <div class="row"><button class="btn" id="brA">Anna applies from her branch</button><button class="btn" id="brB">Ben applies from his branch</button><button class="btn primary" id="brMain">Only main deploys</button></div>
+    <p id="brTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="infra" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Deploying infrastructure code safely</h2></div>
+  <p>Infrastructure changes should be applied by a CI server, never from a laptop. But applying arbitrary Terraform needs admin permissions, and CI servers are hard to secure, reachable by every developer and built to run arbitrary code. Toggle the book's mitigations and watch the attack surface shrink.</p>
+  <div class="sheet">
+    <div class="stack" id="ciOpts"></div>
+    <div class="svgbox"><svg id="ciSvg" viewBox="0 0 640 170" role="img" aria-label="CI server, worker and cloud account with risk level"></svg></div>
+    <p id="ciTxt" aria-live="polite"></p>
+  </div>
+  <p>The rest mirrors app code: run <code>terraform plan</code> on every pull request and show the output in the review (Atlantis does this automatically), tag releases with Git, and <b>promote the same immutable, versioned artifact</b> from dev to stage to prod. Because a failed apply can't be rolled back, test each change in pre-production before production.</p>
+</section>
+
+<section id="terragrunt" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Keeping the live repo DRY with Terragrunt</h2></div>
+  <p>With modules, each environment folder still repeats a provider block, a backend block and a module call. Across many regions and accounts that adds up. <b>Terragrunt</b>, a thin open source wrapper, lets the live repo hold only small <code>terragrunt.hcl</code> files: the backend is defined once in a root file and included everywhere, with the state key filled in from the folder path.</p>
+  <div class="two">
+<pre class="code"><span class="c"># live/terragrunt.hcl (root, defined once)</span>
+remote_state {
+  backend = <span class="s">"s3"</span>
+  generate = { path = <span class="s">"backend.tf"</span>, if_exists = <span class="s">"overwrite"</span> }
+  config = {
+    bucket = <span class="s">"my-org-terraform-state"</span>
+    key    = <span class="s">"${path_relative_to_include()}/terraform.tfstate"</span>
+    region = <span class="s">"us-east-2"</span>
+    encrypt = <span class="n">true</span>
+    dynamodb_table = <span class="s">"terraform-locks"</span>
+  }
+}</pre>
+<pre class="code"><span class="c"># live/stage/data-stores/mysql/terragrunt.hcl</span>
+terraform {
+  source = <span class="s">"github.com/acme/modules//data-stores/mysql?ref=v0.0.7"</span>
+}
+include {
+  path = find_in_parent_folders()
+}
+inputs = {
+  db_name     = <span class="s">"example_stage"</span>
+  db_username = <span class="s">"admin"</span>
+}
+<span class="c"># $ terragrunt apply</span></pre>
+  </div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="callout ok"><b class="h">Where the book leaves you</b><span>Write the code, test it, review it, package it into versioned, immutable artifacts, and promote them from environment to environment. Do that for both apps and infrastructure, and Terraform becomes a team sport rather than one person's magic.</span></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="quiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Terraform: Up &amp; Running</i>, third edition, by Yevgeniy Brikman (O'Reilly, 2022). Explanations, diagrams and code snippets are original summaries and illustrations written for these pages, not copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch09-testing.html"><span>Previous · Chapter 9</span><b>How to Test Terraform Code</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="appendix-reading.html"><span>Next · Appendix A</span><b>Recommended Reading and Cheat Sheet</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('tfur:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('tfur:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle: cycles auto -> light -> dark; remembered per viewer */
+(function(){const r=document.documentElement;const t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+  const b=document.getElementById('themeBtn');if(!b)return;const lab=()=>{const v=r.getAttribute('data-theme');b.textContent='Theme: '+(v||'auto')};lab();
+  b.addEventListener('click',()=>{const v=r.getAttribute('data-theme');const n=v==null?'light':v==='light'?'dark':null;if(n)r.setAttribute('data-theme',n);else r.removeAttribute('data-theme');store.set('theme',n);lab()})})();
+/* terminal typer: lines [{t:'html',d:ms}] into a pre, returns a run() */
+function typer(pre,lines){let timer=null;return function run(){clearTimeout(timer);pre.innerHTML='';let i=0;(function nx(){if(i>=lines.length)return;const L=lines[i++];pre.innerHTML+=(pre.innerHTML?'\n':'')+L.t;timer=setTimeout(nx,L.d==null?260:L.d)})()}}
+
+
+cards('#costCards',[
+ {t:'Skills gap',d:'Ops staff who spent careers clicking consoles and writing the odd script must now write lots of code, tests and modules. Some will relish it; some will struggle; you may need new hires.',c:'d1'},
+ {t:'New tools',d:'Every tool needs evaluating, installing, learning, integrating and maintaining, and the people who know it become dependencies.',c:'d2'},
+ {t:'Change in mindset',d:'Instead of quick manual fixes, every change goes through code, review, tests and a pipeline. In the short term that feels slower.',c:'d3'},
+ {t:'Opportunity cost',d:'Time spent on IaC is time not spent on whatever else the company wanted. That is the boss\'s real question: is this the most important thing to work on now?',c:'d4'}]);
+function bal(k){const s=$('#balSvg');s.innerHTML='';const cost=4,ben=k?6:2;const ang=Math.max(-14,Math.min(14,(cost-ben)*4));
+  s.appendChild(el('polygon',{points:'320,190 300,200 340,200',fill:'var(--muted)'}));s.appendChild(el('line',{x1:320,y1:50,x2:320,y2:190,stroke:'var(--muted)','stroke-width':4}));
+  const g=el('g',{transform:`rotate(${ang} 320 50)`});g.appendChild(el('line',{x1:120,y1:50,x2:520,y2:50,stroke:'var(--ink)','stroke-width':4}));
+  [[120,cost,'bad','Costs'],[520,ben,'ok','Benefits they care about']].forEach(([x,n,c,t])=>{g.appendChild(el('line',{x1:x,y1:50,x2:x-50,y2:110,stroke:'var(--muted)'}));g.appendChild(el('line',{x1:x,y1:50,x2:x+50,y2:110,stroke:'var(--muted)'}));g.appendChild(el('rect',{x:x-70,y:110,width:140,height:12,rx:4,fill:`var(--${c})`}));
+    for(let i=0;i<n;i++)g.appendChild(el('rect',{x:x-66+(i%5)*27,y:86-Math.floor(i/5)*26,width:23,height:23,rx:3,fill:`var(--${c})`,opacity:.75}));g.appendChild(el('text',{x,y:145,'text-anchor':'middle','font-size':13,'font-weight':700,fill:`var(--${c})`},t))});
+  s.appendChild(g);$('#ptTxt').textContent=k?'"Our last three outages came from manual deploys, and each cost us a day. Let\'s automate that one deployment with Terraform first." Now the benefit is concrete, small and aimed at a pain the boss already feels.':'"Terraform is declarative, open source, supports hundreds of providers..." The boss hears new tools, new skills, slower changes, and nothing about their own problems. The scale tips to no.'}
+seg('[data-pt]',b=>bal(+b.dataset.pt));bal(0);
+
+/* incrementalism */
+function inc(){const c=+$('#cut').value;$('#cutV').textContent=c;const s=$('#incSvg');s.innerHTML='';const X=i=>60+i*140,Y=v=>180-v*36;
+  s.appendChild(el('line',{x1:50,y1:180,x2:620,y2:180,stroke:'var(--line)'}));s.appendChild(el('line',{x1:50,y1:20,x2:50,y2:180,stroke:'var(--line)'}));
+  s.appendChild(el('text',{x:20,y:100,'font-size':11,fill:'var(--muted)',transform:'rotate(-90 20 100)','text-anchor':'middle'},'value delivered'));
+  for(let i=1;i<=4;i++)s.appendChild(el('text',{x:X(i),y:196,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},'step '+i));
+  const tru=[0,1,2,3,4],fal=[0,0,0,0,4];const path=(arr,col,dash)=>{let d=`M${X(0)},${Y(0)}`;for(let i=1;i<=c;i++)d+=` L${X(i)},${Y(arr[i-1])} L${X(i)},${Y(arr[i])}`;d+=` L${X(4)+60},${Y(arr[c])}`;s.appendChild(el('path',{d,fill:'none',stroke:`var(--${col})`,'stroke-width':3,'stroke-dasharray':dash||''}))};
+  path(tru,'ok');path(fal,'bad','7 5');
+  if(c<4){s.appendChild(el('line',{x1:X(c)+20,y1:20,x2:X(c)+20,y2:180,stroke:'var(--pencil)','stroke-dasharray':'4 4'}));s.appendChild(el('text',{x:X(c)+26,y:32,'font-size':12,'font-weight':700,fill:'var(--pencil)'},'cancelled'))}
+  s.appendChild(el('text',{x:620,y:Y(tru[c])-8,'text-anchor':'end','font-size':12,'font-weight':700,fill:'var(--ok)'},'true incremental'));s.appendChild(el('text',{x:620,y:Y(fal[c])-8,'text-anchor':'end','font-size':12,'font-weight':700,fill:'var(--bad)'},'false incremental'));
+  $('#incTxt').textContent=c<4?`Stopped after step ${c}. Solving one concrete problem at a time kept ${c} wins. The big-bang plan has paid the full cost so far and has nothing to show.`:'Both reach the goal if nothing interrupts them. In real companies, something usually does.'}
+$('#cut').addEventListener('input',inc);inc();
+
+/* workflows (Table 10-1) */
+const WF=[['Version control',['git clone','One repo per app','Use branches'],['git clone','A live repo and a modules repo','Don\'t use branches for live: one main branch per environment set']],
+ ['Run locally',['Run on localhost','Run tests locally'],['No localhost: run in a sandbox account','terraform apply, then go test']],
+ ['Make changes',['Edit, rerun, retest'],['Edit, terraform apply, go test','Use test stages to iterate faster']],
+ ['Review',['Pull request','Enforce coding guidelines'],['Pull request','Guidelines: docs, tests, file layout, style (terraform fmt)']],
+ ['Automated tests',['CI runs unit, integration, end-to-end tests, static analysis'],['CI runs unit, integration, end-to-end tests, static analysis','Plus terraform plan on every PR']],
+ ['Merge and release',['git tag','Build a versioned, immutable artifact (e.g. Docker image)'],['git tag','The tagged repo is the versioned, immutable artifact']],
+ ['Deploy',['Terraform, orchestration tools, scripts','Rolling, blue-green, canary','CI server with limited permissions','Promote artifacts; deploy automatically after merge'],['Terraform, Atlantis, Terraform Cloud, Terragrunt, scripts','Few strategies; handle errors and retries','CI gets temporary creds to trigger a locked-down admin worker','Promote artifacts; approval step reviews the plan, then apply']]];
+$('#wf').innerHTML=WF.map((w,i)=>`<button data-i="${i}" aria-pressed="${i===0}"><b>${i+1}</b>${w[0]}</button>`).join('');
+function wf(i){$('#wfApp').innerHTML=WF[i][1].map(x=>`<li>${x}</li>`).join('');$('#wfInf').innerHTML=WF[i][2].map(x=>`<li>${x}</li>`).join('')}
+seg('#wf button',b=>wf(+b.dataset.i));wf(0);
+
+/* strategies */
+const STR=[
+ {txt:'Take one old copy down, start a new one in its place, wait for health checks, repeat. Never more than five copies, so it works with fixed capacity or stateful systems with fixed identities, but you briefly run with less capacity, and both versions run at once.',frames:(()=>{const f=[];let p=Array(5).fill('v1');f.push(p.slice());for(let i=0;i<5;i++){p[i]='gap';f.push(p.slice());p[i]='boot';f.push(p.slice());p[i]='v2';f.push(p.slice())}return f})()},
+ {txt:'Start one new copy, wait for it to pass health checks, send it traffic, then remove one old copy. Repeat. Capacity never drops, but you need room for extra servers. Both versions run at once.',frames:(()=>{const f=[];let p=Array(5).fill('v1');f.push(p.slice());for(let i=0;i<5;i++){p.push('boot');f.push(p.slice());p[p.length-1]='v2';f.push(p.slice());p.splice(p.indexOf('v1'),1);f.push(p.slice())}return f})()},
+ {txt:'Bring up five new copies alongside the old ones. Once all are healthy, switch all traffic at once and remove the old copies. Users only ever see one version, at the cost of double capacity for a while.',frames:[Array(5).fill('v1'),[...Array(5).fill('v1'),...Array(5).fill('boot')],[...Array(5).fill('v1'),...Array(5).fill('v2')],[...Array(5).fill('v1x'),...Array(5).fill('v2')],Array(5).fill('v2')]},
+ {txt:'Deploy a single new copy, the canary, and compare it with an old one, the control: CPU, memory, latency, errors. If nothing looks different, roll out the rest with another strategy. If it does, kill the canary. Often paired with feature toggles.',frames:[Array(5).fill('v1'),['v1','v1','v1','v1','v1','boot'],['v1c','v1','v1','v1','v1','v2c'],['v2','v2','v2','v2','v2']]}];
+let stI=0,stT=null;
+function pods(arr,k){$('#pods').innerHTML=arr.map(p=>p==='gap'?'<i style="border:1.5px dashed var(--line)"></i>':p==='v1x'?'<i class="v1" style="opacity:.35">v1</i>':`<i class="${p.startsWith('v1')?'v1':p.startsWith('v2')?'v2':'boot'} ${p.endsWith('c')?'canary':''}">${p==='boot'?'…':p.slice(0,2)}</i>`).join('');$('#stCap').textContent=`frame ${k+1} of ${STR[stI].frames.length}`}
+function stShow(i){stI=i;clearInterval(stT);pods(STR[i].frames[0],0);$('#stTxt').textContent=STR[i].txt}
+seg('[data-st]',b=>stShow(+b.dataset.st));
+$('#stPlay').addEventListener('click',()=>{clearInterval(stT);const F=STR[stI].frames;let k=0;pods(F[0],0);stT=setInterval(()=>{k++;if(k>=F.length){clearInterval(stT);return}pods(F[k],k)},550)});stShow(0);
+
+/* branches */
+let envV='main v12',hist=[];
+function br(){const s=$('#brSvg');s.innerHTML='';
+  const lane=(y,t,c)=>{s.appendChild(el('line',{x1:30,y1:y,x2:360,y2:y,stroke:`var(--${c})`,'stroke-width':3}));s.appendChild(el('text',{x:30,y:y-10,'font-size':12,'font-weight':700,fill:`var(--${c})`,'class':'t-mono'},t))};
+  lane(40,'anna/bigger-instances','d3');lane(100,'main','blue');lane(160,'ben/new-port','d4');
+  s.appendChild(el('rect',{x:430,y:60,width:190,height:80,rx:12,fill:'var(--surface)',stroke:'var(--ink)','stroke-width':1.6}));s.appendChild(el('text',{x:525,y:88,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--ink)'},'stage (deployed)'));
+  s.appendChild(el('text',{x:525,y:115,'text-anchor':'middle','font-size':12,fill:'var(--muted)','class':'t-mono'},envV));
+  hist.slice(-1).forEach(h=>{const y={a:40,b:160,m:100}[h];s.appendChild(el('line',{x1:360,y1:y,x2:430,y2:100,stroke:'var(--muted)','stroke-width':2,class:'flow'}))})}
+$('#brA').addEventListener('click',()=>{hist.push('a');envV='anna: m4.large, port 8080';br();$('#brTxt').innerHTML='Staging now has Anna\'s bigger instances. Ben\'s branch doesn\'t know about them.'});
+$('#brB').addEventListener('click',()=>{hist.push('b');envV='ben: t2.micro, port 9090';br();$('#brTxt').innerHTML=hist.includes('a')?'<b class="badc">Ben\'s apply silently undoes Anna\'s change.</b> Locking prevented a simultaneous run but not this. Each apply flips staging back and forth, and main matches neither.':'Staging now has Ben\'s new port. Now try Anna.'});
+$('#brMain').addEventListener('click',()=>{hist.push('m');envV='main: m4.large, port 9090';br();$('#brTxt').innerHTML='<b class="okc">Both changes merged into main first,</b> then applied from main. The deployed environment equals main, every time.'});br();
+
+/* CI security */
+const CO=[['Lock the CI server down: HTTPS only, authenticated users, hardened host',1],['Keep it off the public internet: private subnets, VPN access only',1],['Enforce an approval workflow: someone else reviews code and plan output',1],['No permanent credentials: IAM roles or OIDC',1],['No admin credentials on CI: trigger a locked-down worker through a narrow API',2]];
+$('#ciOpts').innerHTML=CO.map((c,i)=>`<label class="row"><input type="checkbox" data-i="${i}"> ${c[0]}</label>`).join('');
+function ciSec(){const on=$$('#ciOpts input').map(x=>x.checked);const risk=6-on.reduce((a,v,i)=>a+(v?CO[i][1]:0),0);const s=$('#ciSvg');s.innerHTML='';const worker=on[4];
+  const bx=(x,t,c,sub)=>{s.appendChild(el('rect',{x,y:40,width:170,height:70,rx:10,fill:'var(--surface)',stroke:`var(--${c})`,'stroke-width':1.6}));s.appendChild(el('text',{x:x+85,y:70,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--ink)'},t));s.appendChild(el('text',{x:x+85,y:90,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},sub))};
+  bx(20,'CI server',risk>3?'bad':'ok',worker?'can only request a run':'holds admin creds');if(worker)bx(240,'Deploy worker','ok','admin, no human access');bx(460,'AWS account','blue','prod');
+  s.appendChild(el('line',{x1:190,y1:75,x2:worker?240:460,y2:75,stroke:'var(--muted)','stroke-width':2,class:'flow'}));if(worker)s.appendChild(el('line',{x1:410,y1:75,x2:460,y2:75,stroke:'var(--muted)','stroke-width':2,class:'flow'}));
+  s.appendChild(el('rect',{x:20,y:130,width:600,height:14,rx:7,fill:'var(--paper)',stroke:'var(--line)'}));s.appendChild(el('rect',{x:20,y:130,width:600*risk/6,height:14,rx:7,fill:risk>3?'var(--bad)':risk>1?'var(--mid)':'var(--ok)'}));
+  s.appendChild(el('text',{x:20,y:162,'font-size':12,fill:'var(--muted)'},'risk if the CI server is compromised'));
+  $('#ciTxt').textContent=risk>=5?'As it stands, anyone who compromises the CI server, or any developer, effectively has admin on production.':risk>1?'Better. The remaining big win is moving admin credentials off the CI server entirely.':'An attacker on the CI server can, at worst, ask the worker to apply code that is already reviewed and merged in the live repo.'}
+$$('#ciOpts input').forEach(x=>x.addEventListener('change',ciSec));ciSec();
+
+quiz('#quiz','#qScore',[
+ {q:'What usually wins a manager over?',o:['A list of Terraform features','Solving a problem they already have'],a:1,why:'Frame IaC around a concrete, painful problem and a small first step.'},
+ {q:'What is false incrementalism?',o:['Small steps that each deliver value','Small steps that only pay off at the end'],a:1,why:'If the project is cancelled midway, you have paid and got nothing.'},
+ {q:'The Golden Rule says main in the live repo should match...',o:['what is deployed in production','the latest module release'],a:0,why:'1:1 with production, with no out-of-band changes.'},
+ {q:'Should feature branches apply to a shared staging environment?',o:['Yes, with locking','No'],a:1,why:'Locking stops simultaneous runs, not branches overwriting each other.'},
+ {q:'Where should admin credentials for infrastructure deploys live?',o:['On the CI server','On an isolated worker the CI server can only trigger'],a:1,why:'Then a compromised CI server can only request deploys of reviewed code.'}]);
+
+})();
+</script>
+</body>
+</html>

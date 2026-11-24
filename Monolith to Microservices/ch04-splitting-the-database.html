@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Decomposing the Database: Splitting It Apart</title>
+<meta name="description" content="Splitting a schema means deciding what to split first, finding seams in the data, and replacing joins and foreign keys with code. Static reference data gets four options of its own.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Monolith to Microservices companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and services, orange pencil = people and the monolith, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* additions for this companion */
+pre.code{margin:0;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-family:var(--mono);font-size:.82rem;line-height:1.55;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .k{color:var(--blue);font-weight:600} pre.code .c{color:var(--muted);font-style:italic} pre.code .hl{background:var(--mid-soft);display:inline-block;min-width:100%} pre.code .s{color:var(--d2)}
+.theme-btn{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted)}
+.theme-btn:hover{border-color:var(--blue);color:var(--blue)}
+.pill{display:inline-block;font-family:var(--mono);font-size:.72rem;padding:2px 8px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.pill.ok{background:var(--ok-soft);border-color:var(--ok);color:var(--ok)} .pill.bad{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)} .pill.mid{background:var(--mid-soft);border-color:var(--mid);color:var(--mid)}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;max-height:220px;overflow:auto;display:flex;flex-direction:column;gap:2px;min-height:3em}
+.log .e-ok{color:var(--ok)} .log .e-bad{color:var(--bad)} .log .e-mid{color:var(--mid)}
+.sort{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.sort .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+@media (max-width:560px){.sort .it{grid-template-columns:1fr}}
+.tog{display:inline-flex;align-items:center;gap:8px;font-size:.92rem;cursor:pointer}
+.tog input{width:18px;height:18px;accent-color:var(--blue)}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.stat span.big{font-size:clamp(1.8rem,5.5vw,2.6rem);color:var(--ink)}
+.stat span.big.blue{color:var(--blue)} .stat span.big.pencil{color:var(--pencil)} .stat span.big.okc{color:var(--ok)} .stat span.big.badc{color:var(--bad)} .stat span.big.midc{color:var(--mid)}
+
+/* page */
+
+.colpick{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.colpick .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:.85rem}
+.qa{display:flex;flex-direction:column;gap:10px}
+.qa .qn{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:10px}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Monolith to Microservices · visual companion</a><span class="tag">Chapter 4 · part 2 of 6</span><button class="theme-btn" id="themeBtn" type="button">Theme: auto</button></div>
+  <h1>Decomposing the Database: Splitting It Apart</h1>
+  <p class="lede">Splitting a schema means deciding what to split first, finding seams in the data, and replacing joins and foreign keys with code. Static reference data gets four options of its own.</p>
+  <nav class="toc" aria-label="Sections"><a href="#physical">Logical vs. physical</a><a href="#order">What first?</a><a href="#stepping">Stepping stones</a><a href="#splittable">Split table</a><a href="#fk">Foreign keys</a><a href="#refdata">Reference data</a><a href="#recap">Recap</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="physical" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Logical versus physical separation</h2></div>
+  <p>Splitting a database here mainly means <b>logical</b> separation: each service gets its own schema. Those schemas may still share one database engine. Logical separation buys independent change and information hiding; physical separation adds robustness and removes resource contention, at a cost (another cluster, licenses). You can only choose physical separation once you've done the logical split.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Layout"><button data-ph="log" aria-pressed="true">Two schemas, one engine</button><button data-ph="phy" aria-pressed="false">Two schemas, two engines</button></div>
+    <div class="svgbox"><svg id="phSvg" viewBox="0 0 640 200" role="img" aria-label="Schemas and database engines"></svg></div>
+    <div class="row"><button class="btn" id="phKill">Crash an engine</button></div>
+    <p id="phTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="order" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Split the database first, or the code?</h2></div>
+  <p>An extraction isn't finished until both the code runs in its own service and its data lives in its own schema. Which half goes first?</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Sequence"><button data-sq="db" aria-pressed="true">Schema first</button><button data-sq="code" aria-pressed="false">Code first</button><button data-sq="both" aria-pressed="false">Both at once</button></div>
+    <div class="svgbox"><svg id="sqSvg" viewBox="0 0 640 190" role="img" aria-label="Splitting order"></svg></div>
+    <div class="two"><div class="callout ok" id="sqPro"></div><div class="callout" id="sqCon"></div></div>
+  </div>
+  <div class="callout blue"><b class="h">The author's hot take</b><span>If I can change the monolith and I'm worried about performance or data consistency, split the schema first. Otherwise split the code first and use it to learn about data ownership, but be honest about whether you'll actually finish the data split. Whatever you do, capture every schema change in a version-controlled delta script (the author co-wrote DBDeploy; today he points to Flyway).</span></div>
+</section>
+
+<section id="stepping" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Patterns along the way</h2></div>
+  <p>Four smaller patterns help you get from a shared schema to separate ones. Pick one.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Pattern"><button data-sp="repo" aria-pressed="true">Repository per bounded context</button><button data-sp="dbpbc" aria-pressed="false">Database per bounded context</button><button data-sp="dal" aria-pressed="false">Monolith as data access layer</button><button data-sp="multi" aria-pressed="false">Multischema storage</button></div>
+    <div class="svgbox"><svg id="spSvg" viewBox="0 0 640 220" role="img" aria-label="Pattern diagram"></svg></div>
+    <div class="detail" id="spTxt" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="splittable" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Pattern: split table</h2></div>
+  <p>Music Corp's <span class="mono">Item</span> table mixes catalog details and stock levels, but Catalog and Warehouse are becoming separate services. Assign each column an owner. (Tip: you might split the table inside the existing schema first, then move it.)</p>
+  <div class="sheet">
+    <div class="colpick" id="cp"></div>
+    <p id="cpTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout"><b class="h">When two parts of the code write one column</b><span>Customer sign-up flips <span class="mono">status</span> from NOT_VERIFIED to VERIFIED; finance flips it to SUSPENDED for unpaid bills. Status is part of the customer's state machine, so it belongs to the new Customer service; Finance will have to call it to suspend someone. And with the split you lose the database transaction that used to cover both. Ask whose existing domain concept owns the data.</span></div>
+</section>
+
+<section id="fk" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Pattern: move foreign-key relationship to code</h2></div>
+  <p>The monthly best-sellers report joins <span class="mono">Ledger</span> (Finance) to <span class="mono">Albums</span> (Catalog) on SKU: "400 copies of <i>Born to Run</i>" instead of "400 of SKU 123". Split the services and the join moves into Finance's code: query the ledger, then ask Catalog about each SKU. It will be slower. How much slower?</p>
+  <div class="sheet">
+    <label class="rng"><span>Best-selling SKUs in the report: <b id="nkV"></b></span><input type="range" id="nk" min="1" max="200" value="50"></label>
+    <div class="row"><label class="tog"><input type="checkbox" id="bulk"> Catalog supports bulk lookup</label><label class="tog"><input type="checkbox" id="cache"> Finance caches album info</label></div>
+    <div class="bars" id="fkBars"></div>
+    <p class="small">Illustrative numbers: ~5 ms per query, ~20 ms per service call. A monthly report can be slow and cached; a hot path can't. Measure actual latency (a distributed tracing tool like Jaeger helps) against what is acceptable.</p>
+  </div>
+  <h3>Data consistency: Catalog wants to delete SKU 683</h3>
+  <p>With one schema, the foreign key stopped you deleting an album the ledger referenced. Now nothing does. Try each policy.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Policy"><button data-dp="check" aria-pressed="true">Check before deletion</button><button data-dp="grace" aria-pressed="false">Handle deletion gracefully</button><button data-dp="soft" aria-pressed="false">Don't allow deletion</button></div>
+    <div class="row"><button class="btn primary" id="del">Delete SKU 683 and run the report</button></div>
+    <div class="log" id="dLog"></div>
+  </div>
+  <div class="callout blue"><b class="h">First check you're not splitting an aggregate</b><span>Ledger and Albums are two separate aggregates with a relationship. An Order and its order lines are one aggregate: move them together. A bigger bite of the schema sometimes takes both sides of a foreign key with you.</span></div>
+</section>
+
+<section id="refdata" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Static reference data: four options</h2></div>
+  <p>Country codes (249 entries in ISO 3166-1; the last new one was South Sudan, 2011, with months of notice), clothing sizes, postcodes. Small, rarely changing, used everywhere. The book offers four patterns, and then says what the author would pick. Describe your data:</p>
+  <div class="sheet qa">
+    <div class="qn"><span>Volume of data</span><div class="seg" role="group"><button data-rd1="small" aria-pressed="true">Small (fits in code)</button><button data-rd1="large" aria-pressed="false">Large (e.g. postcode files)</button></div></div>
+    <div class="qn"><span>Must every service see exactly the same version at all times?</span><div class="seg" role="group"><button data-rd2="n" aria-pressed="true">No</button><button data-rd2="y" aria-pressed="false">Yes</button></div></div>
+    <div class="qn"><span>Do you need to join to it in SQL?</span><div class="seg" role="group"><button data-rd3="n" aria-pressed="true">No</button><button data-rd3="y" aria-pressed="false">Yes</button></div></div>
+    <div class="qn"><span>Is spinning up a new service cheap (a day or less)?</span><div class="seg" role="group"><button data-rd4="y" aria-pressed="true">Yes</button><button data-rd4="n" aria-pressed="false">No, weeks of approvals</button></div></div>
+    <div class="callout ok" id="rdOut" aria-live="polite"></div>
+  </div>
+  <div class="cardgrid" id="rdCards"></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b class="blue">Logical first</b><span>Separate schemas; physical separation is a later, optional step.</span></div>
+    <div><b>Sequence</b><span>Schema first if worried about performance/consistency; otherwise code first, then finish the job.</span></div>
+    <div><b class="okc">Stepping stones</b><span>Repository and DB per bounded context, monolith as data access layer, multischema storage.</span></div>
+    <div><b class="pencil">Split tables by owner</b><span>Columns follow the state machine they belong to.</span></div>
+    <div><b>Joins and FKs move to code</b><span>Expect latency; handle missing data gracefully; prefer soft delete.</span></div>
+    <div><b>Reference data</b><span>Library for small, relaxed data; service when it must be consistent.</span></div>
+  </div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Monolith to Microservices: Evolutionary Patterns to Transform Your Monolith</i> by Sam Newman (O'Reilly, 2019). Explanations, examples, code snippets and drawings are original summaries; the figures are redrawn ideas, not copies.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch04-shared-data.html"><span>Previous · Ch 4 · part 1</span><b>Living With Shared Data</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch04-transactions-and-sagas.html"><span>Next · Ch 4 · part 3</span><b>Transactions and Sagas</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('m2m:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('m2m:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: cycles auto -> light -> dark */
+(function(){const b=document.getElementById('themeBtn');if(!b)return;const root=document.documentElement;
+  function apply(m){if(m==='auto')root.removeAttribute('data-theme');else root.setAttribute('data-theme',m);b.textContent='Theme: '+m}
+  let m=store.get('theme','auto');apply(m);
+  b.addEventListener('click',()=>{m=m==='auto'?'light':m==='light'?'dark':'auto';store.set('theme',m);apply(m)})})();
+function rnd(seed){let s=seed||1;return()=>{s=(s*16807)%2147483647;return(s-1)/2147483646}}
+
+
+let ph='log',dead=false;
+function drawPh(){const s=$('#phSvg');s.innerHTML='';const eng=(x,w,t)=>{s.appendChild(el('rect',{x,y:80,width:w,height:100,rx:12,fill:dead&&(ph==='log'||x>300)?'var(--bad-soft)':'var(--paper)',stroke:dead&&(ph==='log'||x>300)?'var(--bad)':'var(--muted)','stroke-width':2,'stroke-dasharray':'6 4'}));s.appendChild(el('text',{x:x+w/2,y:172,'text-anchor':'middle','font-size':10.5,fill:'var(--muted)'},t))};
+  if(ph==='log')eng(150,340,'one database engine');else{eng(60,220,'engine A');eng(360,220,'engine B')}
+  const sc=[[ph==='log'?180:90,'Invoice schema','Invoice svc'],[ph==='log'?340:390,'Catalog schema','Catalog svc']];
+  sc.forEach(([x,t,sv],i)=>{const down=dead&&(ph==='log'||i===1);s.appendChild(el('rect',{x,y:100,width:130,height:44,rx:6,fill:'var(--blue-soft)',stroke:'var(--blue)'}));s.appendChild(el('text',{x:x+65,y:127,'text-anchor':'middle','font-size':11.5,fill:'var(--ink)'},t));
+    s.appendChild(el('rect',{x,y:15,width:130,height:40,rx:10,fill:down?'var(--bad-soft)':'var(--surface)',stroke:down?'var(--bad)':'var(--blue)','stroke-width':2}));s.appendChild(el('text',{x:x+65,y:40,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--ink)'},sv+(down?' ✕':'')));s.appendChild(el('line',{x1:x+65,y1:55,x2:x+65,y2:98,stroke:'var(--blue)','stroke-width':2}))});
+  $('#phTxt').textContent=dead?(ph==='log'?'One engine down, both services down: a single point of failure (unless the engine is clustered for failover, which many organizations already invest in).':'Engine B down: Catalog fails, Invoice carries on.'):(ph==='log'?'Separate schemas give independent change and hiding. Sharing the engine may be needed if you want to publish views across schemas.':'Better isolation and no resource contention, at the price of running and licensing another engine.')}
+seg('[data-ph]',b=>{ph=b.dataset.ph;dead=false;$('#phKill').textContent='Crash an engine';drawPh()});
+$('#phKill').addEventListener('click',()=>{dead=!dead;$('#phKill').textContent=dead?'Restore':'Crash an engine';drawPh()});drawPh();
+
+const SQ={db:['Spot performance and transaction-integrity problems early: joins become two queries, one transaction becomes two. Easy to revert while the code is still one deployment.','Little short-term benefit: you still have a monolithic deployment. Not possible if the monolith is a black box.'],
+ code:['The most common path. You get an independently deployable service sooner, and it shows exactly which data it needs. JustSocial did this successfully.','Teams often stop here, leaving a shared database indefinitely, and nasty surprises from moving joins into code are only delayed.'],
+ both:['One step instead of two.','A much bigger step, and longer before you can assess the impact. The author strongly suggests avoiding it.']};
+function drawSq(k){const s=$('#sqSvg');s.innerHTML='';const st=k==='db'?[[1,0],[1,1]]:k==='code'?[[0,1],[1,1]]:[[1,1]];
+  st.forEach((p,j)=>{const x0=20+j*320;s.appendChild(el('text',{x:x0+140,y:18,'text-anchor':'middle','font-size':11,fill:'var(--muted)',class:'t-mono'},'step '+(j+1)));
+    const codeSplit=p[1],dbSplit=p[0];
+    if(codeSplit){[['Monolith','pencil'],['Invoice svc','ok']].forEach((c,i)=>{s.appendChild(el('rect',{x:x0+i*150,y:30,width:130,height:44,rx:10,fill:'var(--surface)',stroke:`var(--${c[1]})`,'stroke-width':2}));s.appendChild(el('text',{x:x0+65+i*150,y:57,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--ink)'},c[0]))})}
+    else{s.appendChild(el('rect',{x:x0,y:30,width:280,height:44,rx:10,fill:'var(--surface)',stroke:'var(--pencil)','stroke-width':2}));s.appendChild(el('text',{x:x0+140,y:57,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--ink)'},'Monolith (incl. invoicing)'))}
+    if(dbSplit){[0,1].forEach(i=>{s.appendChild(el('rect',{x:x0+i*150,y:120,width:130,height:40,rx:6,fill:'var(--blue-soft)',stroke:'var(--blue)'}));s.appendChild(el('text',{x:x0+65+i*150,y:145,'text-anchor':'middle','font-size':11,fill:'var(--ink)'},i?'invoice schema':'main schema'))})}
+    else{s.appendChild(el('rect',{x:x0,y:120,width:280,height:40,rx:6,fill:'var(--bad-soft)',stroke:'var(--bad)'}));s.appendChild(el('text',{x:x0+140,y:145,'text-anchor':'middle','font-size':11,fill:'var(--ink)'},'one shared schema'))}
+    const links=codeSplit?(dbSplit?[[65,65],[215,215]]:[[65,140],[215,140]]):(dbSplit?[[140,65],[140,215]]:[[140,140]]);links.forEach(l=>s.appendChild(el('line',{x1:x0+l[0],y1:74,x2:x0+l[1],y2:118,stroke:'var(--muted)','stroke-width':1.6})))});
+  $('#sqPro').innerHTML=`<b class="h">Upside</b><span>${SQ[k][0]}</span>`;$('#sqCon').innerHTML=`<b class="h">Watch out</b><span>${SQ[k][1]}</span>`}
+seg('[data-sq]',b=>drawSq(b.dataset.sq));drawSq('db');
+
+const SP={repo:['Repository per bounded context','Instead of one data-access layer for everything, give each bounded context its own repository code (e.g. a mapping file per context). Now you can see which code touches which tables. Pair it with a schema visualizer (SchemaSpy) to spot foreign keys crossing future service boundaries. Useful whenever you\'re reworking the monolith to understand where to cut.'],
+ dbpbc:['Database per bounded context','Give each context its own schema even inside one deployable. A three-person ThoughtWorks team built a revenue service as three isolated contexts (three JARs, three databases), expecting to split later. They never needed to: a fine modular monolith. The author nearly always recommends this for brand-new systems, where domain understanding is too young for services.'],
+ dal:['Monolith as data access layer','Need data the monolith owns? Put an API on the monolith (an Employee API, say) instead of reading its tables. JustSocial used this; it\'s underrated because people assume the monolith is dead. Best when the data and its state transitions are staying in the monolith, and the endpoint hints at a future Employee service.'],
+ multi:['Multischema storage','Don\'t make a bad situation worse. Invoice service still reads core invoice data from the monolith, but brand-new data (invoice reviewers) goes in its own schema, not the monolith\'s. Over time, migrate the remaining tables across one at a time. Watch for foreign keys that now span schemas.']};
+function drawSp(k){const s=$('#spSvg');s.innerHTML='';const bx=(x,y,w,h,t,c,f)=>{s.appendChild(el('rect',{x,y,width:w,height:h,rx:8,fill:f||'var(--surface)',stroke:`var(--${c})`,'stroke-width':2}));s.appendChild(el('text',{x:x+w/2,y:y+h/2+4,'text-anchor':'middle','font-size':11.5,'font-weight':600,fill:'var(--ink)'},t))};
+  const ln=(x1,y1,x2,y2,c,dash)=>s.appendChild(el('line',{x1,y1,x2,y2,stroke:`var(--${c||'muted'})`,'stroke-width':1.8,'stroke-dasharray':dash?'5 4':'none'}));
+  if(k==='repo'){s.appendChild(el('rect',{x:20,y:10,width:600,height:200,rx:12,fill:'none',stroke:'var(--pencil)','stroke-width':2}));['Catalog','Finance','Warehouse'].forEach((t,i)=>{bx(50+i*190,30,150,36,t+' code','blue');bx(50+i*190,90,150,36,t+' repository','ok','var(--ok-soft)');ln(125+i*190,66,125+i*190,90)});
+    ['albums','ledger','stock','line_items'].forEach((t,i)=>bx(60+i*140,160,110,30,t,'line','var(--blue-soft)'));[[125,215],[315,355],[505,355],[505,495]].forEach(([a,b])=>ln(a,126,b,160));ln(355,175,195,175,'bad',true);s.appendChild(el('text',{x:275,y:205,'text-anchor':'middle','font-size':10,fill:'var(--bad)'},'hidden FK: ledger → line_items'))}
+  if(k==='dbpbc'){s.appendChild(el('rect',{x:60,y:10,width:520,height:110,rx:12,fill:'var(--surface)',stroke:'var(--pencil)','stroke-width':2}));s.appendChild(el('text',{x:320,y:30,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--ink)'},'Revenue service (one deployment)'));['Forecasting','Invoicing','Reporting'].forEach((t,i)=>{bx(90+i*160,50,140,50,t,'blue');bx(110+i*160,160,100,40,'schema','blue','var(--blue-soft)');ln(160+i*160,100,160+i*160,160)})}
+  if(k==='dal'){s.appendChild(el('rect',{x:300,y:10,width:320,height:200,rx:12,fill:'var(--surface)',stroke:'var(--pencil)','stroke-width':2}));s.appendChild(el('text',{x:460,y:30,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--pencil)'},'Monolith'));bx(330,60,140,40,'Employee API','blue','var(--blue-soft)');bx(330,150,140,40,'employees','line','var(--blue-soft)');ln(400,100,400,150);bx(30,60,160,50,'Invoice service','ok');ln(190,85,328,80,'blue');s.appendChild(el('text',{x:260,y:72,'text-anchor':'middle','font-size':10,fill:'var(--blue)'},'API, not SQL'));s.appendChild(el('rect',{x:320,y:50,width:160,height:150,rx:10,fill:'none',stroke:'var(--ok)','stroke-dasharray':'6 4'}));s.appendChild(el('text',{x:560,y:120,'text-anchor':'middle','font-size':10,fill:'var(--ok)'},'future Employee service?'))}
+  if(k==='multi'){bx(30,40,170,50,'Invoice service','ok');s.appendChild(el('rect',{x:320,y:10,width:300,height:120,rx:12,fill:'var(--surface)',stroke:'var(--pencil)','stroke-width':2}));s.appendChild(el('text',{x:470,y:30,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--pencil)'},'Monolith DB'));bx(350,60,110,40,'invoices','line','var(--blue-soft)');bx(480,60,110,40,'employees','line','var(--blue-soft)');
+    bx(40,150,150,40,'invoice_reviewers','ok','var(--ok-soft)');ln(115,90,115,150,'ok');ln(200,65,348,80,'pencil',true);s.appendChild(el('text',{x:270,y:60,'text-anchor':'middle','font-size':10,fill:'var(--pencil)'},'still reads old data'));ln(190,170,480,100,'bad',true);s.appendChild(el('text',{x:360,y:160,'font-size':10,fill:'var(--bad)'},'FK across schemas: handle in code'))}
+  $('#spTxt').innerHTML=`<h3 class="blue">${SP[k][0]}</h3><p>${SP[k][1]}</p>`}
+seg('[data-sp]',b=>drawSp(b.dataset.sp));drawSp('repo');
+
+const COLS=[['sku','both'],['title','Catalog'],['artist','Catalog'],['price','Catalog'],['stock_level','Warehouse'],['shelf_location','Warehouse']];const own={};const OPT=['?','Catalog','Warehouse','both'];
+$('#cp').innerHTML=COLS.map((c,i)=>`<div class="it"><span>Item.${c[0]}</span><div class="seg" role="group">${OPT.slice(1).map(o=>`<button data-i="${i}" data-o="${o}" aria-pressed="false">${o==='both'?'Both (key)':o}</button>`).join('')}</div></div>`).join('');
+$$('#cp button').forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);own[b.dataset.i]=b.dataset.o;cpU()}));
+function cpU(){const done=Object.keys(own).length;const right=COLS.filter((c,i)=>own[i]===c[1]).length;
+  $('#cpTxt').innerHTML=done<COLS.length?`${done} of ${COLS.length} assigned.`:right===COLS.length?'<b class="okc">Clean split.</b> Catalog Item (sku, title, artist, price) and Stock Item (sku, stock level, location). The SKU identifies the item in both; a foreign key between them won\'t survive once they live in separate databases.':`<b class="badc">${COLS.length-right} column(s) look misplaced.</b> Ask which service\'s state machine changes each value. Stock and location are warehouse concerns; descriptive and pricing data is catalog. SKU is the shared identifier.`}
+cpU();
+
+function drawFk(){const n=+$('#nk').value;$('#nkV').textContent=n;const bulk=$('#bulk').checked,cache=$('#cache').checked;
+  const mono=5+n*0.05;let ms=5+(cache?Math.ceil(n*0.1):n)*(bulk?0:25);if(bulk)ms+=25+ (cache?0.2:1)*n*0.1;
+  bars('#fkBars',[{l:'Monolith: one SELECT with a join',v:mono,c:'ok',txt:Math.round(mono)+' ms'},{l:'Services: ledger query + Catalog lookups',v:ms,c:ms>500?'bad':ms>100?'mid':'ok',txt:Math.round(ms)+' ms'}],Math.max(ms,mono)*1.1)}
+['#nk','#bulk','#cache'].forEach(i=>$(i).addEventListener(i==='#nk'?'input':'change',drawFk));drawFk();
+
+let dp='check';const dr=rnd(3);seg('[data-dp]',b=>{dp=b.dataset.dp;$('#dLog').innerHTML=''});
+function dl(t,c){const d=document.createElement('div');d.className=c;d.textContent=t;$('#dLog').appendChild(d)}
+$('#del').addEventListener('click',()=>{$('#dLog').innerHTML='';
+  if(dp==='check'){dl('Catalog → Finance: "Are you using 683?"  Finance: "No."','e-mid');if(dr()<.6){dl('Meanwhile a sale of SKU 683 is recorded in the ledger…','e-bad');dl('Catalog deletes 683. Ledger now references a missing album.','e-bad');dl('Report: crash or blank row. To prevent the race you\'d need distributed locks, and Catalog now depends on every consumer. The author strongly advises against this.','e-bad')}else{dl('Catalog deletes 683. This time no race… but every new consumer adds another check. Fragile.','e-mid')}}
+  else if(dp==='grace'){dl('Catalog deletes 683.','e-mid');dl('Finance looks up 683 → 410 Gone (it existed, now removed; more informative than 404).','e-ok');dl('Report shows: "SKU 683 · Album information not available · 400 sold". No crash.','e-ok');dl('Advanced option: Finance subscribes to deletion events and keeps a local copy of what was removed.','e-mid')}
+  else{dl('Catalog marks 683 as unavailable (status column / "graveyard" table). It is never truly deleted.','e-ok');dl('Finance looks up 683 → still found, flagged unavailable.','e-ok');dl('Report shows the album name. The author would combine this with graceful handling, in case Catalog is ever restored from an older backup.','e-ok')}});
+
+const RD={rd1:'small',rd2:'n',rd3:'n',rd4:'y'};
+function rdU(){let o;if(RD.rd2==='y')o=RD.rd4==='y'?['Static reference data service','A tiny service (could be a function on a FaaS platform) holding the 249 entries in memory. Consumers cache aggressively; it can emit change events. Natural home for code that manages the data\'s life cycle.']:['Dedicated reference data schema','One shared schema, versioned and treated as a published interface. Acceptable because the data is stable; breaking changes will hurt many services. The author resorts to it only when a new service is hard to justify.'];
+  else if(RD.rd3==='y')o=['Dedicated reference data schema','Lets services join to it, but the schemas likely need to share a database engine. Valid for large volumes or cross-schema joins.'];
+  else if(RD.rd1==='large')o=['Duplicate static reference data','Each service keeps its own copy, refreshed periodically (e.g. UK postcode files). Use rarely, and only where services don\'t need to agree exactly.'];
+  else o=['Static reference data library','Bundle it as an enum or config file in a shared library (Stitch Fix does this for sizes and colors). Different services may run different versions; fine if you can tolerate that and get notice of changes. It doesn\'t work across mixed tech stacks. The author\'s default for small data.'];
+  $('#rdOut').innerHTML=`<b class="h">${o[0]}</b><span>${o[1]}</span>`}
+['rd1','rd2','rd3','rd4'].forEach(q=>seg(`[data-${q}]`,b=>{RD[q]=b.dataset[q];rdU()}));rdU();
+cards('#rdCards',[{t:'Duplicate',c:'d3',d:'Inconsistency only matters if the data is part of what services exchange. If the warehouse never stocks CDs made in South Sudan, its outdated list is harmless.'},{t:'Dedicated schema',c:'d1',d:'Avoids duplication; joins possible; but it is a shared database, and format changes ripple everywhere.'},{t:'Library',c:'d2',d:'Neat and visible, but updating everyone at once means a lock-step release, the very thing microservices try to avoid.'},{t:'Service',c:'ok',d:'Divides rooms: "overkill" where new services take weeks of approvals; natural where a service template ships in a day.'}]);
+
+quiz('#qQuiz','#qScore',[
+ {q:'Logical separation of schemas mainly gives you…',o:['Independent change and information hiding','Fewer database licenses','Faster joins'],a:0,why:'Physical separation is about robustness and contention.'},
+ {q:'Most teams split…',o:['The schema first','The code first','Both at once'],a:1,why:'Common, but don\'t stop before the data is split too.'},
+ {q:'Brand-new system, young domain. The author\'s usual advice?',o:['Many microservices','Database per bounded context inside one deployable','One giant schema'],a:1,why:'Keep schema separation where you expect future service separation.'},
+ {q:'Catalog may delete albums Finance references. A good combination is…',o:['Check before deletion with locks','Soft delete plus graceful handling of missing records','Cascade deletes across services'],a:1,why:'Avoids the race and coupling; resilient to restores.'},
+ {q:'Small country-code list, slight version drift is fine, one tech stack. Author\'s pick?',o:['Shared library','Dedicated schema','Duplicate tables in every service'],a:0,why:'Simple, small and visible.'}]);
+
+})();
+</script>
+</body>
+</html>

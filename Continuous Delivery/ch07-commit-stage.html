@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>The Commit Stage</title>
+<meta name="description" content="The first gate of the pipeline. In a few minutes it compiles the code, runs fast tests and analysis, and produces the binaries that every later stage will reuse.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Continuous Delivery companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* Continuous Delivery additions */
+pre.code{font-family:var(--mono);font-size:.82rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;margin:0;line-height:1.5;white-space:pre;max-width:100%}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--d2)}
+.callout.bad{border-color:var(--bad);background:var(--bad-soft)}
+.callout.mid{border-color:var(--mid);background:var(--mid-soft)}
+button.tag{cursor:pointer}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:6em;max-height:15em;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.log .ok{color:var(--ok)} .log .bad{color:var(--bad)} .log .mid{color:var(--mid)}
+.pill{display:inline-block;font-family:var(--mono);font-size:.72rem;padding:2px 8px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.pill.ok{background:var(--ok-soft);color:var(--ok);border-color:var(--ok)} .pill.bad{background:var(--bad-soft);color:var(--bad);border-color:var(--bad)} .pill.mid{background:var(--mid-soft);color:var(--mid);border-color:var(--mid)}
+.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}
+.svgbox.fit svg{max-width:480px;margin:0 auto}
+
+/* page */
+
+.thr{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
+@media (max-width:640px){.thr{grid-template-columns:1fr}}
+.light{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:10px;border:1px solid var(--line)}
+.light i{width:28px;height:28px;border-radius:50%;flex:none}
+.rc{display:flex;flex-wrap:wrap;gap:6px}
+.code2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:720px){.code2{grid-template-columns:1fr}}
+.code2 h3{font-size:.95rem}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Continuous Delivery · visual companion</a><span class="tag">Part II · Chapter 7 of 15</span><button class="tag" id="themeBtn" type="button" aria-label="Switch light or dark theme">Light / dark</button></div>
+  <h1>The Commit Stage</h1>
+  <p class="lede">The first gate of the pipeline. In a few minutes it compiles the code, runs fast tests and analysis, and produces the binaries that every later stage will reuse.</p>
+  <nav class="toc" aria-label="Sections"><a href="#role">Role</a><a href="#feedback">Fast feedback</a><a href="#break">What breaks it</a><a href="#artifacts">Artifact repository</a><a href="#pyramid">Test pyramid</a><a href="#fast">Fast test tactics</a><a href="#stubmock">Stub vs mock</a><a href="#quiz">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="role" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>The entrance to the pipeline</h2></div>
+  <p>The commit stage begins the moment someone checks in to mainline. The CI server checks out the change and, as a set of build-script jobs, compiles it, runs the commit tests against the integrated code, creates binaries that can be deployed to <i>any</i> environment, runs analysis of codebase health, and prepares artifacts like database migrations or test data for later stages. For developers it is the most important feedback loop of all: it runs many times a day and tells them, within minutes, whether their change broke something.</p>
+  <div class="sheet">
+    <div class="stepper" id="cStep"><div class="svgbox"><svg id="cSvg" role="img" aria-label="Commit stage jobs"></svg></div></div>
+  </div>
+</section>
+
+<section id="feedback" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Fast, useful feedback</h2></div>
+  <p>Commit stage failures come from three causes: a syntax error (caught by compilation), a semantic error (caught by tests), or a problem with the application's configuration or environment, including the OS. Errors are cheapest to fix close to when they were made, and frequent small commits keep the search small. But "fail fast" can be overdone. If the stage stops at the first failing test, the developer fixes one thing, waits again, finds the next. Better: compile, and if that works run <i>all</i> the commit tests, then report everything.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Strategy"><button data-f="0" aria-pressed="true">Stop at first failure</button><button data-f="1" aria-pressed="false">Run all tests, then report</button></div>
+    <div class="svgbox"><svg id="fSvg" viewBox="0 0 640 150" role="img" aria-label="Round trips to find three failures"></svg></div>
+    <p id="fTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="break" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>What should break the commit stage?</h2></div>
+  <p>Traditionally the stage fails only for compile errors, test failures or environment problems. But a green build with hundreds of warnings, falling coverage and growing duplication is not really healthy. The authors suggest the build can fail when code quality crosses agreed thresholds, and even imagine a graded result instead of pass/fail. Move the sliders and set the thresholds.</p>
+  <div class="sheet">
+    <div class="thr">
+      <label class="rng"><span>Test coverage: <b id="v1"></b>% (fail below 60)</span><input type="range" id="m1" min="0" max="100" value="78"></label>
+      <label class="rng"><span>Compiler warnings: <b id="v2"></b> (ratchet: last green was 40)</span><input type="range" id="m2" min="0" max="200" value="38"></label>
+      <label class="rng"><span>Duplicated code: <b id="v3"></b>% (fail above 10)</span><input type="range" id="m3" min="0" max="30" value="6"></label>
+      <label class="rng"><span>Slowest unit test: <b id="v4"></b> s (fail above 2)</span><input type="range" id="m4" min="0" max="10" step="0.1" value="0.4"></label>
+    </div>
+    <div class="light" id="light"><i></i><div><b id="lightT"></b><div class="small" id="lightS"></div></div></div>
+  </div>
+  <div class="cardgrid" id="ownCards"></div>
+</section>
+
+<section id="artifacts" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>The artifact repository and a candidate's life</h2></div>
+  <p>The commit stage's outputs, binaries plus reports and metadata, go into an artifact repository. It is an unusual version control system: it only needs to keep some versions, but each must be traceable back to the revision that built it, and the binaries promoted later must be the very same files. Follow a release candidate as its status accumulates.</p>
+  <div class="sheet">
+    <div class="stepper" id="aStep"><div class="rc" id="rcTags"></div><div class="svgbox"><svg id="aSvg" viewBox="0 0 640 170" role="img" aria-label="CI server, artifact repository and environments"></svg></div></div>
+  </div>
+</section>
+
+<section id="pyramid" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Shape the suite like a pyramid</h2></div>
+  <p>Mike Cohn's test automation pyramid: lots of fast unit tests at the base, fewer service or component tests in the middle, and very few UI-driven tests on top. Commit tests are mostly the base. The authors aim to keep the whole commit stage under ten minutes, which they treat as roughly the upper limit, with five or less being even better. Shape your suite.</p>
+  <div class="sheet">
+    <div class="thr">
+      <label class="rng"><span>Unit tests (≈5 ms): <b id="pu"></b></span><input type="range" id="nu" min="0" max="20000" step="250" value="4000"></label>
+      <label class="rng"><span>Component tests (≈0.5 s): <b id="pc"></b></span><input type="range" id="nc" min="0" max="2000" step="10" value="200"></label>
+      <label class="rng"><span>UI tests (≈20 s): <b id="pg"></b></span><input type="range" id="ng" min="0" max="200" value="5"></label>
+      <label class="rng"><span>Parallel agents: <b id="pp"></b></span><input type="range" id="np" min="1" max="16" value="1"></label>
+    </div>
+    <div class="svgbox fit"><svg id="pySvg" viewBox="0 0 520 220" role="img" aria-label="Test pyramid"></svg></div>
+    <p id="pyTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="fast" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>How to keep commit tests fast</h2></div>
+  <p>The chapter's tactics, each with a short illustration of the idea in code.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Tactic" id="tSeg"></div>
+    <div class="code2"><div class="stack"><h3 class="badc">Slow / fragile</h3><pre class="code" id="tBad"></pre></div><div class="stack"><h3 class="okc">Fast / robust</h3><pre class="code" id="tGood"></pre></div></div>
+    <p id="tTxt"></p>
+  </div>
+</section>
+
+<section id="stubmock" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>The Car and Engine: stub versus mock</h2></div>
+  <p>The chapter's running example: a <span class="mono">Car</span> receives its <span class="mono">Engine</span> by dependency injection, so a test can pass in a double. With a hand-written <b>stub</b> you write a <span class="mono">TestEngine</span> that records what happened. With a <b>mocking</b> library you declare expectations and let the tool verify them. Mocks mean far less code; the risk is coupling tests to implementation details.</p>
+  <div class="code2">
+    <pre class="code"><span class="c">// stub: hand-written</span>
+<span class="k">class</span> TestEngine <span class="k">implements</span> Engine {
+  started = <span class="k">false</span>; stopped = <span class="k">false</span>
+  start() { started = <span class="k">true</span> }
+  stop()  { stopped = <span class="k">true</span> }
+}
+engine = <span class="k">new</span> TestEngine()
+car = <span class="k">new</span> Car(engine)
+car.drive()
+assert engine.started &amp;&amp; engine.stopped</pre>
+    <pre class="code"><span class="c">// mock: generated, expectations first</span>
+engine = mock(Engine)
+inOrder(engine) {
+  expect(engine.start()).once()
+  expect(engine.stop()).once()
+}
+car = <span class="k">new</span> Car(engine)
+car.drive()
+verify(engine)</pre>
+  </div>
+  <div class="callout blue"><b class="h">Stubbing big subsystems</b><span>Dave once worked on a trading system that talked, in complex ways, to a messaging-based external system. A stub simulating that live system let the team test interactions on developer machines and in the commit stage, instead of maintaining a fragile web of real distributed systems.</span></div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b class="blue">What it does</b><span>Compile, commit tests, binaries for every environment, code analysis, artifacts for later.</span></div>
+    <div><b>Fast and complete</b><span>Under ten minutes; run all tests before reporting, don't stop at the first.</span></div>
+    <div><b class="pencil">Quality gates</b><span>Fail on coverage, warnings, duplication or slow tests crossing thresholds.</span></div>
+    <div><b class="okc">Ownership</b><span>Developers maintain the commit stage; rotate a build master on big teams.</span></div>
+    <div><b>Artifact repository</b><span>Store binaries and reports; candidates gather statuses until "released".</span></div>
+    <div><b class="badc">Fast tests</b><span>Avoid UI, DB and asynchrony; use DI and doubles; minimize state; fake time; parallelize.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Continuous Delivery: Reliable Software Releases through Build, Test, and Deployment Automation</i> by Jez Humble and David Farley (Addison-Wesley, 2011). Explanations, examples, code snippets and drawings are original summaries, not text or figures copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch06-build-deployment-scripting.html"><span>Previous · Chapter 6</span><b>Build and Deployment Scripting</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch08-acceptance-testing.html"><span>Next · Chapter 8</span><b>Automated Acceptance Testing</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('cd:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('acc:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle in the header */
+(function(){const b=document.getElementById('themeBtn');const r=document.documentElement;const t=store.get('theme',null);if(t)r.dataset.theme=t;if(!b)return;
+  b.addEventListener('click',()=>{const dark=r.dataset.theme?r.dataset.theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches;r.dataset.theme=dark?'light':'dark';store.set('theme',r.dataset.theme)})})();
+/* pipeline drawing: svg, stages [{t,sub,st}] st in ok|bad|run|idle|skip; returns nothing. Lays out left to right in viewBox width W */
+function pipe(svg,stages,o){svg=typeof svg==='string'?$(svg):svg;o=o||{};const W=o.w||640,H=o.h||110,n=stages.length,gap=o.gap||22;const bw=(W-20-gap*(n-1))/n,bh=o.bh||58,y=(H-bh)/2;
+  svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.innerHTML='';
+  const col={ok:'ok',bad:'bad',run:'blue',idle:'line',skip:'line',mid:'mid'};
+  stages.forEach((s,i)=>{const x=10+i*(bw+gap);const c=col[s.st||'idle'];
+    if(i>0){const ax=x-gap+3;svg.appendChild(el('line',{x1:ax,y1:H/2,x2:x-5,y2:H/2,stroke:'var(--muted)','stroke-width':2,class:s.st==='run'?'flow':''}));svg.appendChild(el('polygon',{points:`${x-3},${H/2} ${x-10},${H/2-4} ${x-10},${H/2+4}`,fill:'var(--muted)'}))}
+    const g=el('g',{class:'fade'+(s.st==='skip'?' off':'')});
+    g.appendChild(el('rect',{x,y,width:bw,height:bh,rx:8,fill:s.st==='ok'?'var(--ok-soft)':s.st==='bad'?'var(--bad-soft)':s.st==='mid'?'var(--mid-soft)':'var(--surface)',stroke:`var(--${c==='line'?'line':c})`,'stroke-width':s.st==='run'?2.6:1.6,class:s.st==='run'?'pulse':''}));
+    const lines=s.t.split('\n');lines.forEach((l,k)=>g.appendChild(el('text',{x:x+bw/2,y:y+bh/2+(k-(lines.length-1)/2)*14+(s.sub?-4:4),'text-anchor':'middle','font-size':o.fs||12.5,'font-weight':700,fill:'var(--ink)'},l)));
+    if(s.sub)g.appendChild(el('text',{x:x+bw/2,y:y+bh-9,'text-anchor':'middle','font-size':10.5,fill:'var(--muted)',class:'t-mono'},s.sub));
+    svg.appendChild(g)});}
+
+
+$('#cStep').insertAdjacentHTML('beforeend',stepHTML());
+const CJ=[{t:'Check out',sub:'mainline'},{t:'Compile',sub:'fail fast'},{t:'Commit\ntests',sub:'mostly unit'},{t:'Analysis',sub:'health'},{t:'Binaries &\nartifacts',sub:'to repo'}];
+stepper('#cStep',['A change lands on mainline. The CI server checks out that exact revision.','Compile (if needed). A syntax error stops everything here, within seconds.','Run the commit tests against the integrated code: a fast suite, mostly unit tests, plus a few that catch common failure types.','Measure the code: coverage, duplication, cyclomatic complexity, coupling, warnings, style.','Assemble deployable binaries, plus things like database migrations and test data, and store them in the artifact repository for every later stage.'],i=>pipe('#cSvg',CJ.map((s,k)=>({...s,st:k<i?'ok':k===i?'run':'idle'}))));
+function ff(m){const s=$('#fSvg');s.innerHTML='';const rounds=m?1:3,len=m?9:3.2;
+ for(let r=0;r<rounds;r++){const y=20+r*40;s.appendChild(el('text',{x:10,y:y+20,'font-size':12,fill:'var(--muted)',class:'t-mono'},'run '+(r+1)));
+  let x=70;[['compile',1.2,'ok'],['tests',m?7:2,'bad'],['wait / fix',m?0:2.4,'mid']].forEach(([l,w,c])=>{if(!w)return;s.appendChild(el('rect',{x,y,width:w*30,height:28,rx:5,fill:`var(--${c}-soft)`,stroke:`var(--${c})`}));s.appendChild(el('text',{x:x+w*15,y:y+18,'text-anchor':'middle','font-size':11,fill:'var(--ink)'},l));x+=w*30+4})}
+ $('#fTxt').innerHTML=m?'<b>One run</b> reports all three failing tests. The developer fixes them together and commits once.':'<b>Three round trips</b>, each finding one failure. The developer spends the morning waiting for builds.'}
+seg('[data-f]',b=>ff(+b.dataset.f));ff(0);
+function gate(){const c=+$('#m1').value,w=+$('#m2').value,d=+$('#m3').value,t=+$('#m4').value;$('#v1').textContent=c;$('#v2').textContent=w;$('#v3').textContent=d;$('#v4').textContent=t.toFixed(1);
+ const fails=[];if(c<60)fails.push('coverage below 60%');if(w>40)fails.push(`warnings rose from 40 to ${w}`);if(d>10)fails.push('duplication above 10%');if(t>2)fails.push('a unit test takes over 2 s');
+ const warn=[];if(c<70&&c>=60)warn.push('coverage close to threshold');if(d>7&&d<=10)warn.push('duplication creeping up');
+ const st=fails.length?'bad':warn.length?'mid':'ok';const L=$('#light');L.style.borderColor=`var(--${st})`;L.style.background=`var(--${st}-soft)`;L.querySelector('i').style.background=`var(--${st})`;
+ $('#lightT').textContent=st==='bad'?'Commit stage FAILED':st==='mid'?'Passed, with warnings':'Passed';$('#lightS').textContent=fails.concat(warn).join('; ')||'All metrics within agreed limits.'}
+['#m1','#m2','#m3','#m4'].forEach(x=>$(x).addEventListener('input',gate));gate();
+cards('#ownCards',[{t:'Tend the commit stage carefully',d:'Its scripts are code. Refactor them, keep them modular, separate environment config from scripts, and keep them fast as the project grows.'},{t:'Give developers ownership',d:'Routine changes (a new library, a config file) are made by the delivery team, not filed as tickets to a build team. Specialists coach and set standards.'},{t:'Use a build master for very large teams',d:'Above twenty or thirty people, or for teams new to CI, someone watches the build and chases breakages. Rotate the role, perhaps weekly; never make it permanent.'}]);
+const RS=['committed','commit stage passed','acceptance passed','manual testing passed','capacity tested','ready for release','released'];
+$('#aStep').insertAdjacentHTML('beforeend',stepHTML());
+stepper('#aStep',['A developer commits a change.','The commit stage passes. Binaries, reports and metadata are saved to the artifact repository, keyed by the revision.','The CI server fetches those binaries, deploys them to a production-like environment and runs the acceptance tests. On success the candidate is marked as having passed.','Testers see a list of all candidates that passed acceptance, press a button to deploy one, test it by hand, and mark it as passed.','The CI server takes the latest candidate that passed the earlier stages and runs capacity tests. Success: "capacity tested".','After all relevant stages the candidate is "ready for release". Anyone authorised can deploy it to production.','At the end of the release process the candidate is marked "released". Every status is a fact about one set of binaries.'],
+ i=>{$('#rcTags').innerHTML='<span class="small">Candidate 1.4.212:</span> '+RS.slice(0,i+1).map((r,k)=>`<span class="pill ${k===i?'mid':'ok'}">${r}</span>`).join('');
+  const s=$('#aSvg');s.innerHTML='';const box=(x,y,w,t,c)=>{s.appendChild(el('rect',{x,y,width:w,height:44,rx:8,fill:'var(--surface)',stroke:`var(--${c})`,'stroke-width':2}));s.appendChild(el('text',{x:x+w/2,y:y+27,'text-anchor':'middle','font-size':12.5,'font-weight':700,fill:'var(--ink)'},t))};
+  box(20,62,120,'CI server','blue');box(250,62,140,'Artifact repo','pencil');const envs=['Acceptance','UAT','Capacity','Production'];envs.forEach((e,k)=>box(500,4+k*42,124,e,k<i-1?'ok':'line'));
+  s.appendChild(el('line',{x1:140,y1:84,x2:248,y2:84,stroke:'var(--muted)','stroke-width':2,class:i>=1?'flow':''}));envs.forEach((e,k)=>{if(k<i-1)s.appendChild(el('line',{x1:390,y1:84,x2:498,y2:26+k*42,stroke:'var(--ok)','stroke-width':2,class:'flow'}))});
+  s.appendChild(el('text',{x:320,y:130,'text-anchor':'middle','font-size':11,fill:'var(--muted)',class:'t-mono'},'same binaries, sha a41f…'))});
+function py(){const u=+$('#nu').value,c=+$('#nc').value,g=+$('#ng').value,p=+$('#np').value;$('#pu').textContent=u.toLocaleString();$('#pc').textContent=c;$('#pg').textContent=g;$('#pp').textContent=p;
+ const sec=(u*0.005+c*0.5+g*20)/p+60;const s=$('#pySvg');s.innerHTML='';const lg=v=>Math.log10(v+1);const mx=lg(20000);
+ [[g,lg(g)/mx,'UI','bad',30],[c,lg(c)/mx,'Component','mid',90],[u,lg(u)/mx,'Unit','ok',150]].forEach(([n,f,l,col,y])=>{const w=Math.max(30,f*460);s.appendChild(el('rect',{x:260-w/2,y,width:w,height:52,rx:4,fill:`var(--${col}-soft)`,stroke:`var(--${col})`,'stroke-width':1.6}));s.appendChild(el('text',{x:260,y:y+31,'text-anchor':'middle','font-size':12.5,'font-weight':700,fill:'var(--ink)'},`${l}: ${n.toLocaleString()}`))});
+ const m=sec/60;const inverted=g*20>u*0.005+c*0.5;$('#pyTxt').innerHTML=`Commit stage ≈ <b>${m.toFixed(1)} minutes</b> (including a minute to compile and package). `+(m>10?'<span class="badc">Over ten minutes: developers will stop waiting for it. Move slow tests to a later stage or parallelize.</span>':'<span class="okc">Under ten minutes.</span>')+(inverted?' <span class="badc">The pyramid is upside down: UI tests dominate the time.</span>':'')}
+['#nu','#nc','#ng','#np'].forEach(x=>$(x).addEventListener('input',py));py();
+const TT=[['Avoid the UI',`open browser at /login
+type <span class="s">"ana"</span> into #user ...
+click #submit; wait for page
+assert text <span class="s">"Welcome"</span>`,`<span class="c">// test the logic behind the screen</span>
+result = loginService.login(<span class="s">"ana"</span>, pw)
+assert result.ok`,'UIs involve many components and run at human speed. Commit tests should test the logic directly; UI testing belongs in acceptance tests.'],
+['Dependency injection',`<span class="k">class</span> Car {
+  engine = <span class="k">new</span> PetrolEngine() <span class="c">// hard-wired</span>
+}`,`<span class="k">class</span> Car {
+  constructor(engine) { <span class="k">this</span>.engine = engine }
+}
+car = <span class="k">new</span> Car(<span class="k">new</span> TestEngine())`,'If a class creates its own collaborators you cannot substitute them. Inject them, and tests can pass in doubles.'],
+['Avoid the database',`db.insert(customer)
+service.applyDiscount(customer.id)
+row = db.query(...)  <span class="c">// slow, stateful</span>`,`repo = <span class="k">new</span> InMemoryCustomers([customer])
+service = <span class="k">new</span> Service(repo)
+service.applyDiscount(customer.id)
+assert repo.find(id).discount == 10`,'Database tests are slower and leave state behind that couples tests to each other. Keep one or two simple DB smoke tests; the rest use in-memory doubles.'],
+['Avoid asynchrony',`bus.publish(order)
+sleep(5)                   <span class="c">// hope it's done</span>
+assert shipped(order)`,`bus = <span class="k">new</span> SynchronousStubBus()
+handler = <span class="k">new</span> ShipOrders(bus)
+bus.publish(order)         <span class="c">// handled inline</span>
+assert shipped(order)`,'Sleeps make tests slow and flaky. Wrap messaging behind an interface and use a synchronous stub, testing the sender and the handler separately.'],
+['Minimize state',`setup: load 400-row fixture
+       create 12 accounts, 3 users...
+test:  assert report.total == 18233.40`,`input  = [order(10), order(15)]
+assert totals(input) == 25`,'Elaborate shared setup is hard to understand and maintain. Prefer tests that pass values in and check values out.'],
+['Fake time',`assert reminder.sent == <span class="k">false</span>
+sleep(24 * 3600)           <span class="c">// really?</span>
+assert reminder.sent`,`clock = <span class="k">new</span> FakeClock(<span class="s">"2010-07-01T09:00"</span>)
+r = <span class="k">new</span> Reminders(clock)
+clock.advance(hours(24))
+assert r.sent`,'Abstract time behind a Clock you inject, so tests control it. The authors now never call the system clock directly.']];
+$('#tSeg').innerHTML=TT.map((t,i)=>`<button data-tt="${i}" aria-pressed="${i===0}">${t[0]}</button>`).join('');
+function tac(i){$('#tBad').innerHTML=TT[i][1];$('#tGood').innerHTML=TT[i][2];$('#tTxt').textContent=TT[i][3]}seg('#tSeg button',b=>tac(+b.dataset.tt));tac(0);
+quiz('#qQuiz','#qScore',[
+ {q:'Target duration for the commit stage?',o:['Under ten minutes','About an hour','Overnight'],a:0,why:'Roughly ten minutes is the upper bound; shorter is better.'},
+ {q:'Should the commit stage stop at the first failing test?',o:['Yes, fail fast','No: compile, then run all commit tests and report every failure'],a:1,why:'Otherwise developers make several round trips to find all failures.'},
+ {q:'Who should make routine changes to commit stage scripts?',o:['A separate build team','The delivery team itself'],a:1,why:'Ownership keeps the stage healthy; specialists coach.'},
+ {q:'How should code that needs the current time be tested?',o:['Sleep until the time comes','Inject a clock abstraction and fake it'],a:1,why:'Faking time makes time-based behaviour fast and deterministic.'},
+ {q:'In the test pyramid, the widest layer is…',o:['UI tests','Component tests','Unit tests'],a:2,why:'Many fast unit tests, fewer component tests, very few UI tests.'},
+]);
+
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>From LLMs to Agents</title>
+<meta name="description" content="A language model on its own predicts text. Put it in a loop of reasoning, acting and feedback, give it state and tools, and it becomes an agent. This chapter builds the mental model: agents are state machines with an LLM making choices inside them.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the AI Agents companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = control flow and structure, orange pencil = the model and its outputs, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* additions for the AI Agents companion */
+button.tag{cursor:pointer}
+button.tag:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .k{color:var(--blue);font-weight:600} pre.code .c{color:var(--muted);font-style:italic} pre.code .s{color:var(--ok)} pre.code .p{color:var(--pencil)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+.log{font-family:var(--mono);font-size:.8rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:8em;max-height:18em;overflow:auto;display:flex;flex-direction:column;gap:3px}
+.log .ln{overflow-wrap:anywhere}
+.log .ln.u{color:var(--ink)} .log .ln.m{color:var(--pencil)} .log .ln.t{color:var(--blue)} .log .ln.ok{color:var(--ok)} .log .ln.bad{color:var(--bad)} .log .ln.mu{color:var(--muted)}
+.pill{display:inline-block;font-family:var(--mono);font-size:.72rem;padding:2px 8px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.pill.ok{border-color:var(--ok);color:var(--ok);background:var(--ok-soft)} .pill.bad{border-color:var(--bad);color:var(--bad);background:var(--bad-soft)} .pill.mid{border-color:var(--mid);color:var(--mid);background:var(--mid-soft)}
+.missing{border:2px dashed var(--bad);background:var(--bad-soft);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:6px}
+
+/* page */
+
+.cyc text{font-size:13px}
+.cyc .nd circle{transition:fill .35s,stroke-width .35s}
+.cyc .nd.on circle{fill:var(--blue-soft);stroke-width:3}
+.fsmst rect{transition:fill .3s,stroke-width .3s}
+.fsmst.on rect{fill:var(--blue-soft);stroke-width:3}
+.thr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media (max-width:640px){.thr{grid-template-columns:1fr}}
+.thr .sheet{gap:10px}
+.spec{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+@media (max-width:640px){.spec{grid-template-columns:1fr 1fr}}
+.spec button{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:10px;text-align:left;display:flex;flex-direction:column;gap:2px}
+.spec button b{font-family:var(--display);font-size:.98rem}
+.spec button span{font-size:.8rem;color:var(--muted)}
+.spec button[aria-pressed="true"]{background:var(--blue-soft);border-color:var(--blue)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">AI Agents · visual companion</a><span class="tag">Chapter 1 of 12</span><button class="tag themebtn" type="button" aria-label="Toggle light or dark theme">theme</button></div>
+  <h1>From LLMs to Agents</h1>
+  <p class="lede">A language model on its own predicts text. Put it in a loop of reasoning, acting and feedback, give it state and tools, and it becomes an agent. This chapter builds the mental model: agents are state machines with an LLM making choices inside them.</p>
+  <nav class="toc" aria-label="Sections"><a href="#loop">The loop</a><a href="#fsm">Finite state machines</a><a href="#hsm">Hierarchical machines</a><a href="#langgraph">Mapping to LangGraph</a><a href="#static">Static vs agentic</a><a href="#state">Giving it state</a><a href="#autonomy">Autonomy today</a><a href="#check">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="loop" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>An agent is an LLM inside a loop</h2></div>
+  <p>Think about how a developer builds something for a client. They read the request, sketch a plan, then act: look up docs, write a function, run the tests. Failing tests, a reviewer's comment or the client's reaction feed back into the next round of thinking. Nothing is done in one shot.</p>
+  <p>An <b>LLM agent</b> works the same way. It reasons about what is missing, takes an action by calling a tool, reads what came back from the environment, and adjusts. It repeats until the goal is met or a limit is hit. A plain LLM call is one pass of text generation; an agent is a decision-maker running inside a workflow.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Who is in the loop"><button data-w="dev" aria-pressed="true">Human developer</button><button data-w="agent" aria-pressed="false">LLM agent</button></div>
+    <div class="svgbox fit"><svg class="cyc" id="cycSvg" viewBox="0 0 560 300" role="img" aria-label="Reason, act, observe cycle"></svg></div>
+    <div class="stepper" id="cycStep"></div>
+  </div>
+  <div class="callout blue"><b class="h">Bounded autonomy is a feature</b><span>Developers work inside coding standards and review processes. Agents work inside the tools, permissions and safeguards you hand them. Those limits are what make either of them safe to rely on.</span></div>
+</section>
+
+<section id="fsm" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>The base paradigm: finite state machines</h2></div>
+  <p>Frameworks like LangGraph and CrewAI dress it up differently, but every agent workflow needs a control model: track state, choose an action, observe the result, update context, and eventually stop. A <b>finite state machine</b> (FSM) is the oldest and clearest way to describe that. It sits in exactly one state at a time and moves along allowed transitions when events arrive.</p>
+  <div class="cardgrid" id="fsmCards"></div>
+  <p>Drive the tool-use machine below yourself. Each button is an event; the guard decides whether the transition is allowed and the action says what happens on the way.</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="fsmSvg" viewBox="0 0 640 220" role="img" aria-label="Finite state machine for tool use"></svg></div>
+    <div class="row" id="fsmBtns">
+      <button class="btn" data-ev="request">User request arrives</button>
+      <button class="btn" data-ev="toolcall">Model emits tool call</button>
+      <button class="btn" data-ev="result">Tool returns result</button>
+      <button class="btn" data-ev="final">Model emits final answer</button>
+      <button class="btn" data-ev="reset">Reset</button>
+    </div>
+    <div class="log" id="fsmLog" aria-live="polite"></div>
+    <p class="small">Steps used: <b id="fsmSteps" class="mono">0</b> / 4. The step budget is a guard too: once it runs out, the only allowed move is to wrap up.</p>
+  </div>
+  <p>FSMs shine when behavior alternates among a few stable modes and when you need to recover: you can checkpoint at each state boundary and resume from the last completed step after a crash. They also make you decompose a fuzzy job. "Write a blog post" becomes ideation, outline, draft, edit and SEO states, each with its own tools and an explicit condition for handing off to the next.</p>
+</section>
+
+<section id="hsm" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>When FSMs get crowded: hierarchical state machines</h2></div>
+  <p>Add planning, reflection, approval gates and retries to a flat FSM and the edges multiply into spaghetti, with the same safety checks copied onto every one. A <b>hierarchical state machine</b> (HSM) lets states contain states. A <b>superstate</b> holds shared rules once; its <b>substates</b> inherit them. A <b>history</b> marker remembers which substate you were in, so you can come back to exactly that point. <b>Parallel regions</b> let children advance independently, which is how fan-out to several tools or agents is modeled.</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="hsmSvg" viewBox="0 0 640 260" role="img" aria-label="WORKING superstate with PLAN, ACT, REFLECT substates and a history marker"></svg></div>
+    <div class="row">
+      <button class="btn" id="hNext">Advance inside WORKING</button>
+      <button class="btn" id="hOut">Pause for human approval</button>
+      <button class="btn" id="hIn" disabled>Resume (use history H)</button>
+      <button class="btn" id="hBudget">Trip the budget guard</button>
+    </div>
+    <p id="hTxt" aria-live="polite"></p>
+  </div>
+  <p>Picture a research agent. Instead of one monolithic "research" step it becomes a sub-machine: find keywords, gather URLs, scrape, summarize. Each substate could even be its own specialized agent, while the rate limits and safety filters live once on the parent.</p>
+</section>
+
+<section id="langgraph" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>How the vocabulary maps to LangGraph</h2></div>
+  <p>LangGraph already speaks this language. The router that picks the next node plays the role of the event handler: it takes the current state plus the model's latest output and decides the next step. Tap each pairing.</p>
+  <div class="cardgrid" id="mapCards"></div>
+  <p>Here is the whole idea in a sketch of my own (not the book's listing): a typed state, a model node, a tool node and a router that loops until the model stops asking for tools.</p>
+<pre class="code"><span class="k">class</span> State(TypedDict):
+    messages: Annotated[list, add_messages]   <span class="c"># shared "bus", merged safely</span>
+
+<span class="k">def</span> <span class="p">think</span>(s):  <span class="k">return</span> {<span class="s">"messages"</span>: [llm_with_tools.invoke(s[<span class="s">"messages"</span>])]}
+<span class="k">def</span> <span class="p">route</span>(s):  <span class="c"># the guard</span>
+    <span class="k">return</span> <span class="s">"tools"</span> <span class="k">if</span> s[<span class="s">"messages"</span>][-1].tool_calls <span class="k">else</span> END
+
+g = StateGraph(State)
+g.add_node(<span class="s">"think"</span>, think); g.add_node(<span class="s">"tools"</span>, ToolNode(tools))
+g.add_edge(START, <span class="s">"think"</span>); g.add_conditional_edges(<span class="s">"think"</span>, route)
+g.add_edge(<span class="s">"tools"</span>, <span class="s">"think"</span>)
+app = g.compile(checkpointer=MemorySaver())  <span class="c"># history for free</span></pre>
+</section>
+
+<section id="static" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>From static predictor to dynamic agent</h2></div>
+  <p>An LLM generates the next token from patterns in its training data. That makes it a strong reasoner, but it cannot check a fact, fetch fresh data or touch the world. Agency appears when reasoning is coupled with action, and the coupling needs two things: <b>explicit state</b> (so earlier tool results and decisions carry forward) and <b>control flow</b> (guards that say when to plan, act or stop).</p>
+  <div class="sheet">
+    <div class="row between"><h3>Flip the system</h3><div class="seg" role="group" aria-label="System type"><button data-s="0" aria-pressed="true">Static LLM</button><button data-s="1" aria-pressed="false">Agentic system</button></div></div>
+    <div class="tbl"><table class="t" id="cmpT"></table></div>
+  </div>
+  <p>The baseline architecture wraps the model in three modules. Click each one.</p>
+  <div class="sheet two">
+    <div class="svgbox fit"><svg id="archSvg" viewBox="0 0 380 300" role="img" aria-label="LLM core surrounded by planning, memory and tools"></svg></div>
+    <div class="detail" id="archInfo" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="state" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Stateless calls versus stateful threads</h2></div>
+  <p>A <b>stateless</b> call treats the model as a black box: prompt in, tokens out, nothing remembered. Even a stateless tool loop forgets everything once the run ends. In a <b>stateful</b> workflow every node reads from and writes to shared state, and a checkpointer saves it per <b>thread</b>. "State" here is more than the prompt text: it includes routing info, tool results, checkpoints and branch IDs.</p>
+  <p>Try the book's two-turn example. Ask for the temperature, then ask a follow-up in the same thread, or in a fresh branch.</p>
+  <div class="thr">
+    <div class="sheet"><div class="row between"><h3>thread <span class="mono">main</span></h3><span class="pill" id="memA">0 msgs</span></div>
+      <div class="row"><button class="btn" data-t="A" data-q="temp">Get NYC temperature (°C)</button><button class="btn" data-t="A" data-q="sq">Square that temperature</button><button class="btn" data-t="A" data-q="f">Convert it to °F</button></div>
+      <div class="log" id="logA"></div></div>
+    <div class="sheet"><div class="row between"><h3>thread <span class="mono">branch</span></h3><span class="pill" id="memB">0 msgs</span></div>
+      <div class="row"><button class="btn" data-t="B" data-q="temp">Get NYC temperature (°C)</button><button class="btn" data-t="B" data-q="sq">Square that temperature</button><button class="btn" data-t="B" data-q="f">Convert it to °F</button></div>
+      <div class="log" id="logB"></div></div>
+  </div>
+  <div class="row"><button class="btn" id="stReset">Clear both threads</button><span class="small">The temperature value is illustrative.</span></div>
+  <div class="callout"><b class="h">Two small details that matter</b><span>Always bound the loop with a step limit so a model that keeps calling tools cannot spin forever. And if the run ends on a tool observation, send one short wrap-up instruction so you still get a final answer in the format you asked for.</span></div>
+</section>
+
+<section id="autonomy" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Deus ex machina? Orchestrated autonomy</h2></div>
+  <p>Once agents are seen as HSMs, "autonomy" is just how much choice you allow inside a superstate. A router is a one-edge FSM with a single guard. A tool-calling agent is a WORKING superstate looping through plan, act and reflect. A multi-agent system nests subgraphs under a supervisor. Real systems are not a god descending on a crane to solve everything; they are engineered workflows.</p>
+  <div class="sheet">
+    <div class="spec" id="spec" role="group" aria-label="Autonomy level"></div>
+    <div class="detail" id="specInfo" aria-live="polite"></div>
+  </div>
+  <div class="callout blue"><b class="h">Case study: an AI scientist</b><span>A multi-agent system using tree search, experiment management and vision-language feedback generated hypotheses, ran experiments, wrote code and drafted papers. One of three workshop submissions passed peer review in 2025. Reviewers still found shallow analysis, citation slips and dataset limits. Impressive inside the boundaries of orchestration; not yet a source of new scientific paradigms.</span></div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="quiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b>Agent = LLM in a loop</b><span>Reason, act with tools, observe feedback, repeat until done or bounded.</span></div>
+    <div><b>FSM vocabulary</b><span>State, event, guard, action, termination. Checkpoint at boundaries.</span></div>
+    <div><b>HSM for scale</b><span>Superstates hold shared policy; history lets you resume where you left off.</span></div>
+    <div><b>State + control flow</b><span>What turns a static predictor into a stateful process.</span></div>
+    <div><b>Threads</b><span>Same thread remembers; a new thread is an isolated branch.</span></div>
+    <div><b>Orchestrated autonomy</b><span>Agents choose among predefined paths; they do not rewire their own graph.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>AI Agents: The Definitive Guide</i> by Nicole Koenigstein (O'Reilly). Explanations, examples, code snippets and drawings are original summaries; the figures are redrawn ideas, not copies.</footer>
+  <nav class="pager" aria-label="Chapters"><span></span><a class="home" href="index.html">All chapters</a><a class="nx" href="ch02-architectures-patterns.html"><span>Next · Chapter 2</span><b>Architectures and Patterns</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every AI Agents companion page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('aia:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('aia:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle: remembers choice per browser */
+(function(){const r=document.documentElement;const t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+ const cur=()=>r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+ $$('.themebtn').forEach(b=>{const lab=()=>{b.textContent=cur()==='dark'?'light theme':'dark theme'};lab();
+  b.addEventListener('click',()=>{const nx=cur()==='dark'?'light':'dark';r.setAttribute('data-theme',nx);store.set('theme',nx);lab()})})})();
+/* log lines appended one by one into a box */
+function playLog(target,lines,delay){const r=typeof target==='string'?$(target):target;r.innerHTML='';let i=0;clearInterval(r._t);
+  r._t=setInterval(()=>{if(i>=lines.length){clearInterval(r._t);return}const d=document.createElement('div');const L=lines[i++];d.className='ln '+(L.c||'');d.innerHTML=L.t;r.appendChild(d);r.scrollTop=r.scrollHeight},delay||420)}
+
+
+/* 1. cycle */
+const cyc=$('#cycSvg');
+const CY={dev:{c:['Read the request','Sketch a plan','Write code / search docs','Tests, review, client'],s:['The client request arrives: the prompt.','Reasoning: decide what to build first and what is missing.','Action: look things up, write a function, run something.','Feedback: failing tests or review comments change the next plan. Loop until the client is happy.']},
+ agent:{c:['User goal','Reason','Call a tool','Observe result'],s:['A task enters the agent as a message.','The LLM reasons about the next step or what information is missing.','It emits a structured tool call: search, run code, query an API.','The tool result comes back as an observation and is appended to state. Loop until the goal is met or a step limit fires.']}};
+let who='dev';const pos=[[280,50],[470,150],[280,250],[90,150]];
+function drawCyc(on){cyc.innerHTML='';
+  cyc.appendChild(el('ellipse',{cx:280,cy:150,rx:190,ry:100,fill:'none',stroke:'var(--line)','stroke-width':2,'stroke-dasharray':'6 6',class:'flow'}));
+  cyc.appendChild(el('text',{x:280,y:146,'text-anchor':'middle','font-size':15,'font-weight':700,fill:'var(--muted)'},who==='dev'?'developer loop':'agent loop'));
+  cyc.appendChild(el('text',{x:280,y:166,'text-anchor':'middle','font-size':12,fill:'var(--muted)'},'feedback drives the next step'));
+  CY[who].c.forEach((t,i)=>{const g=el('g',{class:'nd'+(i===on?' on':'')});const [x,y]=pos[i];
+    g.appendChild(el('circle',{cx:x,cy:y,r:38,fill:'var(--surface)',stroke:i===0?'var(--pencil)':'var(--blue)','stroke-width':1.6}));
+    const w=t.split(' ');const L=w.length>2?[w.slice(0,2).join(' '),w.slice(2).join(' ')]:[t];
+    L.forEach((l,k)=>g.appendChild(el('text',{x,y:y+4+(k-(L.length-1)/2)*15,'text-anchor':'middle','font-size':12,'font-weight':600,fill:'var(--ink)'},l)));cyc.appendChild(g)});}
+const goCyc=(()=>{$('#cycStep').innerHTML=stepHTML();return stepper('#cycStep',[0,1,2,3].map(i=>CY.dev.s[i]),i=>drawCyc(i))})();
+seg('[data-w]',b=>{who=b.dataset.w;const r=$('#cycStep');r.innerHTML=stepHTML();stepper('#cycStep',CY[who].s,i=>drawCyc(i))});
+
+/* 2. FSM */
+cards('#fsmCards',[{t:'State',d:'A compact snapshot of what the system knows now: messages, routing hints, progress markers.'},{t:'Event',d:'Something that happened since the last decision, such as a tool being invoked or returning.'},{t:'Guard',d:'A check on state plus the latest event that decides which transition is allowed.'},{t:'Action',d:'Work done during a transition: call a tool, append a message, save a checkpoint, ask a human.'},{t:'Termination',d:'The condition that says the process has reached its end.'}]);
+const FS={START:[70,110],LLM:[250,110],TOOL:[430,60],END:[560,160]};let fst='START',steps=0;
+function drawFsm(){const s=$('#fsmSvg');s.innerHTML='';
+  const E=[['START','LLM','request'],['LLM','TOOL','tool call'],['TOOL','LLM','result'],['LLM','END','final answer']];
+  E.forEach(([a,b,l],i)=>{const [x1,y1]=FS[a],[x2,y2]=FS[b];let d;
+    if(a==='TOOL')d=`M${x1-10},${y1+22} Q${(x1+x2)/2},${y1+70} ${x2+50},${y2+8}`;else if(b==='TOOL')d=`M${x1+50},${y1-12} Q${(x1+x2)/2},${y2-30} ${x2-50},${y2}`;else if(b==='END')d=`M${x1},${y1+22} Q${x1+120},${y2+40} ${x2-52},${y2}`;else d=`M${x1+50},${y1} L${x2-60},${y2}`;
+    s.appendChild(el('path',{d,fill:'none',stroke:'var(--muted)','stroke-width':1.6,'marker-end':'url(#ah)'}));
+    const m=[[160,100],[330,40],[372,128],[400,205]][i];s.appendChild(el('text',{x:m[0],y:m[1],'text-anchor':'middle','font-size':12,fill:'var(--muted)'},l))});
+  const defs=el('defs');const mk=el('marker',{id:'ah',viewBox:'0 0 10 10',refX:9,refY:5,markerWidth:7,markerHeight:7,orient:'auto-start-reverse'});mk.appendChild(el('path',{d:'M0,0 L10,5 L0,10 z',fill:'var(--muted)'}));defs.appendChild(mk);s.appendChild(defs);
+  for(const k in FS){const [x,y]=FS[k];const g=el('g',{class:'fsmst'+(k===fst?' on':'')});g.appendChild(el('rect',{x:x-50,y:y-22,width:100,height:44,rx:k==='START'||k==='END'?22:8,fill:'var(--surface)',stroke:k==='TOOL'?'var(--pencil)':'var(--blue)','stroke-width':1.6}));g.appendChild(el('text',{x,y:y+5,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--ink)','class':'t-mono'},k));s.appendChild(g)}
+  $('#fsmSteps').textContent=steps;}
+function fsmLog(t,c){const d=document.createElement('div');d.className='ln '+(c||'');d.innerHTML=t;$('#fsmLog').appendChild(d);$('#fsmLog').scrollTop=1e6}
+function fsmEv(ev){
+  if(ev==='reset'){fst='START';steps=0;$('#fsmLog').innerHTML='';fsmLog('state START: waiting for a request','mu');drawFsm();return}
+  const T={request:['START','LLM','action: append user message'],toolcall:['LLM','TOOL','action: execute the requested tool'],result:['TOOL','LLM','action: append observation with matching call id'],final:['LLM','END','action: return answer, save checkpoint']}[ev];
+  if(fst!==T[0]){fsmLog(`event <b>${ev}</b> ignored: no transition from ${fst}`,'bad');return}
+  if(ev==='toolcall'&&steps>=4){fsmLog('guard <b>steps &lt; 4</b> failed: blocked. Only "final answer" is allowed now (wrap-up instruction sent).','bad');return}
+  if(ev==='toolcall')steps++;
+  fst=T[1];fsmLog(`${T[0]} → ${T[1]} on <b>${ev}</b>; ${T[2]}`,ev==='final'?'ok':'t');if(fst==='END')fsmLog('termination reached','ok');drawFsm()}
+$$('#fsmBtns button').forEach(b=>b.addEventListener('click',()=>fsmEv(b.dataset.ev)));fsmEv('reset');
+
+/* 3. HSM */
+const sub=['PLAN','ACT','REFLECT'];let hi=0,inside=true,hist=null;
+function drawHsm(){const s=$('#hsmSvg');s.innerHTML='';
+  s.appendChild(el('rect',{x:150,y:20,width:470,height:220,rx:14,fill:inside?'var(--blue-soft)':'var(--surface)',stroke:'var(--blue)','stroke-width':2}));
+  s.appendChild(el('text',{x:170,y:46,'font-size':14,'font-weight':800,fill:'var(--blue)','class':'t-mono'},'WORKING'));
+  s.appendChild(el('text',{x:600,y:46,'text-anchor':'end','font-size':11.5,fill:'var(--muted)'},'shared: rate limit · safety filter · budget'));
+  sub.forEach((n,i)=>{const x=230+i*140,y=130;const on=inside&&i===hi;
+    s.appendChild(el('rect',{x:x-50,y:y-24,width:100,height:48,rx:8,fill:on?'var(--surface)':'var(--paper)',stroke:on?'var(--pencil)':'var(--line)','stroke-width':on?3:1.5}));
+    s.appendChild(el('text',{x,y:y+5,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--ink)','class':'t-mono'},n));
+    if(i<2)s.appendChild(el('path',{d:`M${x+52},${y} L${x+86},${y}`,stroke:'var(--muted)','stroke-width':1.6,'marker-end':'url(#ah2)'}))});
+  s.appendChild(el('path',{d:'M510,156 Q370,215 230,156',fill:'none',stroke:'var(--muted)','stroke-width':1.4,'stroke-dasharray':'4 4','marker-end':'url(#ah2)'}));
+  s.appendChild(el('text',{x:370,y:222,'text-anchor':'middle','font-size':11.5,fill:'var(--muted)'},'reflect says "not done": plan again'));
+  s.appendChild(el('circle',{cx:185,cy:200,r:16,fill:'var(--surface)',stroke:'var(--pencil)','stroke-width':1.6}));
+  s.appendChild(el('text',{x:185,y:205,'text-anchor':'middle','font-size':13,'font-weight':800,fill:'var(--pencil)'},'H'));
+  if(hist!=null)s.appendChild(el('text',{x:185,y:232,'text-anchor':'middle','font-size':11,fill:'var(--pencil)'},'= '+sub[hist]));
+  s.appendChild(el('rect',{x:16,y:100,width:100,height:56,rx:8,fill:!inside?'var(--pencil-soft)':'var(--surface)',stroke:'var(--pencil)','stroke-width':!inside?3:1.4}));
+  s.appendChild(el('text',{x:66,y:124,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--ink)'},'HUMAN'));
+  s.appendChild(el('text',{x:66,y:142,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--ink)'},'APPROVAL'));
+  const d=el('defs');const mk=el('marker',{id:'ah2',viewBox:'0 0 10 10',refX:9,refY:5,markerWidth:7,markerHeight:7,orient:'auto-start-reverse'});mk.appendChild(el('path',{d:'M0,0 L10,5 L0,10 z',fill:'var(--muted)'}));d.appendChild(mk);s.appendChild(d);}
+function hset(t){$('#hTxt').innerHTML=t;drawHsm();$('#hIn').disabled=inside;$('#hNext').disabled=!inside;$('#hOut').disabled=!inside}
+$('#hNext').addEventListener('click',()=>{hi=(hi+1)%3;hset(`Now in <b>${sub[hi]}</b>. It obeys its own edges plus every policy on WORKING, without restating them.`)});
+$('#hOut').addEventListener('click',()=>{hist=hi;inside=false;hset(`Left WORKING from <b>${sub[hi]}</b>. Exit logic ran once for the whole superstate. H recorded <b>${sub[hi]}</b>.`)});
+$('#hIn').addEventListener('click',()=>{inside=true;hi=hist;hset(`Approved. Re-entered WORKING and jumped straight to <b>${sub[hi]}</b> via shallow history, instead of starting over at PLAN.`)});
+$('#hBudget').addEventListener('click',()=>{hset('The budget guard lives on WORKING, so it fires the same way whether you are in PLAN, ACT or REFLECT. One rule, defined once, inherited by all.')});
+hset('You are in <b>PLAN</b> inside WORKING. Try pausing and resuming.');
+
+/* 4. mapping */
+cards('#mapCards',[{t:'State schema → shared bus',d:'The parent graph\'s TypedDict. Subgraphs declare the keys they read and write; overlapping keys are the superstate\'s interface.'},{t:'Subgraph → superstate',d:'Its internal nodes are substates. Entering runs its entry node; leaving follows its exit edge back to the parent.'},{t:'Conditional edges → guards',d:'Parent guards enforce global policy (budget, safety); child guards route among plan, act and reflect. Plain Python, so deterministic and auditable.'},{t:'Checkpointer → history',d:'A memory checkpointer restores the last completed node when a thread resumes. For explicit "return to where I was", store a small marker like working_last.'},{t:'Command → update + route',d:'A node can return an object that both updates state and names the next node, which is handy for multi-actor handoffs.'}]);
+
+/* 5. comparison */
+const CMP=[['Generation','Single pass of tokens','Iterative reason, act, feedback'],['Knowledge','Frozen at training time','Can retrieve, verify and update'],['Memory','None; stateless','Short- and long-term state'],['Flow','Linear prompt to response','Adaptive, multi-step workflow'],['Tools','None','Retrieval, code, APIs'],['Goals','Fixed reading of the prompt','Can refine or reinterpret goals'],['Checking','No external validation','Checks, corrects, improves output']];
+function cmp(k){$('#cmpT').innerHTML='<tr><th>Aspect</th><th>'+(k?'Agentic system':'Static LLM')+'</th></tr>'+CMP.map(r=>`<tr><td>${r[0]}</td><td class="${k?'okc':''}">${r[1+k]}</td></tr>`).join('')}
+seg('[data-s]',b=>cmp(+b.dataset.s));cmp(0);
+const ARCH={core:['LLM core','The model predicts text. Alone, that is all it does: no facts after its cutoff, no actions.','pencil'],plan:['Planning','Shapes how the agent reasons, from simple chain-of-thought traces to trees of thought and self-critique (Chapters 2 and 3).','blue'],mem:['Memory','Gives continuity: recall earlier steps, reuse prior knowledge, persist across sessions (Chapter 10).','d2'],tools:['Tools','Connect the agent to its environment: search, retrieval, code execution, custom APIs.','ok']};
+(function(){const s=$('#archSvg');const P={core:[190,150,'LLM core'],plan:[190,40,'Planning'],mem:[60,250,'Memory'],tools:[320,250,'Tools']};
+ for(const k of ['plan','mem','tools'])s.appendChild(el('line',{x1:190,y1:150,x2:P[k][0],y2:P[k][1],stroke:'var(--line)','stroke-width':3}));
+ for(const k in P){const g=el('g',{class:'gnode',tabindex:0,role:'button'});const [x,y,t]=P[k];const c=ARCH[k][2];
+  g.appendChild(el('rect',{x:x-60,y:y-24,width:120,height:48,rx:k==='core'?24:8,fill:'var(--surface)',stroke:`var(--${c})`,'stroke-width':2}));
+  g.appendChild(el('text',{x,y:y+5,'text-anchor':'middle','font-size':14,'font-weight':700,fill:'var(--ink)'},t));
+  const f=()=>{$('#archInfo').style.borderLeftColor=`var(--${c})`;$('#archInfo').innerHTML=`<span class="eyebrow">module</span><h3 style="color:var(--${c})">${ARCH[k][0]}</h3><p>${ARCH[k][1]}</p>`};
+  g.addEventListener('click',f);g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();f()}});s.appendChild(g);if(k==='core')f()}})();
+
+/* 6. threads */
+const TH={A:[],B:[]};
+function said(t){return TH[t].some(m=>m.temp)}
+function ask(t,q){const L=$('#log'+t);const add=(x,c)=>{const d=document.createElement('div');d.className='ln '+c;d.innerHTML=x;L.appendChild(d);L.scrollTop=1e6};
+  if(q==='temp'){add('user: current NYC temperature in °C?','u');add('→ tool internet_search("NYC air temperature today")','t');add('assistant: It is 18°C.','m');TH[t].push({},{},{temp:18})}
+  else if(!said(t)){add(q==='sq'?'user: square that temperature':'user: convert it to °F','u');add('assistant: Which temperature? Nothing in this thread mentions one.','bad');TH[t].push({},{})}
+  else if(q==='sq'){add('user: square that temperature','u');add('→ tool calculator("18**2")','t');add('assistant: 18°C squared is 324.','m');TH[t].push({},{},{})}
+  else{add('user: convert it to °F','u');add('→ tool calculator("18*9/5+32")','t');add('assistant: 18°C is 64.4°F.','m');TH[t].push({},{},{})}
+  $('#mem'+t).textContent=TH[t].length+' msgs'}
+$$('[data-t]').forEach(b=>b.addEventListener('click',()=>ask(b.dataset.t,b.dataset.q)));
+$('#stReset').addEventListener('click',()=>{TH.A=[];TH.B=[];$('#logA').innerHTML='';$('#logB').innerHTML='';$('#memA').textContent='0 msgs';$('#memB').textContent='0 msgs'});
+
+/* 7. autonomy spectrum */
+const SP=[['Router','one decision','A single guard choosing among a fixed set of paths. A one-edge FSM.','Picks the next path from predefined options.','Cannot add a path that is not in the graph.'],
+ ['Tool-calling agent','loops with tools','A WORKING superstate looping through plan, act and reflect, with memory.','Selects tools, decides whether more steps are needed, writes and runs small code snippets, revises its prompt within bounds.','Cannot rewire its own control graph or invent new tools on its own.'],
+ ['Multi-agent system','supervisor + roles','Several subgraphs under a supervisor superstate, sometimes in parallel regions.','Distributes decisions across specialized roles and joins their results.','Cannot guarantee coherence if it shifts strategy mid-run; still bound to the orchestration framework.'],
+ ['Full autonomy','not here yet','An LLM that generates new tools, actions and topologies and validates them itself.','Would redesign its own architecture and reason about its goals in a general, robust way.','Today: out of reach. Nearly all real systems are "agentic systems", not fully autonomous agents.']];
+$('#spec').innerHTML=SP.map((s,i)=>`<button data-i="${i}" aria-pressed="${i===1}"><b>${s[0]}</b><span>${s[1]}</span></button>`).join('');
+function sp(i){const s=SP[i];$('#specInfo').style.borderLeftColor=i===3?'var(--bad)':'var(--blue)';$('#specInfo').innerHTML=`<h3>${s[0]}</h3><p>${s[2]}</p><p><span class="pill ok">can</span> ${s[3]}</p><p><span class="pill bad">can't</span> ${s[4]}</p>`}
+seg('#spec button',b=>sp(+b.dataset.i));sp(1);
+
+/* quiz */
+quiz('#quiz','#qScore',[
+ {q:'In FSM terms, what decides which transition fires?',o:['Action','Guard','Event'],a:1,why:'The event says what happened; the guard checks state plus event and picks the allowed transition; the action is the work done on the way.'},
+ {q:'You want rate limits to apply to plan, act and reflect without repeating them. Where do they go?',o:['On every edge','On the WORKING superstate','In the system prompt'],a:1,why:'Policies on a superstate are inherited by all its substates. Define once, apply everywhere.'},
+ {q:'Same thread ID, second turn: "square that temperature". What happens?',o:['The agent remembers 18°C','It has to ask which temperature'],a:0,why:'The checkpointer restores the thread\'s messages, so the earlier tool result is available.'},
+ {q:'Which is something agents can do today?',o:['Generate and validate new graph topologies','Pick which tools or subagents to call','Run fully independent of orchestration'],a:1,why:'Choosing among provided tools and paths is orchestrated autonomy. Redesigning the graph is not yet reliable.'},
+ {q:'Why keep a tool\'s docstring precise?',o:['It becomes the description the model sees','It speeds up Python','It is only for humans'],a:0,why:'Frameworks build the tool schema from the signature and docstring. Vague descriptions lead to invalid calls.'}]);
+
+})();
+</script>
+</body>
+</html>

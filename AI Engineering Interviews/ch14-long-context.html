@@ -1,0 +1,496 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Long Context Modeling</title>
+<meta name="description" content="Context windows grew from 2K to millions of tokens, but supporting a length is not the same as using it well. This chapter covers the compute, memory and quality walls, and how each is climbed.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Accelerate companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* AI Engineering Interviews additions */
+.drill{display:flex;flex-direction:column;gap:12px}
+.dq{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--pencil);border-radius:0 10px 10px 0;padding:14px 16px;display:flex;flex-direction:column;gap:10px;align-items:flex-start}
+.dqh{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.dqh b{font-family:var(--display);font-weight:600;font-size:1.02rem;flex:1 1 240px}
+.dn{font-family:var(--mono);font-size:.75rem;color:var(--pencil)}
+.da{font-size:.95rem;display:flex;flex-direction:column;gap:8px;max-width:70ch}
+.da ul{margin:0;padding-left:1.2em}
+pre.code{font-family:var(--mono);font-size:.82rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;margin:0;white-space:pre}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.themebtn{cursor:pointer}
+.tok{display:inline-block;font-family:var(--mono);font-size:.85rem;padding:2px 6px;margin:2px;border-radius:5px;border:1px solid var(--line);background:var(--paper)}
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.kv>div{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--surface);display:flex;flex-direction:column;gap:2px}
+.kv b{font-family:var(--mono);font-size:1.15rem;color:var(--blue)}
+.kv span{font-size:.85rem;color:var(--muted)}
+.missing{border-left:4px solid var(--bad);background:var(--bad-soft);padding:12px 16px;border-radius:0 8px 8px 0}
+.two>*,.three>*{min-width:0} .sheet select{max-width:100%;text-overflow:ellipsis}
+
+/* page */
+
+.ctl2{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.hm{display:grid;grid-template-columns:4.5em repeat(5,minmax(0,1fr));gap:3px;font-size:.78rem;font-family:var(--mono)}
+.hm div{padding:6px 2px;text-align:center;border-radius:4px}
+.hm .h{color:var(--muted)}
+.flowq{display:flex;flex-direction:column;gap:10px}
+.flowq .ans{font-family:var(--display);font-weight:700;font-size:1.1rem;color:var(--ok)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">AI Engineering Interviews · visual companion</a><span class="tag">Part II · Chapter 14 of 14</span><button class="tag themebtn" id="themeBtn" type="button">Theme</button></div>
+  <h1>Long Context Modeling</h1>
+  <p class="lede">Context windows grew from 2K to millions of tokens, but supporting a length is not the same as using it well. This chapter covers the compute, memory and quality walls, and how each is climbed.</p>
+  <nav class="toc" aria-label="Sections"><a href="#hard">Why it is hard</a><a href="#middle">Lost in the middle</a><a href="#positions">Extending RoPE</a><a href="#efficient">Efficient attention</a><a href="#ssm">SSMs & ring</a><a href="#practice">In practice</a><a href="#drill">Interview drill</a><a href="#check">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="hard" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Why long sequences are hard</h2></div>
+  <p>Context windows went from 2K tokens to a million and more, but five problems grow with length: <b>compute</b> (attention is O(n²) in prefill), <b>memory</b> (the KV cache grows linearly and dominates serving), <b>lost in the middle</b> (facts buried mid-prompt get missed), <b>noise</b> (more distractors) and <b>distribution shift</b> (most training sequences were short). Watch attention take over the compute as n grows.</p>
+  <div class="sheet">
+    <label class="rng"><span>Sequence length: <b id="nV"></b></span><input type="range" id="nR" min="9" max="20" step=".5" value="12"></label>
+    <div class="bars" id="cBars"></div>
+    <p class="small" id="cTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="middle" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Lost in the middle and the needle test</h2></div>
+  <p>Put the one relevant document at different positions among many: accuracy is highest at the start and end and dips in the middle, a <b>U-shape</b>. A <b>needle-in-a-haystack</b> test sweeps both the needle's position and the total length; the result is a heatmap. Slide the needle.</p>
+  <div class="sheet">
+    <label class="rng"><span>Position of the relevant document: <b id="ndV"></b></span><input type="range" id="nd" min="0" max="100" value="50"></label>
+    <div class="svgbox"><svg id="uSvg" viewBox="0 0 640 200" role="img" aria-label="U-shaped accuracy by position"></svg></div>
+    <p class="small">Illustrative shape after Liu et al., "Lost in the Middle".</p>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>Needle-in-a-haystack heatmap</h3><div class="seg" role="group" aria-label="Model"><button data-hm="a" aria-pressed="true">Model with weak extension</button><button data-hm="b" aria-pressed="false">Model trained long</button></div></div>
+    <div class="hm" id="hm"></div>
+    <p class="small" id="hmTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="positions" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Positional encodings for long context</h2></div>
+  <p>RoPE rotates each pair of dimensions at its own frequency: high-frequency pairs resolve nearby positions, low-frequency pairs encode long distances. Past the training length, low-frequency pairs see angles they never saw. <b>Position Interpolation (PI)</b> divides every position by the extension factor s: all angles stay in range, but nearby tokens get squeezed together. <b>NTK-aware scaling</b> raises RoPE's base so high frequencies barely change while low ones stretch. <b>YaRN</b> interpolates per frequency band (none for high, full for low, a ramp between) and adds an attention temperature; it needs little fine-tuning.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Method"><button data-pm="none" aria-pressed="false">No scaling</button><button data-pm="pi" aria-pressed="true">PI</button><button data-pm="ntk" aria-pressed="false">NTK-aware</button><button data-pm="yarn" aria-pressed="false">YaRN</button></div>
+    <label class="rng"><span>Extension factor s: <b id="sfV"></b></span><input type="range" id="sf" min="1" max="16" value="4"></label>
+    <div class="svgbox"><svg id="ropeSvg" viewBox="0 0 640 220" role="img" aria-label="Per-dimension scaling of RoPE frequencies"></svg></div>
+    <p class="small" id="ropeTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout"><b class="h">ALiBi</b><span>Instead of rotating vectors, ALiBi subtracts a penalty proportional to distance from each attention score, with a different slope per head. It extrapolates gracefully by construction but biases attention toward recent tokens, which can hurt precise long-range retrieval. RoPE plus scaling has become the norm.</span></div>
+</section>
+
+<section id="efficient" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Three families of efficient attention</h2></div>
+  <p><b>Exact but efficient</b>: compute standard attention without ever writing the n×n matrix to slow memory (FlashAttention). <b>Approximate</b>: compute less: <b>sparse</b> patterns, <b>low-rank</b> projections of keys and values (Linformer), or <b>kernelized/linear</b> attention that reorders (QKᵀ)V into Q(KᵀV). <b>Non-attention backbones</b>: state space models. Pick a sparse pattern.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Pattern" id="patBtns"></div>
+    <div class="two"><div class="svgbox fit"><svg id="patSvg" viewBox="0 0 260 260" role="img" aria-label="Attention pattern grid"></svg></div><div class="stack" id="patTxt" aria-live="polite"></div></div>
+  </div>
+  <div class="sheet stepper">
+    <div class="row between"><h3>FlashAttention: tile, stream, rescale</h3><span class="small">HBM is big and slow; on-chip SRAM is tiny and fast</span></div>
+    <div class="svgbox"><svg id="faSvg" viewBox="0 0 640 210" role="img" aria-label="FlashAttention tiling"></svg></div>
+    <div id="faStep"></div>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>Why linear attention is linear</h3><div class="seg" role="group" aria-label="Order"><button data-la="std" aria-pressed="true">(QKᵀ)V</button><button data-la="lin" aria-pressed="false">Q(KᵀV)</button></div></div>
+    <div class="svgbox"><svg id="laSvg" viewBox="0 0 640 140" role="img" aria-label="Matrix shapes in standard vs linear attention"></svg></div>
+    <p class="small" id="laTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="ssm" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>State space models and ring attention</h2></div>
+  <p><b>State space models</b> carry a fixed-size state through the sequence, like an RNN, but are designed to train in parallel. <b>Mamba</b> makes the state update <i>selective</i>: its parameters depend on the input, so it can choose what to remember. Linear time, constant memory per generated token, no KV cache; the trade-off is weaker exact recall of arbitrary earlier tokens, which is why <b>hybrids</b> (Jamba and others) keep a few attention layers.</p>
+  <div class="cardgrid" id="ssmCards"></div>
+  <p>When one sequence is too long for one GPU's memory, <b>ring attention</b> splits it into blocks across devices arranged in a ring. Each device keeps its query block and passes key/value blocks around the ring, accumulating attention with the same online-softmax trick as FlashAttention, while overlapping communication with compute.</p>
+  <div class="sheet stepper"><div class="svgbox fit"><svg id="ringSvg" viewBox="0 0 360 260" role="img" aria-label="Four devices passing KV blocks around a ring"></svg></div><div id="ringStep"></div></div>
+</section>
+
+<section id="practice" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Long context in practice</h2></div>
+  <p>Teams layer their tools: FlashAttention first (exact, free quality), then structured sparsity or sliding windows if still too costly, retrieval instead of stuffing whole corpora into the prompt, and always a distinction between the <b>maximum</b> context length and the <b>effective</b> one, the length where accuracy on your task stays above a threshold.</p>
+  <div class="sheet flowq" id="flow" aria-live="polite"></div>
+  <div class="cardgrid" id="evalCards"></div>
+</section>
+
+<section id="drill" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Interview drill</h2></div>
+  <div id="qa"></div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b class="blue">Five walls</b><span>Compute, memory, lost-in-the-middle, noise, distribution shift.</span></div>
+    <div><b>Extend RoPE</b><span>PI squeezes all; NTK stretches low frequencies; YaRN ramps by band.</span></div>
+    <div><b class="pencil">FlashAttention</b><span>Exact attention, tiled in SRAM, O(n) memory, fewer HBM trips.</span></div>
+    <div><b>Approximate</b><span>Sparse, low-rank, linear: cheaper, some recall lost.</span></div>
+    <div><b>SSMs & hybrids</b><span>Linear time, no KV cache; mix in attention for recall.</span></div>
+    <div><b class="okc">Effective length</b><span>Measure by task: position sweeps, needles, multi-needle, distractors.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>AI Engineering Interviews: Over 350 AI Interview Questions and Answers</i> by Mina Ghashami and Ali Torkamani (O'Reilly, 2026). Explanations, model answers, code snippets and drawings are original summaries written for this companion; nothing is copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch13-llm-inference.html"><span>Previous · Chapter 13</span><b>LLM Inference</b></a><a class="home" href="index.html">All chapters</a><span></span></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('aie:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('aie:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle */
+(function(){const b=document.getElementById('themeBtn');if(!b)return;const r=document.documentElement;
+  const saved=store.get('theme',null);if(saved)r.setAttribute('data-theme',saved);
+  function cur(){return r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light')}
+  function lab(){b.textContent=cur()==='dark'?'Light theme':'Dark theme'}lab();
+  b.addEventListener('click',()=>{const n=cur()==='dark'?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n);lab()})})();
+/* interview drill: [{q,a,k}] -> question cards with reveal; k = difficulty tag */
+function drill(sel,list){const r=$(sel);r.classList.add('drill');
+  r.innerHTML=list.map((d,i)=>`<div class="dq"><div class="dqh"><span class="dn">Q${i+1}</span><b>${d.q}</b>${d.k?`<span class="chip">${d.k}</span>`:''}</div><button class="btn" aria-expanded="false">Show a model answer</button><div class="da" hidden>${d.a}</div></div>`).join('');
+  r.querySelectorAll('.dq').forEach(q=>{const b=q.querySelector('button'),a=q.querySelector('.da');b.addEventListener('click',()=>{const o=a.hidden;a.hidden=!o;b.setAttribute('aria-expanded',o);b.textContent=o?'Hide answer':'Show a model answer'})})}
+
+
+function cost(){const n=Math.round(Math.pow(2,+$('#nR').value));$('#nV').textContent=n.toLocaleString();const d=4096;const lin=24*n*d*d,att=4*n*n*d;const tot=lin+att;
+  bars('#cBars',[{l:'Projections + FFN (∝ n·d²)',v:lin/tot*100,txt:(lin/tot*100).toFixed(0)+'%'},{l:'Attention scores (∝ n²·d)',v:att/tot*100,c:'pencil',txt:(att/tot*100).toFixed(0)+'%'}],100);
+  const kv=2*32*8*128*2*n;$('#cTxt').innerHTML=`Per layer at d = 4096. The crossover is around n ≈ 6d ≈ 24K tokens. KV cache for one sequence (32 layers, 8 KV heads): <b>${(kv/1e9).toFixed(2)} GB</b>, growing linearly.`}
+$('#nR').addEventListener('input',cost);cost();
+
+const U=p=>.75-.45*Math.sin(Math.PI*p)+.08*(p<.05?1:0)+.05*(p>.95?1:0);
+function um(){const p=+$('#nd').value/100;$('#ndV').textContent=p<.15?'beginning':p>.85?'end':'middle ('+Math.round(p*100)+'%)';const s=$('#uSvg');s.innerHTML='';const X=v=>50+v*560,Y=v=>180-v*160;
+  for(let i=0;i<20;i++){s.appendChild(el('rect',{x:50+i*28+2,y:186,width:24,height:8,rx:2,fill:Math.abs(i/19-p)<.03?'var(--pencil)':'var(--line)'}))}
+  let d='';for(let i=0;i<=100;i++){const t=i/100;d+=(i?'L':'M')+X(t)+','+Y(U(t))}s.appendChild(el('path',{d,fill:'none',stroke:'var(--blue)','stroke-width':2.5}));
+  s.appendChild(el('circle',{cx:X(p),cy:Y(U(p)),r:7,fill:'var(--pencil)'}));s.appendChild(el('text',{x:X(p),y:Y(U(p))-12,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--ink)'},Math.round(U(p)*100)+'%'));
+  s.appendChild(el('line',{x1:50,y1:Y(.56),x2:610,y2:Y(.56),stroke:'var(--muted)','stroke-dasharray':'4 4'}));s.appendChild(el('text',{x:606,y:Y(.56)-4,'text-anchor':'end','font-size':10.5,fill:'var(--muted)'},'closed-book accuracy'))}
+$('#nd').addEventListener('input',um);um();
+function hm(m){const L=['8K','32K','64K','128K','256K'],P=['0%','25%','50%','75%','100%'];let h='<div></div>'+L.map(l=>`<div class="h">${l}</div>`).join('');
+  P.forEach((p,i)=>{h+=`<div class="h">${p}</div>`;L.forEach((l,j)=>{const mid=1-Math.abs(i-2)/2;let a=m==='a'?1-(j>=2?(j-1)*.18*(.4+mid):0)-(j>=3?.15:0):1-(j>=4?.08*mid:0);a=Math.max(.05,Math.min(1,a));
+    h+=`<div style="background:color-mix(in srgb,var(--ok) ${Math.round(a*100)}%,var(--bad));color:#fff">${Math.round(a*100)}</div>`})});$('#hm').innerHTML=h;
+  $('#hmTxt').innerHTML=m==='a'?'Rows: needle depth. Columns: total length. Perfect at short lengths, failing in the middle at long ones: its <b>effective</b> length is far below the advertised one.':'Uniformly strong except a slight mid-depth dip at the longest length. Still, single-needle retrieval is the easy case; multi-needle and reasoning tests (RULER, LongBench) are harder.'}
+seg('[data-hm]',b=>hm(b.dataset.hm));hm('a');
+
+let PM='pi';function rope(){const s=+$('#sf').value;$('#sfV').textContent=s+'×';const S=$('#ropeSvg');S.innerHTML='';const D=32;const X=i=>40+i/(D-1)*570,Y=v=>190-v*160;
+  S.appendChild(el('line',{x1:40,y1:190,x2:620,y2:190,stroke:'var(--line)'}));S.appendChild(el('text',{x:40,y:208,'font-size':10.5,fill:'var(--muted)'},'high frequency (local)'));S.appendChild(el('text',{x:620,y:208,'text-anchor':'end','font-size':10.5,fill:'var(--muted)'},'low frequency (long range)'));
+  S.appendChild(el('text',{x:40,y:16,'font-size':11,fill:'var(--muted)'},'how much each dimension pair is slowed down (1 = unchanged, 1/s = fully interpolated)'));
+  const f=i=>{const r=i/(D-1);if(PM==='none')return 1;if(PM==='pi')return 1/s;if(PM==='ntk'){return Math.pow(s,-r)}const lo=.35,hi=.75;const g=r<lo?0:r>hi?1:(r-lo)/(hi-lo);return (1-g)+g/s};
+  for(let i=0;i<D;i++){const v=f(i);S.appendChild(el('rect',{x:X(i)-7,y:Y(v),width:14,height:190-Y(v),rx:2,fill:PM==='yarn'?(i/(D-1)<.35?'var(--blue)':i/(D-1)>.75?'var(--pencil)':'var(--mid)'):'var(--blue)'}))}
+  S.appendChild(el('line',{x1:40,y1:Y(1/s),x2:620,y2:Y(1/s),stroke:'var(--pencil)','stroke-dasharray':'4 4'}));
+  $('#ropeTxt').innerHTML={none:'No scaling: positions beyond the training length produce unseen rotation angles in the low-frequency pairs. Perplexity explodes just past the limit.',pi:'PI slows every pair by 1/s. No unseen angles, but local resolution drops: neighbors look '+s+'× closer than they are. Works with a short fine-tune.',ntk:'NTK-aware: change the base so high-frequency pairs are nearly untouched and the lowest frequencies are slowed by about s. Better zero-shot extension than PI.',yarn:'YaRN: no interpolation for high-frequency pairs (blue), full for low (orange), a ramp between (yellow), plus a temperature on the attention logits. Strong extension with little fine-tuning data.'}[PM]}
+seg('[data-pm]',b=>{PM=b.dataset.pm;rope()});$('#sf').addEventListener('input',rope);rope();
+
+const PAT={'Full causal':[(i,j)=>j<=i,'Every token attends to all earlier ones: O(n²).'],'Sliding window':[(i,j)=>j<=i&&i-j<4,'Each token sees the last w tokens: O(n·w). Stacking L layers widens the receptive field to about L·w (Mistral, Longformer).'],'Window + global':[(i,j)=>j<=i&&(i-j<3||j<2||i<2),'A few global tokens (first rows/columns) see and are seen by everyone; the rest use a local window (Longformer, BigBird; similar to "attention sinks").'],'Dilated / strided':[(i,j)=>j<=i&&((i-j)<2||(i-j)%4===0),'Local window plus every k-th earlier token: long reach with few connections (Sparse Transformer).'],'Block-sparse random':[(i,j)=>j<=i&&(Math.floor(i/4)===Math.floor(j/4)||((i*7+j*3)%11===0)),'Blocks along the diagonal plus random links (BigBird). Random edges keep the graph well connected.']};
+let pk='Sliding window';$('#patBtns').innerHTML=Object.keys(PAT).map(k=>`<button aria-pressed="${k===pk}">${k}</button>`).join('');
+function pat(){const s=$('#patSvg');s.innerHTML='';const n=16,c=15;let on=0;for(let i=0;i<n;i++)for(let j=0;j<n;j++){const v=PAT[pk][0](i,j);if(v)on++;s.appendChild(el('rect',{x:10+j*c,y:10+i*c,width:c-1.5,height:c-1.5,rx:2,fill:v?'var(--blue)':'var(--paper)'}))}
+  $('#patTxt').innerHTML=`<h3>${pk}</h3><p>${PAT[pk][1]}</p><div class="kv"><div><b>${on}</b><span>of 136 causal pairs computed</span></div></div>`}
+$$('#patBtns button').forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);pk=b.textContent;pat()}));pat();
+
+const FA=['Q, K, V live in large, slow HBM. Standard attention writes the n×n score matrix to HBM, reads it back for softmax, writes again: memory traffic dominates.','Load one block of queries into fast on-chip SRAM.','Stream K and V blocks through SRAM one at a time; compute that tile of scores.','Keep a running max and running sum per row (online softmax) and rescale the partial output when the max changes.','After the last K/V block, write only the finished output block back to HBM. Scores never touch HBM: O(n) memory, much less traffic, exact result. The backward pass recomputes tiles instead of storing them.'];
+$('#faStep').innerHTML=stepHTML();stepper('#faStep',FA,i=>{const s=$('#faSvg');s.innerHTML='';s.appendChild(el('rect',{x:10,y:20,width:330,height:170,rx:10,fill:'var(--paper)',stroke:'var(--line)'}));s.appendChild(el('text',{x:20,y:40,'font-size':12,'font-weight':700,fill:'var(--muted)'},'HBM (80 GB, ~3 TB/s)'));
+  s.appendChild(el('rect',{x:420,y:60,width:200,height:100,rx:10,fill:'var(--ok-soft)',stroke:'var(--ok)'}));s.appendChild(el('text',{x:430,y:80,'font-size':12,'font-weight':700,fill:'var(--ok)'},'SRAM (tens of MB, ~10× faster)'));
+  ['Q','K','V'].forEach((t,k)=>{for(let b=0;b<4;b++){const hot=(k===0&&b===1&&i>=1)||(k>0&&i>=2&&b===Math.min(3,i-2+(i>=3?1:0)));s.appendChild(el('rect',{x:30+k*100,y:55+b*30,width:80,height:24,rx:4,fill:hot?'var(--pencil)':'var(--surface)',stroke:'var(--blue)'}));s.appendChild(el('text',{x:70+k*100,y:72+b*30,'text-anchor':'middle','font-size':11,class:'t-mono',fill:hot?'var(--surface)':'var(--ink)'},t+(b+1)))}});
+  if(i===0){s.appendChild(el('rect',{x:360,y:30,width:50,height:50,fill:'var(--bad-soft)',stroke:'var(--bad)'}));s.appendChild(el('text',{x:385,y:60,'text-anchor':'middle','font-size':10,fill:'var(--bad)'},'n×n'))}
+  if(i>=1){s.appendChild(el('rect',{x:440,y:95,width:50,height:22,rx:4,fill:'var(--pencil)'}));s.appendChild(el('text',{x:465,y:110,'text-anchor':'middle','font-size':10.5,fill:'var(--surface)'},'Q2'))}
+  if(i>=2){s.appendChild(el('rect',{x:500,y:95,width:50,height:22,rx:4,fill:'var(--pencil)'}));s.appendChild(el('text',{x:525,y:110,'text-anchor':'middle','font-size':10.5,fill:'var(--surface)'},'K,V tile'));s.appendChild(el('line',{x1:340,y1:100,x2:420,y2:100,stroke:'var(--pencil)','stroke-width':2,class:'flow'}))}
+  if(i>=3)s.appendChild(el('text',{x:430,y:145,'font-size':11,fill:'var(--ink)'},'running max m, sum ℓ, output O'));
+  if(i===4){s.appendChild(el('line',{x1:420,y1:150,x2:340,y2:175,stroke:'var(--ok)','stroke-width':2.5,class:'flow'}));s.appendChild(el('text',{x:200,y:182,'text-anchor':'middle','font-size':11,'font-weight':700,fill:'var(--ok)'},'write O2 only'))}});
+
+function la(m){const s=$('#laSvg');s.innerHTML='';const box=(x,w,h,t,c)=>{s.appendChild(el('rect',{x,y:70-h/2,width:w,height:h,rx:4,fill:`var(--${c}-soft)`,stroke:`var(--${c})`}));s.appendChild(el('text',{x:x+w/2,y:74,'text-anchor':'middle','font-size':11,class:'t-mono',fill:'var(--ink)'},t))};
+  if(m==='std'){box(20,50,110,'Q n×d','blue');box(85,110,30,'Kᵀ d×n','blue');s.appendChild(el('text',{x:208,y:74,'font-size':16,fill:'var(--ink)'},'='));box(230,110,110,'n×n !','bad');s.appendChild(el('text',{x:352,y:74,'font-size':16,fill:'var(--ink)'},'×'));box(372,50,110,'V n×d','blue');
+    $('#laTxt').innerHTML='Softmax(QKᵀ) forces you to build the n×n matrix first: O(n²·d) time and O(n²) memory.'}
+  else{box(20,50,110,'Q n×d','blue');s.appendChild(el('text',{x:78,y:74,'font-size':16,fill:'var(--ink)'},'×'));s.appendChild(el('text',{x:96,y:76,'font-size':24,fill:'var(--muted)'},'('));box(110,110,30,'φ(K)ᵀ d×n','ok');box(230,50,110,'V n×d','ok');s.appendChild(el('text',{x:286,y:76,'font-size':24,fill:'var(--muted)'},')'));s.appendChild(el('text',{x:306,y:74,'font-size':16,fill:'var(--ink)'},'='));box(328,40,40,'d×d','ok');
+    $('#laTxt').innerHTML='Replace softmax with a feature map φ so the score factorizes; then compute φ(K)ᵀV first, a d×d summary: O(n·d²), linear in n, and it can run as a recurrence at inference. Cost: the kernel only approximates softmax, and sharp, precise lookups suffer.'}}
+seg('[data-la]',b=>la(b.dataset.la));la('std');
+
+cards('#ssmCards',[{t:'State space model',c:'d1',d:'A continuous linear system h\' = Ah + Bx, y = Ch, discretized. Can be computed as a convolution in training (parallel) and as a recurrence in inference (constant memory).'},{t:'Mamba',c:'d2',d:'B, C and the step size depend on the current input (selective), so the model can choose to remember or ignore. A hardware-aware parallel scan keeps training fast.'},{t:'Hybrids',c:'d3',d:'Interleave mostly Mamba (or other linear) layers with a few attention layers: near-linear cost with the precise recall that attention provides.'},{t:'Other linear models',c:'d4',d:'RWKV, RetNet, gated linear attention: recurrent-style inference with transformer-style parallel training.'}]);
+const RG=['Four GPUs each hold one block of the sequence: queries Qᵢ and keys/values KVᵢ. Each computes attention of its own Q against its own KV.','Every GPU sends its KV block to the next GPU in the ring and receives one from the previous; it computes Q against the new block while the next transfer is in flight.','After three more hops, every Q block has seen every KV block. Partial results are combined with the online-softmax rescaling used in FlashAttention.','Memory per GPU stays at one block of the sequence; total context grows with the number of devices. Communication hides behind computation when blocks are large enough.'];
+$('#ringStep').innerHTML=stepHTML();stepper('#ringStep',RG,i=>{const s=$('#ringSvg');s.innerHTML='';const P=[[180,40],[310,130],[180,220],[50,130]];
+  s.appendChild(el('circle',{cx:180,cy:130,r:95,fill:'none',stroke:'var(--line)','stroke-width':2,class:i>=1?'flow':''}));
+  P.forEach((p,k)=>{s.appendChild(el('rect',{x:p[0]-42,y:p[1]-24,width:84,height:48,rx:8,fill:'var(--surface)',stroke:'var(--blue)'}));s.appendChild(el('text',{x:p[0],y:p[1]-5,'text-anchor':'middle','font-size':11.5,'font-weight':700,fill:'var(--blue)'},'GPU '+k+': Q'+k));
+    const kvIdx=(k-Math.min(i,3)+4)%4;s.appendChild(el('text',{x:p[0],y:p[1]+13,'text-anchor':'middle','font-size':11,class:'t-mono',fill:'var(--pencil)'},'has KV'+kvIdx))})});
+
+const FLOW={start:{q:'Does the whole document need to be read together (global reasoning over one long text)?',y:'fit',n:'big'},fit:{q:'Does it fit comfortably in the model\'s effective context (not just the maximum)?',y:'A:Use long context directly; put the question at both start and end; still evaluate at that length.',n:'A:Summarize or chunk hierarchically (map-reduce), or use a model with a longer effective window.'},
+ big:{q:'Is the corpus large, frequently updated, or queried many times?',y:'A:RAG: retrieve a few relevant passages. Cheaper per query, fresher, citable, avoids lost-in-the-middle.',n:'A:Either works. Long context is simpler to build; RAG is cheaper per query. Prefix caching can make repeated long-context queries affordable.'}};
+function flow(id){const f=$('#flow');if(id.startsWith('A:')){f.innerHTML=`<span class="eyebrow">Recommendation</span><span class="ans">${id.slice(2)}</span><div class="row"><button class="btn" id="fR">Start again</button></div>`;$('#fR').addEventListener('click',()=>flow('start'));return}
+  const n=FLOW[id];f.innerHTML=`<span class="eyebrow">RAG or long context?</span><b>${n.q}</b><div class="row"><button class="btn primary" id="fy">Yes</button><button class="btn" id="fn">No</button></div>`;$('#fy').addEventListener('click',()=>flow(n.y));$('#fn').addEventListener('click',()=>flow(n.n))}
+flow('start');
+cards('#evalCards',[{t:'Position sweeps',c:'d1',d:'Fix the task, move the evidence from start to end; expect a U. The depth of the dip is the positional bias.'},{t:'Needles at many lengths',c:'d2',d:'Vary length (8K to 128K+) and depth; plot a heatmap.'},{t:'Multi-needle & aggregation',c:'d3',d:'Several facts scattered; the model must find and combine them.'},{t:'Distractors & noise',c:'d4',d:'Conflicting facts, near-duplicates and boilerplate test robustness.'},{t:'Benchmarks',c:'d5',d:'RULER (synthetic, controlled lengths), LongBench, L-Eval, SCROLLS, plus needle tests as a sanity check.'},{t:'"Supports N tokens" means',c:'pencil',d:'It fits in memory with acceptable latency, retrieves reliably at every position, and reasons over the whole context, for your task.'}]);
+
+drill('#qa',[
+ {q:'Beyond compute, what is the memory bottleneck for long-context inference?',a:'<p>The KV cache: 2 × layers × KV heads × head dim × bytes per token, per sequence, growing linearly with length. At 128K tokens even a GQA 8B model needs about 17 GB per sequence, which limits batch size and therefore throughput; decode must also read it all each step, so per-token latency rises with context.</p>'},
+ {q:'How do prefill and decode scale with context length?',a:'<p>Prefill attention is O(n²) compute (linear parts O(n)), so TTFT grows super-linearly for long prompts. Each decode step attends over the n cached tokens, so it costs O(n) memory reads; total decode cost for m tokens is O(m·n), and the KV cache is O(n) memory.</p>'},
+ {q:'Why can more context reduce answer quality?',a:'<p>Attention is spread over more tokens, relevant facts in the middle get less weight (lost in the middle), distractors compete with the signal, and long inputs are out of distribution for models trained mostly on short sequences. Put key instructions at the start and end, trim irrelevant text, and retrieve rather than dump.</p>'},
+ {q:'Absolute vs relative positional encodings?',a:'<p>Absolute encodings attach a position vector to each token (sinusoidal or learned); they cannot naturally go beyond trained positions. Relative methods make attention depend on distance between tokens (T5 bias, ALiBi, RoPE through rotation), which generalizes better and matches the fact that "how far apart" usually matters more than "where".</p>'},
+ {q:'How does FlashAttention work and why is it important?',a:'<p>It is IO-aware: it tiles Q, K and V into blocks that fit in on-chip SRAM, computes each tile\'s scores there, and uses online softmax (running max and sum with rescaling) so the n×n matrix never goes to HBM. Exact results, O(n) memory, 2 to 4× faster, and it made 32K+ contexts practical. Backward recomputes tiles instead of storing them.</p>'},
+ {q:'What runtime techniques help manage KV cache at long context?',a:'<p>Paged allocation, prefix caching and sharing, KV quantization (8 or 4 bit), eviction policies that keep attention sinks plus recent and high-attention tokens (StreamingLLM, H2O), offloading to CPU memory, and context or sequence parallelism across GPUs.</p>'},
+ {q:'What are the failure modes of context extension?',a:'<p>Short-context quality regressions, degraded local resolution (PI), perplexity looking fine while retrieval fails, weak middle-of-context recall, and instability without enough long training data. Always evaluate both the short-context benchmarks and long-context retrieval and reasoning after extending.</p>'},
+ {q:'When should you use RAG vs a long context window?',a:'<p>RAG when the corpus is large or changing, queries are frequent, cost and latency matter, or you need citations and access control. Long context when the task needs global reasoning over one document, cross-references are dense, or retrieval keeps missing the right parts. Often both: retrieve generously, then let a long context reason over the results.</p>'},
+ {q:'Maximum vs effective context length?',a:'<p>Maximum is what the model accepts. Effective is the longest length at which performance on a given task stays above a threshold across positions. Measure it with position sweeps, needles at varying lengths, multi-needle and reasoning benchmarks; report it per task, not as one number.</p>'}]);
+
+quiz('#qQuiz','#qScore',[
+ {q:'Where does accuracy dip in "lost in the middle"?',o:['Middle positions','Start','End'],a:0,why:'U-shape: start and end are favored.'},
+ {q:'PI handles longer inputs by…',o:['Dividing positions by the extension factor','Adding new embeddings','Dropping tokens'],a:0,why:'It squeezes positions into the trained range.'},
+ {q:'FlashAttention is…',o:['Exact, IO-aware attention','An approximation','A positional encoding'],a:0,why:'Same output, fewer memory trips.'},
+ {q:'Linear attention computes first…',o:['φ(K)ᵀV (d×d)','QKᵀ (n×n)','Softmax'],a:0,why:'Reordering avoids the n×n matrix.'},
+ {q:'Ring attention mainly addresses…',o:['Sequences too long for one GPU','Tokenizer fertility','Reward hacking'],a:0,why:'It shards the sequence across devices.'}]);
+
+})();
+</script>
+</body>
+</html>

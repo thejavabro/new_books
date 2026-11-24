@@ -1,0 +1,550 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>RAG and Agents</title>
+<meta name="description" content="Retrieval grounds a model in facts it never saw; tools let it act. This chapter climbs from a fixed retrieve-then-generate pipeline to agents that decide what to fetch, which tool to call and when to stop.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Accelerate companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* AI Engineering Interviews additions */
+.drill{display:flex;flex-direction:column;gap:12px}
+.dq{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--pencil);border-radius:0 10px 10px 0;padding:14px 16px;display:flex;flex-direction:column;gap:10px;align-items:flex-start}
+.dqh{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.dqh b{font-family:var(--display);font-weight:600;font-size:1.02rem;flex:1 1 240px}
+.dn{font-family:var(--mono);font-size:.75rem;color:var(--pencil)}
+.da{font-size:.95rem;display:flex;flex-direction:column;gap:8px;max-width:70ch}
+.da ul{margin:0;padding-left:1.2em}
+pre.code{font-family:var(--mono);font-size:.82rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;margin:0;white-space:pre}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.themebtn{cursor:pointer}
+.tok{display:inline-block;font-family:var(--mono);font-size:.85rem;padding:2px 6px;margin:2px;border-radius:5px;border:1px solid var(--line);background:var(--paper)}
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.kv>div{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--surface);display:flex;flex-direction:column;gap:2px}
+.kv b{font-family:var(--mono);font-size:1.15rem;color:var(--blue)}
+.kv span{font-size:.85rem;color:var(--muted)}
+.missing{border-left:4px solid var(--bad);background:var(--bad-soft);padding:12px 16px;border-radius:0 8px 8px 0}
+.two>*,.three>*{min-width:0} .sheet select{max-width:100%;text-overflow:ellipsis}
+
+/* page */
+
+.doc{font-size:.93rem;line-height:1.9}
+.doc span{border-radius:3px;padding:1px 0}
+.rk{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+@media (max-width:640px){.rk{grid-template-columns:1fr}}
+.rk>div{border:1px solid var(--line);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:6px;background:var(--paper)}
+.rk ol{margin:0;padding-left:1.3em;font-size:.88rem;display:flex;flex-direction:column;gap:3px}
+.rk li.rel{color:var(--ok);font-weight:700}
+.trace{font-family:var(--mono);font-size:.82rem;display:flex;flex-direction:column;gap:6px}
+.trace div{border-left:3px solid var(--line);padding:4px 10px;border-radius:0 6px 6px 0;background:var(--paper)}
+.trace .th{border-color:var(--blue)} .trace .ac{border-color:var(--pencil)} .trace .ob{border-color:var(--ok)}
+.trace div.hide{display:none}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">AI Engineering Interviews · visual companion</a><span class="tag">Part I · Chapter 4 of 14</span><button class="tag themebtn" id="themeBtn" type="button">Theme</button></div>
+  <h1>RAG and Agents</h1>
+  <p class="lede">Retrieval grounds a model in facts it never saw; tools let it act. This chapter climbs from a fixed retrieve-then-generate pipeline to agents that decide what to fetch, which tool to call and when to stop.</p>
+  <nav class="toc" aria-label="Sections"><a href="#rag">Vanilla RAG</a><a href="#chunk">Chunking</a><a href="#retrieval">Hybrid retrieval</a><a href="#debug">Debugging & eval</a><a href="#patterns">Adaptive & agentic</a><a href="#agents">Agent loop</a><a href="#tools">Tools & MCP</a><a href="#prod">Production</a><a href="#drill">Interview drill</a><a href="#check">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="rag" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Retrieval-augmented generation, end to end</h2></div>
+  <p>RAG gives a model facts it never trained on (private, recent or citable) by fetching evidence and putting it in the context. It has an <b>offline indexing</b> path and an <b>online query</b> path. Step through both.</p>
+  <div class="sheet stepper">
+    <div class="svgbox"><svg id="ragSvg" viewBox="0 0 640 230" role="img" aria-label="RAG indexing and query pipelines"></svg></div>
+    <div id="ragStep"></div>
+  </div>
+  <div class="callout"><b class="h">Can long context replace RAG?</b><span>Not in general. Huge prompts are slow and expensive on every query, models attend unevenly across long inputs ("lost in the middle"), and big or changing corpora do not fit anyway. Long context complements retrieval.</span></div>
+</section>
+
+<section id="chunk" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Chunking: the first place RAG goes wrong</h2></div>
+  <p>Chunks that are too small lose context ("it" no longer knows what "it" is). Chunks that are too large dilute the embedding and waste the budget. Overlap keeps sentences that straddle a boundary retrievable. Slide and watch the boundaries move; then try the structure-aware option.</p>
+  <div class="sheet">
+    <div class="ctl" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px">
+      <label class="rng"><span>Chunk size (words): <b id="csV"></b></span><input type="range" id="cs" min="8" max="60" value="22"></label>
+      <label class="rng"><span>Overlap (words): <b id="coV"></b></span><input type="range" id="co" min="0" max="15" value="4"></label>
+    </div>
+    <div class="seg" role="group" aria-label="Strategy"><button data-cs="fixed" aria-pressed="true">Fixed-size</button><button data-cs="sent" aria-pressed="false">Sentence / structure-aware</button></div>
+    <div class="doc" id="doc"></div>
+    <p class="small" id="chTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="retrieval" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Dense, sparse, hybrid, then re-rank</h2></div>
+  <p><b>Dense</b> retrieval compares embeddings: good at meaning and paraphrase, weak on exact identifiers. <b>Sparse</b> retrieval (BM25) matches terms: great for error codes, names and SKUs, blind to synonyms. <b>Hybrid</b> fuses both lists, for example with reciprocal rank fusion, and a <b>cross-encoder re-ranker</b> then reorders the short list. Pick a query; the relevant document is shown in green.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Query"><button data-q="0" aria-pressed="true">"how do I get my money back"</button><button data-q="1" aria-pressed="false">"error E-4012 on login"</button><button data-q="2" aria-pressed="false">"refund for E-4012 double charge"</button></div>
+    <div class="rk" id="rk"></div>
+    <p class="small" id="rkTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="debug" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Is it retrieval or generation? The RAG triad</h2></div>
+  <p>When a RAG system "hallucinates", do not start by swapping the LLM. <b>Look at the retrieved chunks first.</b> The RAG evaluation triad splits the question into three checks: is the context relevant to the query, is the answer grounded in the context, and does the answer address the query? Pick a failure report and see which leg breaks.</p>
+  <div class="sheet">
+    <select id="fail" aria-label="Failure scenario">
+      <option value="0">Answer cites a 2022 policy; the 2025 policy exists in the index</option>
+      <option value="1">Correct chunk retrieved, but answer adds a number not in it</option>
+      <option value="2">Answer is accurate and grounded but about a different product</option>
+      <option value="3">Correct chunk is ranked 14th; top-k is 5</option>
+    </select>
+    <div class="svgbox fit"><svg id="triSvg" viewBox="0 0 520 250" role="img" aria-label="RAG triad: query, context, answer"></svg></div>
+    <p id="triTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="patterns" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>From fixed pipeline to agentic RAG</h2></div>
+  <p>Most teams improve RAG incrementally by adding decision points. Each pattern adds one kind of control; agentic RAG hands the model control of <i>whether</i>, <i>where</i>, <i>how</i> and <i>when to stop</i> retrieving.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Pattern" id="patBtns"></div>
+    <div class="svgbox"><svg id="patSvg" viewBox="0 0 640 170" role="img" aria-label="RAG pattern diagram"></svg></div>
+    <p id="patTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="agents" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Workflows first, then the agent loop</h2></div>
+  <p>Many production systems need <b>structured workflows</b> (prompt chaining, routing, parallelization, orchestrator-workers, evaluator-optimizer), not open-ended agents. Workflows keep the structure fixed while letting the model make some decisions. A full <b>agent</b> loops perceive → reason → act until a stop condition. In an interview, start simple and justify each step up in autonomy.</p>
+  <div class="cardgrid" id="wfCards"></div>
+  <div class="sheet">
+    <div class="row between"><h3>A ReAct trace</h3><span class="small">Thought → Action → Observation, repeated</span></div>
+    <div class="trace" id="trace"></div>
+    <div class="row"><button class="btn primary" id="trNext">Next step</button><button class="btn" id="trReset">Reset</button></div>
+  </div>
+</section>
+
+<section id="tools" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Tools and the Model Context Protocol</h2></div>
+  <p>A tool has four parts: a <b>name</b>, a <b>description</b> of what it does and when to use it, an <b>input schema</b>, and a <b>return contract</b> including errors. Tools give freshness and access, precision on structured problems (SQL, calculators) and the ability to act. <b>MCP</b> standardizes how apps discover and call tools, so N apps and M tool providers need N+M integrations instead of N×M.</p>
+  <div class="two">
+    <pre class="code">{
+  "name": "get_order_status",
+  "description": "Look up an order by ID. Use when the
+    user asks where an order is. Not for refunds.",
+  "input_schema": {
+    "type": "object",
+    "properties": {"order_id": {"type": "string",
+                   "pattern": "^ORD-[0-9]{6}$"}},
+    "required": ["order_id"]
+  }
+}
+// returns {"status": ..., "eta": ...}
+// or {"error": "NOT_FOUND"}</pre>
+    <div class="svgbox fit"><svg id="mcpSvg" viewBox="0 0 320 260" role="img" aria-label="MCP host with clients connected to servers"></svg></div>
+  </div>
+  <div class="sheet"><div class="row between"><h3>Agent design checklist</h3><span class="small">five things a reliable tool-using agent needs</span></div><div class="cardgrid" id="needCards"></div></div>
+</section>
+
+<section id="prod" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Production reality: pressure → design</h2></div>
+  <div class="cardgrid" id="prodCards"></div>
+  <div class="sheet">
+    <div class="row between"><h3>Bounded autonomy</h3><span class="small">how much can the agent do without asking?</span></div>
+    <label class="rng"><span>Action risk: <b id="arV"></b></span><input type="range" id="ar" min="0" max="3" value="1"></label>
+    <p id="arTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="drill" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Interview drill</h2></div>
+  <div id="qa"></div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">10</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">11</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b class="blue">RAG = evidence</b><span>Index offline; at query time retrieve, re-rank, budget, generate with citations.</span></div>
+    <div><b>Chunking & hybrid</b><span>Structure-aware chunks; dense + BM25 fused, then a cross-encoder.</span></div>
+    <div><b class="pencil">Debug retrieval first</b><span>Triad: context relevance, groundedness, answer relevance.</span></div>
+    <div><b>Add control gradually</b><span>Linear → conditional → branching → looping → agentic.</span></div>
+    <div><b>Workflows before agents</b><span>Five patterns cover most designs; agents when paths cannot be fixed in advance.</span></div>
+    <div><b class="okc">Bounded autonomy</b><span>Traces, routing, budgets, sandboxing and human approval for risky actions.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>AI Engineering Interviews: Over 350 AI Interview Questions and Answers</i> by Mina Ghashami and Ali Torkamani (O'Reilly, 2026). Explanations, model answers, code snippets and drawings are original summaries written for this companion; nothing is copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch03-prompt-engineering.html"><span>Previous · Chapter 3</span><b>Prompt Engineering</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch05-evaluation.html"><span>Next · Chapter 5</span><b>Evaluation</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('aie:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('aie:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle */
+(function(){const b=document.getElementById('themeBtn');if(!b)return;const r=document.documentElement;
+  const saved=store.get('theme',null);if(saved)r.setAttribute('data-theme',saved);
+  function cur(){return r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light')}
+  function lab(){b.textContent=cur()==='dark'?'Light theme':'Dark theme'}lab();
+  b.addEventListener('click',()=>{const n=cur()==='dark'?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n);lab()})})();
+/* interview drill: [{q,a,k}] -> question cards with reveal; k = difficulty tag */
+function drill(sel,list){const r=$(sel);r.classList.add('drill');
+  r.innerHTML=list.map((d,i)=>`<div class="dq"><div class="dqh"><span class="dn">Q${i+1}</span><b>${d.q}</b>${d.k?`<span class="chip">${d.k}</span>`:''}</div><button class="btn" aria-expanded="false">Show a model answer</button><div class="da" hidden>${d.a}</div></div>`).join('');
+  r.querySelectorAll('.dq').forEach(q=>{const b=q.querySelector('button'),a=q.querySelector('.da');b.addEventListener('click',()=>{const o=a.hidden;a.hidden=!o;b.setAttribute('aria-expanded',o);b.textContent=o?'Hide answer':'Show a model answer'})})}
+
+
+const RS=['<b>Index: split.</b> Documents are parsed and cut into chunks, ideally along structure (headings, paragraphs), with some overlap and metadata such as source, date and access rights.',
+ '<b>Index: embed and store.</b> Each chunk is turned into a vector by an embedding model and stored in a vector index (often alongside a BM25 keyword index). Re-embed when the model changes.',
+ '<b>Query: embed and retrieve.</b> The user query is embedded and the nearest chunks are fetched (dense), plus keyword hits (sparse). Metadata filters enforce freshness and permissions.',
+ '<b>Query: re-rank and budget.</b> A cross-encoder rescores the 50 or so candidates; dedupe, diversify and keep the top k that fit the token budget.',
+ '<b>Query: generate.</b> The LLM answers from the provided evidence, citing chunk sources, and says "I don\'t know" when the evidence is insufficient.'];
+const RN=[['Docs',65,50],['Chunks',185,50],['Embed',305,50],['Vector index',440,50],['Query',65,170],['Retrieve',305,170],['Re-rank',440,170],['LLM + cite',570,170]];
+$('#ragStep').innerHTML=stepHTML();
+stepper('#ragStep',RS,i=>{const s=$('#ragSvg');s.innerHTML='';const act=[[0,1],[1,2,3],[4,5,3],[5,6],[6,7]][i];
+  s.appendChild(el('text',{x:10,y:18,'font-size':11,class:'t-mono',fill:'var(--muted)'},'OFFLINE · indexing'));s.appendChild(el('text',{x:10,y:138,'font-size':11,class:'t-mono',fill:'var(--muted)'},'ONLINE · per query'));
+  const E=[[0,1],[1,2],[2,3],[4,5],[3,5],[5,6],[6,7]];E.forEach(([a,b])=>{const A=RN[a],B=RN[b];const on=act.includes(a)&&act.includes(b);
+    s.appendChild(el('line',{x1:A[1],y1:A[2],x2:B[1],y2:B[2],stroke:on?'var(--pencil)':'var(--line)','stroke-width':on?2.5:1.5,class:on?'flow':''}))});
+  RN.forEach((n,k)=>{const on=act.includes(k);s.appendChild(el('rect',{x:n[1]-50,y:n[2]-18,width:100,height:36,rx:8,fill:on?'var(--blue)':'var(--surface)',stroke:'var(--blue)'}));
+    s.appendChild(el('text',{x:n[1],y:n[2]+5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:on?'var(--surface)':'var(--ink)'},n[0]))})});
+
+const TXT='Refunds are available within 30 days of purchase. To request one, open Orders and choose Request refund. Refunds go back to the original payment method. They usually arrive in five to seven business days. Error E-4012 means the payment token expired. To fix it, sign out and sign in again. If it persists, contact support with the error code.';
+const SENT=TXT.match(/[^.]+\./g).map(s=>s.trim());let csMode='fixed';const COL=['var(--blue-soft)','var(--pencil-soft)','var(--ok-soft)','var(--mid-soft)'];
+function chunk(){const size=+$('#cs').value,ov=Math.min(+$('#co').value,size-1);$('#csV').textContent=size;$('#coV').textContent=ov;const w=TXT.split(' ');let chunks=[];
+  if(csMode==='fixed'){for(let i=0;i<w.length;i+=size-ov){chunks.push([i,Math.min(w.length,i+size)]);if(i+size>=w.length)break}}
+  else{let cur=[],start=0,idx=0;SENT.forEach(s=>{const n=s.split(' ').length;if(cur.length&&cur.reduce((a,b)=>a+b,0)+n>size){chunks.push([start,idx]);start=idx;cur=[]}cur.push(n);idx+=n});chunks.push([start,idx])}
+  const owner=w.map((_,i)=>chunks.findIndex(c=>i>=c[0]&&i<c[1]));const dup=w.map((_,i)=>chunks.filter(c=>i>=c[0]&&i<c[1]).length>1);
+  $('#doc').innerHTML=w.map((x,i)=>`<span style="background:${COL[owner[i]%4]};${dup[i]?'outline:2px dashed var(--pencil)':''}">${x}</span>`).join(' ');
+  const cut=csMode==='fixed'&&chunks.some(c=>!/\.$/.test(w[c[1]-1]));
+  $('#chTxt').innerHTML=`<b>${chunks.length}</b> chunks. ${csMode==='fixed'?(cut?'Some chunks end mid-sentence: a question about "how long refunds take" may retrieve a chunk that lost the word "refunds". ':'')+(ov?'Dashed words appear in two chunks (overlap).':''):'Boundaries follow sentences, so each chunk is a complete thought. Real systems also split on headings and keep tables whole.'}`}
+['#cs','#co'].forEach(x=>$(x).addEventListener('input',chunk));seg('[data-cs]',b=>{csMode=b.dataset.cs;chunk()});chunk();
+
+const DOCS=['Refund policy: request within 30 days','Billing FAQ: getting your money back','Error E-4012: payment token expired','Login troubleshooting guide','Double charges and duplicate payments','Shipping times by region'];
+const Q=[{sp:[1,0,4,5,3,2],de:[1,0,4,3,2,5],rel:[0,1],t:'Paraphrase query: no word "refund" in it. BM25 finds the FAQ through "money back" but misses the refund policy; dense finds both. Hybrid keeps both near the top.'},
+ {sp:[2,3,0,4,1,5],de:[3,2,0,4,1,5],rel:[2],t:'Exact code: BM25 nails "E-4012"; dense ranks a generic login guide higher because the meaning is similar. Fusion keeps the exact match on top.'},
+ {sp:[2,0,4,1,3,5],de:[4,0,1,2,3,5],rel:[2,4,0],t:'Mixed query: each method finds part of the answer. Fusion surfaces all three relevant docs in the top 3, which is why hybrid is the production default.'}];
+function rrf(lists){const sc={};lists.forEach(L=>L.forEach((d,r)=>sc[d]=(sc[d]||0)+1/(60+r+1)));return Object.keys(sc).map(Number).sort((a,b)=>sc[b]-sc[a])}
+function rk(i){const q=Q[i];const h=rrf([q.sp,q.de]);const col=(n,L)=>`<div><b>${n}</b><ol>${L.slice(0,4).map(d=>`<li class="${q.rel.includes(d)?'rel':''}">${DOCS[d]}</li>`).join('')}</ol></div>`;
+  $('#rk').innerHTML=col('Sparse (BM25)',q.sp)+col('Dense (embeddings)',q.de)+col('Hybrid (RRF)',h);$('#rkTxt').innerHTML=q.t+' RRF score = Σ 1/(60 + rank).'}
+seg('[data-q]',b=>rk(+b.dataset.q));rk(0);
+
+const TRI=[{bad:'ctx',t:'<b>Context relevance fails.</b> Retrieval returned stale evidence. Fix the retriever: freshness metadata and filters, re-index updated documents, remove superseded versions.'},
+ {bad:'gr',t:'<b>Groundedness (faithfulness) fails.</b> The evidence was right, the generator added claims. Fix generation: instruct "answer only from context", require citations, check claims with an NLI or LLM-judge, lower temperature.'},
+ {bad:'ans',t:'<b>Answer relevance fails.</b> Grounded but off-target: the query was misunderstood or was ambiguous. Fix query understanding: rewriting, clarifying questions, routing by product.'},
+ {bad:'ctx',t:'<b>Context relevance (recall) fails.</b> The right chunk exists but is ranked too low. Add hybrid retrieval and a re-ranker, or raise candidate k before re-ranking.'}];
+function tri(){const f=TRI[+$('#fail').value];const s=$('#triSvg');s.innerHTML='';const P={q:[260,30],c:[70,220],a:[450,220]};
+  const L=[['q','c','ctx','Context relevance'],['c','a','gr','Groundedness'],['a','q','ans','Answer relevance']];
+  L.forEach(([x,y,k,t])=>{const bad=f.bad===k;s.appendChild(el('line',{x1:P[x][0],y1:P[x][1],x2:P[y][0],y2:P[y][1],stroke:bad?'var(--bad)':'var(--ok)','stroke-width':bad?5:3,'stroke-dasharray':bad?'8 6':''}));
+    const mx=(P[x][0]+P[y][0])/2,my=(P[x][1]+P[y][1])/2;s.appendChild(el('text',{x:mx+(k==='gr'?0:k==='ctx'?-60:60),y:my+(k==='gr'?24:0),'text-anchor':'middle','font-size':13,'font-weight':700,fill:bad?'var(--bad)':'var(--ok)'},(bad?'✗ ':'✓ ')+t))});
+  [['q','Query'],['c','Context'],['a','Answer']].forEach(([k,t])=>{s.appendChild(el('circle',{cx:P[k][0],cy:P[k][1],r:24,fill:'var(--surface)',stroke:'var(--blue)','stroke-width':2}));s.appendChild(el('text',{x:P[k][0],y:P[k][1]+4,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--ink)'},t))});
+  $('#triTxt').innerHTML=f.t}
+$('#fail').addEventListener('change',tri);tri();
+
+const PAT=[['Linear','Every query: retrieve, then generate. Simple and predictable; wastes retrieval on greetings and fails silently when evidence is bad.'],
+ ['Conditional','A gate decides whether retrieval is needed at all (chit-chat or general knowledge skips it). Saves latency and avoids distracting context.'],
+ ['Branching','Route to several sources (wiki, tickets, SQL) or retrievers, then merge. Fits enterprises whose knowledge is spread across systems.'],
+ ['Looping','Check whether the context is sufficient; if not, rewrite the query and retrieve again. Closest to agentic, but the loop is still designed in advance.'],
+ ['Agentic','The model decides whether, where and how to retrieve, iterates, and decides when evidence is enough. Self-RAG and Corrective RAG are examples. Flexible, but slower, costlier and harder to debug.']];
+$('#patBtns').innerHTML=PAT.map((p,i)=>`<button aria-pressed="${i===0}" data-pt="${i}">${p[0]}</button>`).join('');
+function box(s,x,y,t,c,w){w=w||90;s.appendChild(el('rect',{x:x-w/2,y:y-16,width:w,height:32,rx:7,fill:'var(--surface)',stroke:`var(--${c||'blue'})`,'stroke-width':1.8}));s.appendChild(el('text',{x,y:y+4,'text-anchor':'middle','font-size':12,'font-weight':600,fill:'var(--ink)'},t))}
+function arr(s,x1,y1,x2,y2,c){s.appendChild(el('line',{x1,y1,x2,y2,stroke:`var(--${c||'muted'})`,'stroke-width':1.8,class:'flow'}))}
+function pat(i){const s=$('#patSvg');s.innerHTML='';
+  if(i===0){box(s,60,85,'Query');arr(s,105,85,215,85);box(s,260,85,'Retrieve');arr(s,305,85,415,85);box(s,460,85,'Generate','ok')}
+  if(i===1){box(s,60,85,'Query');arr(s,105,85,165,85);box(s,215,85,'Need docs?','pencil',100);arr(s,265,85,335,40);arr(s,265,85,335,130);box(s,380,40,'Retrieve');box(s,380,130,'Answer directly','ok',120);arr(s,425,40,505,40);box(s,560,40,'Generate','ok')}
+  if(i===2){box(s,60,85,'Query');box(s,170,85,'Router','pencil');arr(s,105,85,125,85);[30,85,140].forEach((y,k)=>{arr(s,215,85,285,y);box(s,330,y,['Wiki','Tickets','SQL'][k]);arr(s,375,y,445,85)});box(s,490,85,'Merge');arr(s,535,85,560,85);box(s,600,85,'Gen','ok',60)}
+  if(i===3){box(s,60,85,'Query');arr(s,105,85,165,85);box(s,210,85,'Retrieve');arr(s,255,85,315,85);box(s,370,85,'Enough?','pencil',100);arr(s,420,85,495,85);box(s,550,85,'Generate','ok');
+    s.appendChild(el('path',{d:'M370 101 C370 150 210 150 210 101',fill:'none',stroke:'var(--pencil)','stroke-width':1.8,class:'flow'}));s.appendChild(el('text',{x:290,y:160,'text-anchor':'middle','font-size':11,fill:'var(--pencil)'},'no: rewrite query, try again'))}
+  if(i===4){box(s,320,85,'LLM agent','pencil',120);const T=[['Whether?',120,30],['Where?',120,140],['How?',520,30],['Stop?',520,140]];T.forEach(t=>{arr(s,320,85,t[1],t[2],'pencil');box(s,t[1],t[2],t[0])})}
+  $('#patTxt').innerHTML=`<b>${PAT[i][0]}.</b> ${PAT[i][1]}`}
+$$('#patBtns button').forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);pat(+b.dataset.pt)}));pat(0);
+
+cards('#wfCards',[{t:'Prompt chaining',c:'d1',d:'Fixed sequence; each step\'s output feeds the next. Add checks between steps.'},{t:'Routing',c:'d2',d:'Classify, then send to the right prompt, model or subsystem. Central to cost control.'},{t:'Parallelization',c:'d3',d:'Independent subtasks run concurrently, then aggregate. Also used for voting.'},{t:'Orchestrator-workers',c:'d4',d:'A controller decomposes the task at runtime and dispatches workers, then synthesizes.'},{t:'Evaluator-optimizer',c:'d5',d:'Generate, critique, refine, in a loop with a stopping rule.'}]);
+const TR=[['th','Thought: The user asks if order ORD-123456 will arrive before Friday. I need its status.'],['ac','Action: get_order_status({"order_id":"ORD-123456"})'],['ob','Observation: {"status":"in_transit","eta":"2026-11-27"}'],['th','Thought: ETA is Thursday the 27th, before Friday. Enough evidence; stop.'],['ac','Final answer: Yes. It is in transit and expected Thursday, Nov 27.']];
+let tr=0;function trace(){$('#trace').innerHTML='<div>User: Will my order ORD-123456 arrive before Friday?</div>'+TR.slice(0,tr).map(t=>`<div class="${t[0]}">${t[1]}</div>`).join('');$('#trNext').disabled=tr>=TR.length}
+$('#trNext').addEventListener('click',()=>{tr++;trace()});$('#trReset').addEventListener('click',()=>{tr=0;trace()});trace();
+
+(function(){const s=$('#mcpSvg');s.appendChild(el('rect',{x:10,y:10,width:140,height:240,rx:10,fill:'var(--blue-soft)',stroke:'var(--blue)'}));s.appendChild(el('text',{x:80,y:32,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--blue)'},'Host app'));
+  s.appendChild(el('text',{x:80,y:50,'text-anchor':'middle','font-size':10.5,fill:'var(--muted)'},'(chat app, IDE, agent)'));
+  ['GitHub','Database','Files'].forEach((t,i)=>{const y=85+i*60;s.appendChild(el('rect',{x:30,y:y-16,width:100,height:32,rx:7,fill:'var(--surface)',stroke:'var(--blue)'}));s.appendChild(el('text',{x:80,y:y+4,'text-anchor':'middle','font-size':11.5,fill:'var(--ink)'},'MCP client'));
+    s.appendChild(el('line',{x1:130,y1:y,x2:190,y2:y,stroke:'var(--pencil)','stroke-width':2,class:'flow'}));s.appendChild(el('rect',{x:190,y:y-18,width:120,height:36,rx:7,fill:'var(--pencil-soft)',stroke:'var(--pencil)'}));
+    s.appendChild(el('text',{x:250,y:y+4,'text-anchor':'middle','font-size':11.5,'font-weight':600,fill:'var(--ink)'},t+' server'))});
+  s.appendChild(el('text',{x:250,y:250,'text-anchor':'middle','font-size':10.5,fill:'var(--muted)'},'servers expose tools, resources, prompts'))})();
+cards('#needCards',[{t:'Tool selection',d:'Clear, non-overlapping descriptions; fewer tools per step; route to tool subsets.'},{t:'Input construction',d:'Strict schemas, validation, examples of valid arguments.'},{t:'Iteration & recovery',d:'Structured errors the model can act on; retries with backoff; fallbacks.'},{t:'Stop conditions',d:'Max steps, budget caps, "evidence sufficient" checks to prevent loops.'},{t:'Trust boundaries',d:'Sandbox execution, least privilege, treat tool output as untrusted data.'}]);
+cards('#prodCards',[{t:'Non-determinism → observability',c:'d1',d:'Trace every prompt, tool choice, input, result, retry and state change, so you can answer "why did it do that?"'},{t:'Cost & latency → routing',c:'d2',d:'Static pipelines for simple requests, agentic retrieval for medium ones, full agents only for the hard few.'},{t:'Failures → guardrails',c:'d3',d:'Validate tool inputs and outputs, cap steps and spend, degrade gracefully.'},{t:'Irreversible actions → gates',c:'d4',d:'Dry runs, human approval, reversible operations, audit logs.'},{t:'Untrusted inputs → security',c:'d5',d:'Indirect injection via tool results, data exfiltration, privilege escalation: sandbox and least privilege.'},{t:'Spend → FinOps',c:'pencil',d:'Per-task budgets, caching, smaller models for sub-steps, prompt compression, cost per resolved task as the metric.'}]);
+const AR=[['Read-only lookup','Fully autonomous. Log it.'],['Reversible write (draft email, add label)','Autonomous with limits and an undo path; sample for review.'],['Costly or external (send email, spend < $100)','Propose, then require a one-click human confirmation.'],['Irreversible or high-stakes (payments, deletes, prod deploy)','Human approval with full context, or disallow entirely. Dry-run first.']];
+function ar(){const v=+$('#ar').value;$('#arV').textContent=AR[v][0];$('#arTxt').innerHTML=`<b>${AR[v][1]}</b> Boundaries scale with blast radius; widen them only as monitored error rates prove the agent reliable.`}
+$('#ar').addEventListener('input',ar);ar();
+
+drill('#qa',[
+ {q:'When do you prefer RAG over fine-tuning?',a:'<p>When the problem is <i>knowledge</i>: facts that are private, change often, or must be cited and access-controlled. Updating an index is cheap and instant; retraining is not, and fine-tuning is unreliable for injecting facts. Fine-tune for <i>behavior</i>: format, tone, a narrow skill.</p>'},
+ {q:'Why is BM25 still relevant next to embeddings?',a:'<p>Embeddings blur exact tokens: IDs, error codes, names, rare jargon and negations. They also struggle out of domain. BM25 is cheap, explainable and exact on terms. Hybrid retrieval gets both semantic recall and lexical precision.</p>'},
+ {q:'What chunk-context techniques improve retrieval?',a:'<p>Prepend a short document-level context (title, section path, or an LLM-written situating sentence) to each chunk before embedding; parent-child retrieval (match small chunks, return the larger parent); sentence-window retrieval; and metadata like dates and product for filtering.</p>'},
+ {q:'How do you handle conflicting retrieved documents?',a:'<p>Prefer authoritative and newer sources through metadata (version, date, source rank), dedupe superseded docs at indexing time, and tell the model to surface conflicts with citations rather than silently pick one. For high stakes, escalate to a human.</p>'},
+ {q:'What are Self-RAG and Corrective RAG?',a:'<p>Self-RAG trains the model to emit reflection tokens: whether to retrieve, whether a passage is relevant, whether its answer is supported. Corrective RAG adds a lightweight evaluator that grades retrieved docs; if they are poor it rewrites the query or falls back to web search, and filters irrelevant passages before generation.</p>'},
+ {q:'Where does HyDE fit in?',a:'<p>Query reformulation turns a vague question into better search queries (rewrites, decomposition, multi-query). HyDE asks the LLM to write a hypothetical answer and embeds that, because an answer-shaped text sits closer to real answer passages in embedding space than a short question does. Risk: a confidently wrong hypothetical drifts retrieval.</p>'},
+ {q:'When is GraphRAG justified?',a:'<p>When questions need relationships across many documents ("which suppliers of X were involved in incidents with Y?") or global summaries of a corpus. It is overkill for single-fact lookups: building and maintaining the graph is expensive, and extraction errors propagate.</p>'},
+ {q:'Describe agent memory tiers.',a:'<p>Working memory is the current context window. Short-term or session memory holds the conversation and scratchpad, summarized as it grows. Long-term memory has episodic (past interactions), semantic (facts and preferences) and procedural (learned how-tos) parts, stored externally and retrieved on demand. Each needs write policies, decay and privacy rules.</p>'},
+ {q:'Common multi-agent failures and fixes?',a:'<p>Agents looping or talking past each other, duplicated work, lost context at hand-offs, error cascades, and runaway cost. Fixes: clear roles and contracts, a single orchestrator with shared state, structured messages, step and budget caps, verification agents, and tracing. Often a single agent with good tools beats a crowd.</p>'},
+ {q:'What security threats are unique to tool-using agents?',a:'<p>Indirect prompt injection through tool outputs, data exfiltration through tools that can send data out, confused-deputy privilege use, and tool poisoning (malicious tool descriptions). Guardrails: least privilege, sandboxing, allow-lists, separating untrusted data from instructions, confirmation for side effects, and output filtering.</p>'}]);
+
+quiz('#qQuiz','#qScore',[
+ {q:'Users search by exact part number and dense retrieval misses. Add…',o:['BM25 / hybrid','A bigger LLM','Higher temperature'],a:0,why:'Lexical matching nails exact identifiers.'},
+ {q:'Right chunk retrieved, answer invents a figure. Which triad leg?',o:['Groundedness','Context relevance','Answer relevance'],a:0,why:'Evidence was fine; generation strayed from it.'},
+ {q:'A system that rewrites the query when context is insufficient, on a fixed loop, is…',o:['Looping RAG','Linear RAG','A multi-agent system'],a:0,why:'The loop is predesigned; agentic RAG gives the model control.'},
+ {q:'MCP mainly solves…',o:['N×M tool integrations','Hallucination','Tokenization'],a:0,why:'A shared protocol makes it N+M.'},
+ {q:'The agent wants to issue a refund. Best policy?',o:['Require human confirmation','Let it act and log','Block all writes forever'],a:0,why:'Costly, external actions need a gate.'}]);
+
+})();
+</script>
+</body>
+</html>

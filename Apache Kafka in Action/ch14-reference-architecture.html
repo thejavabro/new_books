@@ -1,0 +1,498 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kafka Reference Architecture</title>
+<meta name="description" content="What does a production Kafka setup actually contain? Handy tools, a choice of where to run it, and hardware that matches the way Kafka uses disks, memory and network.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Apache Kafka in Action companion (adapted from the Accelerate companion). Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* theme toggle */
+.themebtn{position:absolute;top:6px;right:max(10px,env(safe-area-inset-right,0px));z-index:5;font-family:var(--mono);font-size:.72rem;padding:5px 10px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--muted)}
+.themebtn:hover{border-color:var(--blue);color:var(--blue)}
+/* code */
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+pre.code code{border:0;padding:0;background:none}
+.missing{border-left:4px solid var(--bad);background:var(--bad-soft);padding:12px 16px;border-radius:0 8px 8px 0}
+
+/* page */
+
+.term{background:#0f1720;color:#d6e2ee;border-radius:10px;padding:12px;font-family:var(--mono);font-size:.8rem;min-height:170px;white-space:pre-wrap;overflow-wrap:anywhere}
+.term .p{color:#7cc4ff}.term .m{color:#9aa7b4}
+.brk{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px}
+.brk>div{border:2px solid var(--blue);border-radius:10px;padding:8px;background:var(--surface);display:flex;flex-direction:column;gap:6px}
+.brk>div.leaving{border-color:var(--bad);border-style:dashed}
+.brk>div.fresh{border-color:var(--ok)}
+.brk .meter{height:10px;border-radius:5px;background:var(--paper);border:1px solid var(--line);overflow:hidden}
+.brk .meter i{display:block;height:100%;background:var(--blue);transition:width .4s}
+.brk .meter i.hot{background:var(--bad)}
+.pp{display:flex;flex-wrap:wrap;gap:3px}
+.pp span{font-family:var(--mono);font-size:.66rem;padding:1px 5px;border-radius:4px;background:var(--blue-soft);color:var(--ink);transition:all .3s}
+.pp span.mv{background:var(--pencil);color:#fff}
+.ctrls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 18px}
+@media (max-width:600px){.ctrls{grid-template-columns:1fr}}
+.qs{display:flex;flex-direction:column;gap:10px}
+.qs .q2{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
+.big{font-family:var(--display);font-size:1.6rem;font-weight:800}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Apache Kafka in Action · visual companion</a><span class="tag">Part IV · Chapter 14 of 18</span></div>
+  <h1>Kafka Reference Architecture</h1>
+  <p class="lede">What does a production Kafka setup actually contain? Handy tools, a choice of where to run it, and hardware that matches the way Kafka uses disks, memory and network.</p>
+  <nav class="toc" aria-label="Sections"><a href="#landscape">The landscape</a><a href="#kcat">kcat</a><a href="#gui">GUIs and GitOps</a><a href="#cruise">Cruise Control</a><a href="#deploy">Where to run it</a><a href="#strimzi">Strimzi</a><a href="#hardware">Sizing</a><a href="#placement">Placement</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="landscape" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Kafka is more than brokers</h2></div>
+  <p>What does it take to run Kafka well? Brokers and a coordination cluster are only the core. Around them sit the applications (producers and consumers; non-Java clients must use the same partitioner as Java ones), Kafka Connect for integration without code, stream processing, schema management, plus tools for viewing, automating and balancing. Click any component:</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="lsSvg" viewBox="0 0 700 300" role="img" aria-label="Components around a Kafka cluster"></svg></div>
+    <p id="lsTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="kcat" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>kcat: a quicker command-line client</h2></div>
+  <p>An alternative to the bundled console scripts is <b>kcat</b> (formerly kafkacat). It is built on the C library librdkafka instead of the JVM, so it starts instantly, which matters in scripts. Its flags are short, it can read and write headers, and it guesses the mode if you omit it. Like the console tools, it's for exploring, not for writing production data.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn" id="kP">kcat -P (produce 6 prices)</button><button class="btn" id="kC">kcat -C (consume)</button><button class="btn" id="kH">consume with key and headers</button><button class="btn" id="kX">Clear</button></div>
+    <div class="term" id="kT" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="gui" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Look with a GUI, change with Git</h2></div>
+  <p>A GUI is great for <b>exploring</b>: which topics exist, what's in them, the state of Connect and the schema registry. In production it should be read-only (give its user only read permissions), and it never replaces monitoring. Open source favorite: <b>Kafbat Kafka UI</b> (formerly Provectus Kafka UI). Commercial: Kpow, Kadeck, Conduktor Console, plus the providers' own consoles.</p>
+  <p>Changes, from pre-production on, are <b>automated and declarative</b>. Never create topics by hand in production. The authors prefer <b>GitOps</b>: a Git repository is the source of truth for topics, users and ACLs, and a pipeline applies merged changes. Most companies build their own tooling because approval processes differ; for Connect, <code>kcctl apply -f connector.json</code> (modeled after kubectl) helps.</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="goSvg" viewBox="0 0 700 150" role="img" aria-label="GitOps flow from pull request to Kafka"></svg></div>
+    <div class="stepper" id="goStep"></div>
+  </div>
+</section>
+
+<section id="cruise" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Balancing load with Cruise Control</h2></div>
+  <p>Brokers should carry similar numbers of partitions and leaders and, more importantly, similar CPU, memory, disk and network load. Balancing by spreadsheet doesn't scale. <b>Cruise Control</b> (from LinkedIn) has a metrics reporter JAR on every broker writing load samples to a topic, an <b>analyzer</b> that turns them plus your <b>goals</b> into a proposal, and an <b>executor</b> that moves partitions. Start manually: monitoring shows imbalance, you run the analyzer, review, execute. Avoid moves when the cluster is already at its limits: they add a lot of load.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn" id="ccSkew">Create imbalance</button><button class="btn" id="ccAdd">Add broker</button><button class="btn" id="ccRem">Decommission last broker</button><button class="btn primary" id="ccAn">Analyze</button><button class="btn" id="ccEx" disabled>Execute proposal</button></div>
+    <div class="brk" id="ccB"></div>
+    <p id="ccTxt" aria-live="polite"></p>
+  </div>
+  <div class="cardgrid" id="goalCards"></div>
+</section>
+
+<section id="deploy" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Where should Kafka run?</h2></div>
+  <p>The infrastructure matters less than two things: it must be robust, and a team must know Kafka. Even a managed service needs that team for automation, processes and, above all, advice to other teams. Answer a few questions:</p>
+  <div class="sheet qs" id="dq"></div>
+  <div class="sheet"><span class="eyebrow">Suggestion</span><div class="big" id="dRes"></div><p id="dTxt" aria-live="polite"></p></div>
+  <div class="cardgrid" id="depCards"></div>
+</section>
+
+<section id="strimzi" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Strimzi: the reference architecture on Kubernetes</h2></div>
+  <p>Kafka runs well on recent Kubernetes, given fast storage (the authors strongly advise against GlusterFS and NFS). The <b>Strimzi</b> operator (supported by Red Hat as AMQ Streams) effectively <i>is</i> their reference architecture. Click its parts:</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="stSvg" viewBox="0 0 700 260" role="img" aria-label="Strimzi operators and the resources they manage"></svg></div>
+    <p id="stTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="hardware" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Sizing brokers</h2></div>
+  <p>Start with at least three brokers and grow. Focus on fast, reliable storage and on memory. Several smaller SSDs beat a few big ones; you can start small and add. Skip RAID (replication does that job), and especially avoid RAID 5 and 6. Since Kafka 3.9, <b>tiered storage</b> can offload old segments to cheap object storage. The heap needs 1 GB at least and rarely more than 6 GB; the rest of RAM is <b>page cache</b>, sized by how far consumers may lag without touching the disk:</p>
+  <div class="sheet">
+    <div class="ctrls">
+      <label class="rng"><span>Cluster ingest: <b id="hIv"></b> GB/hour</span><input type="range" id="hI" min="3" max="120" step="3" value="30"></label>
+      <label class="rng"><span>Brokers: <b id="hBv"></b></span><input type="range" id="hB" min="3" max="12" value="3"></label>
+      <label class="rng"><span>Allowed consumer lag: <b id="hLv"></b> h</span><input type="range" id="hL" min="0.5" max="6" step="0.5" value="2"></label>
+      <label class="rng"><span>JVM heap: <b id="hHv"></b> GB</span><input type="range" id="hH" min="1" max="6" value="6"></label>
+    </div>
+    <div id="hBars"></div>
+    <p id="hTxt" aria-live="polite"></p>
+  </div>
+  <div class="cardgrid" id="hwCards"></div>
+</section>
+
+<section id="placement" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Keep brokers apart, but not too far apart</h2></div>
+  <p>Kafka doesn't fsync every message, so if several brokers die at once data can be lost. Never put two brokers on the same VM host, Kubernetes node (use anti-affinity) or rack; use rack awareness and spread over availability zones or fire compartments. But keep inter-broker latency <b>under 30 ms</b>: one cluster across cloud regions is a bad idea. For global setups, run independent regional clusters and replicate only what you must (MirrorMaker, next chapters).</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Placement"><button data-pl="host" aria-pressed="false">Same host</button><button data-pl="rack" aria-pressed="false">One rack</button><button data-pl="az" aria-pressed="true">3 zones</button><button data-pl="region" aria-pressed="false">3 regions</button></div>
+    <div class="svgbox"><svg id="plSvg" viewBox="0 0 700 170" role="img" aria-label="Brokers placed in hosts, racks, zones or regions"></svg></div>
+    <p id="plTxt" aria-live="polite"></p>
+  </div>
+  <p>The coordination cluster (KRaft controllers or ZooKeeper) is modest: 4–8 GB RAM and a decent CPU, but a good network, since ZooKeeper especially is latency-sensitive. Use an odd count: 3 nodes tolerate one failure, 5 tolerate two.</p>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Recap and quick check</h2></div>
+  <div class="recap">
+    <div><b class="blue">Tools</b><span>kcat for scripts, a read-only GUI for exploring, never instead of monitoring.</span></div>
+    <div><b>GitOps</b><span>Topics, users, ACLs declared in Git and applied by a pipeline.</span></div>
+    <div><b class="pencil">Cruise Control</b><span>Metrics → analyzer + goals → proposal → executor.</span></div>
+    <div><b>Deployment</b><span>Own hardware, VMs, Strimzi on Kubernetes, or managed; always a Kafka team.</span></div>
+    <div><b class="okc">Sizing</b><span>≥3 brokers, SSDs, ≤6 GB heap, page cache for lag, 32–64 GB RAM.</span></div>
+    <div><b>Placement</b><span>Separate failure domains, under 30 ms apart.</span></div>
+  </div>
+  <div class="sheet"><div class="row between"><h3>Quick check</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Apache Kafka in Action: From basics to production</i> by Anatoly Zelenin and Alexander Kropp (Manning, 2025). Explanations, examples, code snippets and drawings are original summaries; the figures are redrawn ideas, not copies.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch13-governance.html"><span>Previous · Chapter 13</span><b>Governance</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch15-monitoring.html"><span>Next · Chapter 15</span><b>Monitoring and Alerting</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){if(!group)return;group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('kia:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('kia:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* light/dark toggle: follows the system until the reader picks one */
+(function(){const r=document.documentElement;const t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+  const b=document.createElement('button');b.className='themebtn';b.type='button';
+  function lab(){const d=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');b.textContent=d==='dark'?'Light theme':'Dark theme';b.setAttribute('aria-label','Switch to '+(d==='dark'?'light':'dark')+' theme')}
+  b.addEventListener('click',()=>{const d=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');const n=d==='dark'?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n);lab()});
+  lab();document.body.appendChild(b)})();
+
+
+/* landscape */
+const LS=[['prod','Producers',30,40,'d1','Write data. Java clients are the reference; other languages must hash keys the same way (murmur2) or keys land in different partitions.'],['cons','Consumers',30,210,'d2','Read data in consumer groups.'],['conn','Kafka Connect',250,10,'d3','Moves data between Kafka and other systems with configuration instead of code (chapter 11).'],['str','Stream processing',470,10,'d4','Kafka Streams or Flink: transform, aggregate, join inside Kafka (chapter 12).'],['sr','Schema registry',520,120,'d5','Makes schemas explicit and checks compatibility (chapter 13).'],['gui','GUI',470,230,'blue','For looking around: topics, messages, Connect, schemas. Read-only in production.'],['git','GitOps pipeline',250,240,'pencil','Creates topics, users and ACLs from a Git repository; no manual changes.'],['cc','Cruise Control',30,125,'ok','Watches broker load and moves partitions to balance it.']];
+function drawLs(k){const s=$('#lsSvg');s.innerHTML='';s.appendChild(el('rect',{x:230,y:90,width:240,height:120,rx:14,fill:'var(--blue-soft)',stroke:'var(--blue)','stroke-width':2}));s.appendChild(el('text',{x:350,y:140,'text-anchor':'middle','font-size':15,'font-weight':800,fill:'var(--ink)'},'Kafka cluster'));s.appendChild(el('text',{x:350,y:162,'text-anchor':'middle','font-size':11.5,fill:'var(--muted)'},'brokers + KRaft controllers'));
+  LS.forEach(([id,t,x,y,c])=>{const g=el('g',{style:'cursor:pointer',tabindex:0,role:'button','aria-label':t});const on=id===k;g.appendChild(el('line',{x1:x+75,y1:y+25,x2:350,y2:150,stroke:'var(--line)','stroke-width':1.4}));g.appendChild(el('rect',{x,y,width:150,height:50,rx:10,fill:on?`var(--${c})`:'var(--surface)',stroke:`var(--${c})`,'stroke-width':2}));g.appendChild(el('text',{x:x+75,y:y+30,'text-anchor':'middle','font-size':12.5,'font-weight':700,fill:on?'#fff':'var(--ink)'},t));g.addEventListener('click',()=>drawLs(id));g.addEventListener('keydown',e=>{if(e.key==='Enter')drawLs(id)});s.insertBefore(g,s.firstChild)});
+  const L=LS.find(x=>x[0]===k);$('#lsTxt').innerHTML=L?`<b>${L[1]}.</b> ${L[5]}`:'Click a box around the cluster.'}
+drawLs(null);
+
+/* kcat */
+const KT=$('#kT');let kLines=[];const kd=['energy drink 2','energy drink 3','cola 2','cola 5','energy drink 1','cola 2'];let produced=0;
+function kOut(h){kLines.push(h);KT.innerHTML=kLines.join('\n')}
+$('#kP').addEventListener('click',()=>{kOut('<span class="p">$ kcat -b localhost:9092 -t products.prices.changelog -P</span>');kd.forEach(d=>kOut('&gt; '+d));kOut('<span class="m">^D</span>');produced+=6});
+$('#kC').addEventListener('click',()=>{kOut('<span class="p">$ kcat -b localhost:9092 -t products.prices.changelog -C</span>');for(let i=0;i<produced;i++)kOut(kd[i%6]);kOut(`<span class="m">% Reached end of topic products.prices.changelog [0] at offset ${produced}</span>`)});
+$('#kH').addEventListener('click',()=>{kOut('<span class="p">$ kcat -b localhost:9092 -t products.prices.changelog -C -f \'%o key=%k headers=%h value=%s\\n\' -e</span>');for(let i=0;i<produced;i++)kOut(`${i} key= headers= value=${kd[i%6]}`);if(!produced)kOut('<span class="m">(topic empty: produce first)</span>');kOut('<span class="m">-e: exit at end of partition</span>')});
+$('#kX').addEventListener('click',()=>{kLines=[];KT.innerHTML='<span class="m">Terminal cleared.</span>'});KT.innerHTML='<span class="m">Press a button to run kcat against a local broker (simulated).</span>';
+
+/* gitops */
+$('#goStep').innerHTML=stepHTML();
+function drawGo(i){const s=$('#goSvg');s.innerHTML='';const N=['Pull request','Review','Merge to main','Pipeline','Kafka'];N.forEach((t,k)=>{const x=10+k*140;s.appendChild(el('rect',{x,y:45,width:120,height:50,rx:k===4?25:8,fill:k<=i?'var(--blue-soft)':'var(--surface)',stroke:k===i?'var(--pencil)':'var(--blue)','stroke-width':k===i?3:1.5}));s.appendChild(el('text',{x:x+60,y:75,'text-anchor':'middle','font-size':12,'font-weight':600,fill:'var(--ink)'},t));if(k<4)s.appendChild(el('line',{x1:x+120,y1:70,x2:x+140,y2:70,stroke:'var(--muted)','stroke-width':1.6}))});
+  s.appendChild(el('text',{x:350,y:130,'text-anchor':'middle','font-size':11.5,fill:'var(--pencil)',class:'t-mono'},['topics/orders.yaml: partitions: 12, retention.ms: 604800000','reviewer checks naming, partitions, retention, ACL scope','main = desired state of the cluster','diff desired vs actual → create / alter / delete','topic orders exists; ACLs for User:checkout applied'][i]))}
+stepper('#goStep',['A team requests a topic, user or ACL by editing a file in the Git repository and opening a pull/merge request.','Someone (or an automated policy check) reviews it. Approval processes differ per company, one reason most build their own tooling.','Merging makes the change part of the declared desired state.','A continuous deployment pipeline compares desired with actual state and applies the difference.','The change is live, traceable in Git history, and repeatable in dev and test clusters.'],drawGo);
+
+/* cruise control */
+let CB,prop=null,leaving=-1;
+function ccInit(){CB=[[0,3,6,9],[1,4,7,10],[2,5,8,11]].map(ps=>ps.map(p=>({p,l:[8,6,9,5,7,6,8,7,5,6,9,7][p]})));prop=null;leaving=-1;drawCc('Three brokers, twelve partitions, roughly even load.')}
+function loads(){return CB.map(b=>b.reduce((a,x)=>a+x.l,0))}
+function drawCc(msg,moved){const L=loads(),mx=Math.max(60,...L);$('#ccB').innerHTML=CB.map((b,i)=>`<div class="${i===leaving?'leaving':''}${b.length===0&&i!==leaving?' fresh':''}"><b>broker ${i+1}${i===leaving?' (leaving)':''}</b><div class="meter"><i class="${L[i]>40?'hot':''}" style="width:${L[i]/mx*100}%"></i></div><span class="small mono">load ${L[i]}</span><div class="pp">${b.map(x=>`<span class="${moved&&moved.includes(x.p)?'mv':''}">P${x.p}</span>`).join('')}</div></div>`).join('');$('#ccTxt').innerHTML=msg;$('#ccEx').disabled=!prop}
+$('#ccSkew').addEventListener('click',()=>{ccInit();const m=CB[1].splice(0,2).concat(CB[2].splice(0,2));CB[0].push(...m);CB[0].forEach(x=>x.l+=2);drawCc('Broker 1 now carries most partitions and its partitions got busier. Monitoring would flag this.')});
+$('#ccAdd').addEventListener('click',()=>{if(CB.length>=5)return;CB.push([]);prop=null;drawCc('A new broker joined. By default <b>nothing</b> moves to it: it sits idle until partitions are reassigned.')});
+$('#ccRem').addEventListener('click',()=>{if(CB.length<=3){drawCc('Keep at least three brokers.');return}leaving=CB.length-1;prop=null;drawCc('To remove a broker, all its partitions must move away first. Run the analyzer.')});
+$('#ccAn').addEventListener('click',()=>{const n=CB.length;const tgt=CB.map(b=>b.map(x=>({...x})));const live=[...Array(n).keys()].filter(i=>i!==leaving);const moved=[];const sum=i=>tgt[i].reduce((a,x)=>a+x.l,0);
+  if(leaving>=0){tgt[leaving].sort((a,b)=>b.l-a.l).forEach(x=>{const lo=live.reduce((a,i)=>sum(i)<sum(a)?i:a,live[0]);tgt[lo].push(x);moved.push(x.p)});tgt[leaving]=[]}
+  for(let it=0;it<30;it++){const hi=live.reduce((a,i)=>sum(i)>sum(a)?i:a,live[0]),lo=live.reduce((a,i)=>sum(i)<sum(a)?i:a,live[0]);const gap=sum(hi)-sum(lo);let best=null;tgt[hi].forEach(x=>{const ng=Math.abs(gap-2*x.l);if(ng<gap&&(!best||ng<Math.abs(gap-2*best.l)))best=x});if(!best)break;tgt[hi].splice(tgt[hi].indexOf(best),1);tgt[lo].push(best);if(!moved.includes(best.p))moved.push(best.p)}
+  const before=loads(),after=tgt.map((b,i)=>b.reduce((a,x)=>a+x.l,0));const spread=a=>{const v=a.filter((_,i)=>live.includes(i));return Math.max(...v)-Math.min(...v)};
+  prop={tgt,moves:moved};drawCc(moved.length?`Proposal: move <b>${moved.length}</b> partition(s); load spread across remaining brokers ${spread(before)} → ${spread(after)}. Review it, then execute (ideally off-peak).`:'Already balanced: no moves proposed.');if(!moved.length){prop=null;$('#ccEx').disabled=true}});
+$('#ccEx').addEventListener('click',()=>{if(!prop)return;const mv=prop.moves;CB=prop.tgt.map(b=>b.map(({p,l})=>({p,l})));const wasLeaving=leaving;if(leaving>=0){CB.splice(leaving,1);leaving=-1}prop=null;drawCc(wasLeaving>=0?'Partitions moved off; the empty broker was shut down safely.':'Executed: highlighted partitions were reassigned. In automatic anomaly-detection mode, Cruise Control does this on its own when goals are violated.',mv)});
+ccInit();
+cards('#goalCards',[{t:'Capacity goals',c:'d1',d:'Keep a resource (CPU, RAM, disk, network) below a fixed threshold per broker, for example disk under 80%.'},{t:'Distribution goals',c:'d2',d:'Spread a resource\'s load as evenly as possible across brokers.'},{t:'Add / remove brokers',c:'d3',d:'Plans moves onto a new broker, or off one you want to decommission: otherwise tedious manual work.'}]);
+
+/* deployment chooser */
+const DQ=[['k8s','Do you already run Kubernetes well, with fast storage?'],['dc','Do you have your own data center and an ops team for hardware?'],['team','Is there capacity to operate Kafka yourselves?'],['vol','Large and growing data volumes?']];const DA={k8s:false,dc:false,team:true,vol:false};
+$('#dq').innerHTML=DQ.map(([k,q])=>`<div class="q2"><span>${q}</span><div class="seg" role="group" aria-label="${q}"><button data-dq="${k}" data-v="1" aria-pressed="${DA[k]}">Yes</button><button data-dq="${k}" data-v="0" aria-pressed="${!DA[k]}">No</button></div></div>`).join('');
+function drawD(){let r,t;if(!DA.team){r='Managed Kafka';t='Without a team to run it, buy it: Confluent Cloud or Aiven (Aiven can even run in your own cloud account), or AWS MSK / Azure HDInsight with more limitations. You still need in-house Kafka expertise. '+(DA.vol?'With large volumes, watch the bill: managed offerings can get much pricier than self-operation.':'')}
+  else if(DA.k8s){r='Strimzi on Kubernetes';t='A reliable Kubernetes plus a strong team: let the Strimzi operator manage brokers, controllers, Connect, users, topics and Cruise Control. Use anti-affinity so no two brokers share a node.'}
+  else if(DA.dc){r='Own hardware or VMs';t='Plan spares, growth and separate dev/test clusters. Spread brokers across racks or fire compartments; in VMs, across hosts. Prefer local SSDs over a SAN unless the SAN is proven fast.'}
+  else{r='Self-managed in the public cloud';t='Run on AWS, Azure or Google Cloud VMs: their block storage is fine for Kafka, but instance and disk choice strongly affects throughput and latency.'}
+  $('#dRes').textContent=r;$('#dTxt').textContent=t}
+$$('[data-dq]').forEach(b=>b.addEventListener('click',()=>{DA[b.dataset.dq]=b.dataset.v==='1';press(b.parentNode,b);drawD()}));drawD();
+cards('#depCards',[{t:'Own hardware',c:'d1',d:'Example: a web analytics firm with predictable load, little virtualization and a skilled ops team.'},{t:'Virtualized',c:'d2',d:'Same rules plus: spread brokers over VM hosts, and make sure shared storage survives several brokers compacting at once.'},{t:'Kubernetes',c:'d3',d:'Recent versions, good storage, Strimzi. No GlusterFS or NFS.'},{t:'Managed',c:'d4',d:'Least operations; mind retention and throughput limits and pricing. Support for Kafka questions is usually better at specialists.'}]);
+
+/* strimzi */
+const STZ=[['co','Cluster Operator',250,20,'Deploys and manages brokers, the coordination cluster (KRaft or ZooKeeper), Kafka Connect, Cruise Control, and the Entity Operator.'],['to','Topic Operator',60,140,'Turns KafkaTopic resources into real topics and keeps them in sync. Usable on its own.'],['uo','User Operator',440,140,'Turns KafkaUser resources into users, ACLs and authentication secrets, including TLS key pairs. Usable on its own.']];
+function drawSt(k){const s=$('#stSvg');s.innerHTML='';s.appendChild(el('rect',{x:10,y:110,width:680,height:140,rx:12,fill:'none',stroke:'var(--line)','stroke-dasharray':'6 4'}));s.appendChild(el('text',{x:20,y:245,'font-size':10.5,fill:'var(--muted)'},'Entity Operator'));
+  STZ.forEach(([id,t,x,y])=>{const on=id===k;const g=el('g',{style:'cursor:pointer',tabindex:0,role:'button','aria-label':t});g.appendChild(el('rect',{x,y,width:200,height:46,rx:10,fill:on?'var(--blue)':'var(--surface)',stroke:'var(--blue)','stroke-width':2}));g.appendChild(el('text',{x:x+100,y:y+28,'text-anchor':'middle','font-size':13,'font-weight':700,fill:on?'#fff':'var(--ink)'},t));g.addEventListener('click',()=>drawSt(id));g.addEventListener('keydown',e=>{if(e.key==='Enter')drawSt(id)});s.appendChild(g)});
+  [['Kafka + KRaft',250,90],['Connect',250,130],['Cruise Control',250,170]].forEach(([t,x,y])=>{s.appendChild(el('rect',{x:x+30,y:y-12,width:140,height:28,rx:6,fill:'var(--paper)',stroke:'var(--line)'}));s.appendChild(el('text',{x:x+100,y:y+6,'text-anchor':'middle','font-size':11,fill:'var(--ink)'},t))});
+  s.appendChild(el('line',{x1:350,y1:66,x2:350,y2:78,stroke:'var(--muted)'}));
+  [['KafkaTopic',160,205],['KafkaUser',540,205]].forEach(([t,x,y])=>{s.appendChild(el('text',{x,y,'text-anchor':'middle','font-size':11,fill:'var(--pencil)',class:'t-mono'},t+' (YAML)'));s.appendChild(el('line',{x1:x,y1:186,x2:x,y2:192,stroke:'var(--pencil)'}))});
+  const L=STZ.find(x=>x[0]===k);$('#stTxt').innerHTML=L?`<b>${L[1]}.</b> ${L[4]}`:'Click an operator. If you can\'t use Strimzi, study its design and copy its patterns.'}
+drawSt(null);
+
+/* hardware */
+function drawH(){const I=+$('#hI').value,B=+$('#hB').value,L=+$('#hL').value,H=+$('#hH').value;$('#hIv').textContent=I;$('#hBv').textContent=B;$('#hLv').textContent=L;$('#hHv').textContent=H;
+  const per=I/B,pc=per*L,need=pc+H;const tiers=[16,32,64,128];const pick=tiers.find(t=>t>=need*1.15)||null;
+  bars('#hBars',[{l:'Per-broker ingest',v:per,txt:per.toFixed(1)+' GB/h',c:'d1'},{l:'Page cache needed',v:pc,txt:pc.toFixed(1)+' GB',c:'d3'},{l:'Heap',v:H,txt:H+' GB',c:'d2'},{l:'Total RAM',v:need,txt:need.toFixed(1)+' GB',c:need>64?'bad':'blue'}],Math.max(64,need));
+  $('#hTxt').innerHTML=`${I} GB/h over ${B} brokers is ${per.toFixed(1)} GB/h each; covering ${L} h of lag from memory needs ${pc.toFixed(1)} GB page cache, plus ${H} GB heap = <b>${need.toFixed(1)} GB</b>. `+(need>64?'<b class="badc">Above 64 GB: add brokers rather than RAM.</b>':pick===16?'A 16 GB machine would do, but the authors find less than 32 GB rarely worth it.':`A ${pick} GB broker fits (the sweet spot is 32–64 GB).`)}
+['hI','hB','hL','hH'].forEach(i=>$('#'+i).addEventListener('input',drawH));drawH();
+cards('#hwCards',[{t:'Disks',c:'d1',d:'Fast, reliable SSDs; several small ones (the reference for big clusters: 12 × 1 TB). No RAID needed, never RAID 5/6.'},{t:'Network',c:'d2',d:'At least 1 Gbit/s; a dedicated storage network if storage is networked.'},{t:'CPU',c:'d3',d:'Secondary. Many smaller cores beat few big ones. Pick memory-optimized instances and derive CPU from RAM.'},{t:'Many small or few big?',c:'d4',d:'The middle: few huge brokers make each failure heavy; many tiny ones multiply JVM overhead and management.'}]);
+
+/* placement */
+function drawPl(m){const s=$('#plSvg');s.innerHTML='';const groups={host:[[0,1,2]],rack:[[0],[1],[2]],az:[[0],[1],[2]],region:[[0],[1],[2]]}[m];const outer={host:'VM host',rack:'host',az:'zone',region:'region'}[m];
+  if(m==='rack'){s.appendChild(el('rect',{x:20,y:10,width:660,height:120,rx:10,fill:'none',stroke:'var(--bad)','stroke-width':2,'stroke-dasharray':'6 4'}));s.appendChild(el('text',{x:30,y:28,'font-size':11,fill:'var(--bad)'},'one rack, one power feed'))}
+  const gw=m==='host'?400:190;groups.forEach((g,i)=>{const x=m==='host'?150:30+i*225;s.appendChild(el('rect',{x,y:36,width:gw,height:80,rx:10,fill:'var(--paper)',stroke:m==='host'?'var(--bad)':'var(--line)','stroke-width':1.6}));s.appendChild(el('text',{x:x+10,y:52,'font-size':10.5,fill:'var(--muted)'},outer+' '+(i+1)));
+    g.forEach((b,k)=>{const bx=m==='host'?x+30+k*125:x+45;s.appendChild(el('rect',{x:bx,y:62,width:100,height:40,rx:8,fill:'var(--surface)',stroke:'var(--blue)','stroke-width':1.8}));s.appendChild(el('text',{x:bx+50,y:87,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--ink)'},'broker '+(b+1)))})});
+  const lat={host:'<1',rack:'<1',az:'1–2',region:'60–150'}[m];s.appendChild(el('text',{x:350,y:150,'text-anchor':'middle','font-size':12,fill:m==='region'?'var(--bad)':'var(--ok)'},`inter-broker latency ≈ ${lat} ms (limit 30 ms)`));
+  $('#plTxt').textContent={host:'One host failure takes all three brokers at once, along with any unflushed data. Use anti-affinity rules.',rack:'Separate hosts, but a rack power or switch failure still hits every broker.',az:'Each broker in its own availability zone with rack awareness: a zone can fail, and latency stays tiny. Recommended.',region:'Latency far above 30 ms slows replication and metadata sync. Use separate regional clusters and replicate selectively instead.'}[m]}
+seg('[data-pl]',b=>drawPl(b.dataset.pl));drawPl('az');
+
+quiz('#qQuiz','#qScore',[
+ {q:'Why is kcat handy in shell scripts?',o:['It is JVM-based','It starts instantly (C, librdkafka)'],a:1,why:'No JVM startup time, plus short flags and header support.'},
+ {q:'Where should a new production topic be created?',o:['In the GUI','Through a Git-driven pipeline'],a:1,why:'GitOps: declared in Git, applied automatically.'},
+ {q:'A broker is added to a cluster. What happens to existing partitions?',o:['They rebalance automatically','Nothing, until reassigned'],a:1,why:'Use Cruise Control or a manual reassignment.'},
+ {q:'30 GB/h on 3 brokers, 2 h of allowed lag: page cache per broker?',o:['10 GB','20 GB','60 GB'],a:1,why:'10 GB/h per broker × 2 h = 20 GB, plus up to 6 GB heap.'},
+ {q:'Maximum recommended inter-broker latency?',o:['30 ms','300 ms'],a:0,why:'Beyond that, prefer separate clusters per region.'}]);
+
+})();
+</script>
+</body>
+</html>

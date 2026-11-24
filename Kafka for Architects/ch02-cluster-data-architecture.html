@@ -1,0 +1,530 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kafka Cluster Data Architecture</title>
+<meta name="description" content="A topic is a name; the real unit of work is the partition. How you partition, replicate and retain data decides throughput, ordering, durability and cost.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<script>try{var t=JSON.parse(localStorage.getItem('kfa:theme'));if(t)document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
+<style>
+/* Shared base for the Accelerate companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+button.tag{cursor:pointer}
+button.tag:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{font-family:var(--mono);font-size:.84rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:0;overflow-x:auto;white-space:pre}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--pencil)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+.field{border:1px dashed var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:6px;background:var(--surface)}
+.field .eyebrow{color:var(--pencil)}
+.missing{border:2px solid var(--bad);background:var(--bad-soft);color:var(--bad);border-radius:10px;padding:12px 16px}
+
+/* page */
+
+.msg{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
+.msg button{border:1.5px solid var(--line);background:var(--surface);border-radius:8px;padding:10px;text-align:left;display:flex;flex-direction:column;gap:2px}
+.msg button b{font-family:var(--mono);font-size:.85rem}
+.msg button span{font-size:.82rem;color:var(--muted)}
+.msg button[aria-pressed="true"]{border-color:var(--blue);background:var(--blue-soft)}
+.brk{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.brk>div{border:1.5px solid var(--line);border-radius:8px;padding:8px 6px;background:var(--surface);display:flex;flex-direction:column;gap:5px;align-items:stretch;min-height:120px}
+.brk>div.dead{border-color:var(--bad);background:var(--bad-soft);opacity:.75}
+.brk h4{margin:0;font-family:var(--mono);font-size:.75rem;text-align:center}
+.brk .rp{font-family:var(--mono);font-size:.72rem;padding:3px 4px;border-radius:4px;text-align:center;border:1px solid var(--line)}
+.brk .rp.L{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+.brk .rp.F{background:var(--blue-soft)}
+.brk button{font-size:.72rem;border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:2px 4px;margin-top:auto}
+@media (max-width:520px){.brk{grid-template-columns:repeat(3,minmax(0,1fr))}}
+.verdict{padding:10px 14px;border-radius:8px;font-weight:600}
+.verdict.ok{background:var(--ok-soft);color:var(--ok)} .verdict.bad{background:var(--bad-soft);color:var(--bad)} .verdict.mid{background:var(--mid-soft);color:var(--mid)}
+.clog{display:flex;flex-wrap:wrap;gap:6px}
+.clog .r{font-family:var(--mono);font-size:.75rem;border:1px solid var(--line);border-radius:6px;padding:4px 6px;background:var(--surface);transition:opacity .4s}
+.clog .r small{display:block;color:var(--muted)}
+.clog .r.gone{opacity:.15;text-decoration:line-through}
+.clog .r.tomb{border-color:var(--bad);color:var(--bad)}
+.calc{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:640px){.calc{grid-template-columns:1fr}}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Kafka for Architects · visual companion</a><span class="tag">Part I · Chapter 2 of 12</span><button class="tag themebtn" id="themeBtn" type="button" aria-label="Toggle light or dark theme">Theme</button></div>
+  <h1>Kafka Cluster Data Architecture</h1>
+  <p class="lede">A topic is a name; the real unit of work is the partition. How you partition, replicate and retain data decides throughput, ordering, durability and cost.</p>
+  <nav class="toc" aria-label="Sections"><a href="#model">Topics & partitions</a><a href="#order">Ordering</a><a href="#replication">Replication</a><a href="#message">Messages</a><a href="#segments">Segments & retention</a><a href="#howmany">How many partitions</a><a href="#compaction">Compaction</a><a href="#asyncapi">AsyncAPI</a><a href="#recap">Recap and quiz</a></nav>
+</header>
+
+<section id="model" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Topics, partitions and parallelism</h2></div>
+  <p>Three nouns organize all data in Kafka. A <b>topic</b> is a named destination for one kind of event, such as <code>CUSTOMER_PROFILES</code>. Each topic is split into <b>partitions</b>, the units of scale and redundancy. Inside partitions live <b>messages</b>, each with a key, a value and headers.</p>
+  <p>The partition count you choose when creating a topic sets its maximum parallelism. Inside a consumer group, each partition is read by exactly one consumer instance at a time, so a fourth consumer on a three-partition topic simply sits idle. Move the sliders.</p>
+  <div class="sheet">
+    <div class="calc">
+      <label class="rng"><span>Partitions: <b id="pV"></b></span><input type="range" id="pN" min="1" max="8" value="3"></label>
+      <label class="rng"><span>Consumer instances in the group: <b id="cV"></b></span><input type="range" id="cN" min="1" max="8" value="2"></label>
+      <div class="small" id="pcTxt" aria-live="polite"></div>
+    </div>
+    <div class="svgbox fit"><svg id="pcSvg" viewBox="0 0 640 260" role="img" aria-label="Partitions assigned to consumer instances"></svg></div>
+  </div>
+</section>
+
+<section id="order" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Ordering lives inside a partition</h2></div>
+  <p>Kafka guarantees order only <i>within</i> a partition. Across partitions of the same topic there is no global order. The book's example: a transaction service publishes balance changes for customers to Customer 360. If two updates for the same customer land in different partitions, two consumer instances may apply them in the wrong order and show the customer a stale balance.</p>
+  <p>The fix is the message <b>key</b>. The producer hashes the key to choose a partition, so every message with the same customer ID goes to the same partition and is read, in order, by the same consumer.</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Keying"><button data-k="none" aria-pressed="true">No key (spread round-robin)</button><button data-k="key" aria-pressed="false">Key = customer ID</button></div><button class="btn primary" id="oRun">Send 6 updates</button></div>
+    <div class="svgbox fit"><svg id="oSvg" viewBox="0 0 640 220" role="img" aria-label="Updates for two customers distributed across three partitions"></svg></div>
+    <p id="oTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="replication" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Leaders, followers and in-sync replicas</h2></div>
+  <p>Each partition is copied to several brokers. The <b>replication factor</b> (RF) is set per topic and defaults to 1, which you should override. One copy is the <b>leader</b>; producers write only to it, and the <b>followers</b> fetch from it. Followers that are fully caught up form the <b>in-sync replica set (ISR)</b>.</p>
+  <p><code>min.insync.replicas</code> says how many replicas, leader included, must be in sync for a write (with <code>acks=all</code>) to be accepted. Below that number, producers get an error rather than silently losing durability. The usual recommendation is <b>RF 3 with min ISR 2</b>: one broker can fail and the topic keeps accepting writes safely. Try killing brokers.</p>
+  <div class="sheet">
+    <div class="calc">
+      <label class="rng"><span>Replication factor: <b id="rfV"></b></span><input type="range" id="rf" min="1" max="5" value="3"></label>
+      <label class="rng"><span>min.insync.replicas: <b id="miV"></b></span><input type="range" id="mi" min="1" max="5" value="2"></label>
+      <button class="btn" id="rReset">Restart all brokers</button>
+    </div>
+    <div class="brk" id="brk"></div>
+    <div class="verdict" id="rVer" aria-live="polite"></div>
+  </div>
+  <p class="small">Leaders are spread across brokers on purpose, so the write load is balanced. When a leader's broker dies, the controller promotes an in-sync follower.</p>
+</section>
+
+<section id="message" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Anatomy of a message</h2></div>
+  <p>"Event" is the logical idea; "message" (or record) is its physical form. Tap each part.</p>
+  <div class="sheet">
+    <div class="msg" id="msgParts"></div>
+    <div class="detail" id="msgInfo" aria-live="polite"></div>
+  </div>
+  <p>Producers do not send messages one at a time: the client groups them into <b>batches</b>, and the batch is the unit sent over the network and written to disk. Each message gets an <b>offset</b>, its position in the partition. A message is uniquely identified by three values: <b>topic, partition, offset</b>.</p>
+</section>
+
+<section id="segments" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Segments on disk and data retention</h2></div>
+  <p>Every partition is a directory on the broker's disk, and its log is split into <b>segment</b> files. Only the newest, <i>active</i> segment receives writes. When it reaches a size or age limit it is closed and a new one starts. Retention then works on whole closed segments: once every message in a segment is older than the retention period (7 days by default) or the partition exceeds its size limit, the segment file is deleted, whether or not anyone read it. That is why deletion time is approximate.</p>
+  <div class="sheet">
+    <label class="rng"><span>Days elapsed: <b id="dV"></b></span><input type="range" id="dN" min="0" max="20" value="9"></label>
+    <div class="svgbox fit"><svg id="segSvg" viewBox="0 0 640 150" role="img" aria-label="Segments of one partition over time, with old segments deleted"></svg></div>
+    <p class="small" id="segTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="howmany" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Choosing the partition count</h2></div>
+  <p>More partitions mean more parallelism, but each one costs broker memory, file handles and metadata, and lengthens leader elections when a broker fails. And the count is hard to change later: adding partitions remaps keys (breaking per-key order), and you cannot reduce it at all without recreating the topic. So size it up front. A rough formula: <b>n = max(t / p, t / c)</b>, where <i>t</i> is target throughput and <i>p</i> and <i>c</i> are what one partition can handle per producer and per consumer.</p>
+  <div class="sheet">
+    <div class="calc">
+      <label class="rng"><span>Target throughput t: <b id="tV"></b> MB/s</span><input type="range" id="tN" min="5" max="500" step="5" value="100"></label>
+      <label class="rng"><span>Per-partition producer p: <b id="ppV"></b> MB/s</span><input type="range" id="ppN" min="1" max="50" value="20"></label>
+      <label class="rng"><span>Per-partition consumer c: <b id="ccV"></b> MB/s</span><input type="range" id="ccN" min="1" max="50" value="10"></label>
+    </div>
+    <div class="row"><span class="big blue" id="nOut"></span><span class="small" id="nTxt"></span></div>
+  </div>
+  <div class="callout"><b class="h">Rules of thumb</b><span>Benchmark if you can. Without numbers, 9, 12 or 15 are reasonable starting counts. Avoid prime counts, which divide unevenly across brokers. KRaft removed the old ZooKeeper-era ceiling of roughly 200,000 partitions per cluster, but each partition still has a cost.</span></div>
+</section>
+
+<section id="compaction" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Compacted topics: the log as a table</h2></div>
+  <p>Instead of deleting by age, a topic can use <code>cleanup.policy=compact</code>: Kafka keeps at least the <b>latest value for every key</b>. An account-balance topic then behaves like a key-value table: a dashboard that starts up reads it and gets every account's current balance. To delete a key, send a <b>tombstone</b>, a message with that key and a null value; it is eventually removed too.</p>
+  <div class="sheet">
+    <div class="clog" id="clog"></div>
+    <div class="row"><button class="btn" id="cAdd">Append an update</button><button class="btn" id="cTomb">Delete ACC-2 (tombstone)</button><button class="btn primary" id="cRun">Run the cleaner</button><button class="btn" id="cRes">Reset</button></div>
+    <p class="small" id="cTxt" aria-live="polite"></p>
+  </div>
+  <p>You cannot trigger compaction by hand. Background cleaner threads rewrite <i>closed</i> segments (never the active one) when the "dirty" share of the log passes <code>min.cleanable.dirty.ratio</code> (0.5 by default), subject to minimum and maximum compaction lag settings. Offsets are preserved, so compacted logs have gaps.</p>
+  <div class="field"><span class="eyebrow">Field notes</span><p>Northwind chooses a delete policy for transactions, which are immutable facts. For customer profiles they experiment with compaction, so the topic itself holds the latest profile of every customer, and plan tests with repeated updates and tombstones before committing.</p></div>
+</section>
+
+<section id="asyncapi" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Documenting topics with AsyncAPI</h2></div>
+  <p>REST has OpenAPI; event-driven systems have <b>AsyncAPI</b>. The book uses it to record decisions as they are made: channels (topics), their addresses, partitions, replication, cleanup policy and, later, message schemas. A sketch in the same spirit:</p>
+<pre class="code"><span class="k">asyncapi:</span> 3.0.0
+<span class="k">info:</span> { title: Customer 360, version: 0.1.0 }
+<span class="k">channels:</span>
+  customerProfiles:
+    address: <span class="s">CUSTOMER_PROFILES</span>
+    bindings:
+      kafka:
+        partitions: 12
+        replicas: 3
+        topicConfiguration:
+          cleanup.policy: [<span class="s">compact</span>]
+          min.insync.replicas: 2   <span class="c"># illustrative values</span></pre>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Recap and quick check</h2></div>
+  <div class="recap">
+    <div><b>Partition = unit of parallelism</b><span>One consumer per partition per group; partitions cap scaling.</span></div>
+    <div><b>Order per partition</b><span>Use keys so related messages share a partition.</span></div>
+    <div><b>RF 3, min ISR 2</b><span>Survive one broker loss without risking acknowledged data.</span></div>
+    <div><b>Segments</b><span>Retention and compaction act on closed segments, so timing is approximate.</span></div>
+    <div><b>Compaction</b><span>Latest value per key; tombstones delete keys.</span></div>
+  </div>
+  <div class="sheet"><div class="row between"><h3>Quick check</h3><span class="score" id="qScore"></span></div><div class="quiz" id="quiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Kafka for Architects: Event-driven architecture, logs, microservices, real-time event processing</i> by Katya Gorshkova (Manning, 2026). Explanations, examples, code snippets and drawings are original summaries, not copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch01-kafka-as-an-architect.html"><span>Previous · Chapter 1</span><b>Getting to Know Kafka as an Architect</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch03-producers.html"><span>Next · Chapter 3</span><b>Kafka Clients and Message Production</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('kfa:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('acc:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: cycles auto -> light -> dark */
+(function(){const r=document.documentElement;let t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+ const b=document.getElementById('themeBtn');if(!b)return;
+ function lab(){b.textContent='Theme: '+(r.getAttribute('data-theme')||'auto')}lab();
+ b.addEventListener('click',()=>{const c=r.getAttribute('data-theme');const n=c==null?'light':c==='light'?'dark':null;
+  if(n)r.setAttribute('data-theme',n);else r.removeAttribute('data-theme');store.set('theme',n);lab()});})();
+
+
+const C=['var(--d1)','var(--d2)','var(--d3)','var(--d4)','var(--d5)','var(--pencil)','var(--ok)','var(--blue)'];
+/* 1 partitions vs consumers */
+function drawPC(){const P=+$('#pN').value,N=+$('#cN').value;$('#pV').textContent=P;$('#cV').textContent=N;const s=$('#pcSvg');s.innerHTML='';
+  const ph=Math.min(28,220/P);
+  for(let i=0;i<P;i++){const y=20+i*(230/P);const c=i%N;
+    s.appendChild(el('rect',{x:20,y,width:250,height:ph,rx:4,fill:'var(--surface)',stroke:'var(--blue)'}));
+    for(let k=0;k<8;k++)s.appendChild(el('rect',{x:24+k*30,y:y+3,width:26,height:ph-6,rx:2,fill:'var(--blue-soft)'}));
+    s.appendChild(el('text',{x:150,y:y+ph/2+4,'text-anchor':'middle','font-size':11,class:'t-mono s-ink'},'P'+i));
+    const cy=20+c*(230/N)+Math.min(28,220/N)/2;
+    const L=el('line',{x1:272,y1:y+ph/2,x2:418,y2:cy,stroke:C[c%8],'stroke-width':2,class:'flow'});s.appendChild(L)}
+  for(let j=0;j<N;j++){const y=20+j*(230/N),h=Math.min(28,220/N);const idle=j>=P;
+    s.appendChild(el('rect',{x:420,y,width:200,height:h,rx:6,fill:idle?'var(--paper)':'var(--surface)',stroke:idle?'var(--muted)':C[j%8],'stroke-dasharray':idle?'4 3':'','stroke-width':1.6}));
+    s.appendChild(el('text',{x:520,y:y+h/2+4,'text-anchor':'middle','font-size':11.5,fill:'var(--ink)'},'consumer '+(j+1)+(idle?' (idle)':'')))}
+  $('#pcTxt').textContent=N>P?`${N-P} consumer(s) idle: you cannot scale reading beyond ${P} partitions.`:N===P?'One partition each: maximum parallelism for this topic.':`Some consumers handle several partitions. You could add up to ${P-N} more instances.`}
+['#pN','#cN'].forEach(i=>$(i).addEventListener('input',drawPC));drawPC();
+
+/* 2 ordering */
+let keyed=false;const ups=[['A',100],['B',50],['A',80],['B',70],['A',30],['B',20]];
+function drawO(run){const s=$('#oSvg');s.innerHTML='';
+  for(let p=0;p<3;p++){s.appendChild(el('rect',{x:20,y:20+p*65,width:420,height:46,rx:6,fill:'var(--paper)',stroke:'var(--line)'}));s.appendChild(el('text',{x:30,y:48+p*65,'font-size':12,class:'t-mono s-muted'},'P'+p));
+    s.appendChild(el('text',{x:470,y:48+p*65,'font-size':12,class:'s-muted'},'→ consumer '+(p+1)))}
+  if(!run){$('#oTxt').textContent='Customer A and customer B each get three balance updates in sequence. Press send.';return}
+  const cnt=[0,0,0];ups.forEach(([c,v],i)=>{const p=keyed?(c==='A'?0:2):i%3;const x=60+cnt[p]*62;cnt[p]++;
+    const g=el('g');g.appendChild(el('rect',{x,y:27+p*65,width:56,height:32,rx:5,fill:c==='A'?'var(--blue-soft)':'var(--pencil-soft)',stroke:c==='A'?'var(--blue)':'var(--pencil)'}));
+    g.appendChild(el('text',{x:x+28,y:47+p*65,'text-anchor':'middle','font-size':11.5,class:'t-mono s-ink'},`${c}#${Math.floor(i/2)+1}=${v}`));
+    g.style.opacity=0;g.style.transition='opacity .3s '+(i*0.15)+'s';s.appendChild(g);requestAnimationFrame(()=>requestAnimationFrame(()=>g.style.opacity=1))});
+  $('#oTxt').innerHTML=keyed?'<b class="okc">All of A\'s updates are in P0 and all of B\'s in P2.</b> Each consumer sees one customer\'s updates in the order they happened, so the final balances (A=30, B=20) are right. P1 got nothing: with few keys, distribution can be uneven.':'<b class="badc">Updates for A are scattered over three partitions read by three consumers.</b> Nothing stops consumer 3 from applying A#3 before consumer 1 applies A#1, leaving A at 100 instead of 30.'}
+seg('[data-k]',b=>{keyed=b.dataset.k==='key';drawO(false)});$('#oRun').onclick=()=>drawO(true);drawO(false);
+
+/* 3 replication */
+let dead=new Set();
+function drawR(){let rf=+$('#rf').value,mi=+$('#mi').value;$('#rfV').textContent=rf;$('#miV').textContent=mi;
+  const B=5,parts=3;const rep=[...Array(B)].map(()=>[]);let state=[];
+  for(let p=0;p<parts;p++){const reps=[];for(let r=0;r<rf;r++)reps.push((p+r)%B);
+    const alive=reps.filter(b=>!dead.has(b));const leader=alive[0];
+    reps.forEach(b=>rep[b].push({p,L:b===leader&&!dead.has(b),dead:dead.has(b)}));state.push({p,alive:alive.length,leader})}
+  $('#brk').innerHTML=rep.map((rs,b)=>`<div class="${dead.has(b)?'dead':''}"><h4>Broker ${b+1}</h4>${rs.map(r=>`<span class="rp ${r.dead?'':r.L?'L':'F'}">P${r.p} ${r.dead?'lost':r.L?'leader':'follower'}</span>`).join('')}<button data-b="${b}">${dead.has(b)?'Restart':'Kill'}</button></div>`).join('');
+  $$('#brk button').forEach(x=>x.onclick=()=>{const b=+x.dataset.b;dead.has(b)?dead.delete(b):dead.add(b);drawR()});
+  const v=$('#rVer');const worst=Math.min(...state.map(s=>s.alive));
+  if(mi>rf){v.className='verdict bad';v.textContent=`min.insync.replicas (${mi}) is larger than RF (${rf}): writes with acks=all can never succeed.`;return}
+  if(worst===0){v.className='verdict bad';v.textContent='A partition has no live replica: it is offline and its data is unavailable (lost, if the disks are gone).'}
+  else if(worst<mi){v.className='verdict mid';v.textContent=`A partition has only ${worst} in-sync replica(s), below the minimum of ${mi}. Producers using acks=all get NotEnoughReplicas errors: availability is sacrificed to protect durability. Reads still work.`}
+  else{v.className='verdict ok';v.textContent=`All partitions have at least ${mi} in-sync replicas. Writes are accepted; the cluster can lose ${Math.max(0,worst-mi)} more broker(s) holding a given partition before writes stop.`}
+  if(rf===1&&worst>0){v.className='verdict mid';v.textContent='RF 1: everything works, but losing any one broker loses the partitions it holds. Kill one to see.'}}
+['#rf','#mi'].forEach(i=>$(i).addEventListener('input',drawR));$('#rReset').onclick=()=>{dead.clear();drawR()};drawR();
+
+/* 4 message parts */
+const M=[['key','"CUST-1042"','Optional. Decides the partition (same key, same partition) and is what compaction keeps the latest value for. Often a business identifier.'],
+ ['value','{ "balance": 180 }','The payload, as bytes. Kafka does not care whether it is JSON, Avro or Protobuf; serializers in the clients do.'],
+ ['headers','source=core-banking','Optional key-value metadata, such as a trace ID, schema hints or the originating system, kept out of the business payload.'],
+ ['timestamp','1732442400000','Set by the producer (create time) or the broker (log-append time). Used for time-based retention and stream windows.'],
+ ['offset','5817','Assigned by the broker: the position in the partition. Together with topic and partition it identifies the message uniquely.']];
+$('#msgParts').innerHTML=M.map((m,i)=>`<button data-i="${i}" aria-pressed="${i===0}"><b>${m[0]}</b><span>${m[1]}</span></button>`).join('');
+function showM(i){$('#msgInfo').innerHTML=`<span class="eyebrow">${M[i][0]}</span><p>${M[i][2]}</p>`}seg('#msgParts button',b=>showM(+b.dataset.i));showM(0);
+
+/* 5 segments */
+function drawSeg(){const d=+$('#dN').value;$('#dV').textContent=d;const s=$('#segSvg');s.innerHTML='';const ret=7,segDays=2;
+  const segs=[];for(let st=0;st<=d;st+=segDays)segs.push([st,Math.min(st+segDays,d)]);
+  const W=600/Math.max(segs.length,1);let del=0;
+  segs.forEach(([a,b],i)=>{const active=i===segs.length-1;const gone=!active&&(d-b)>=ret;if(gone)del++;const x=20+i*W;
+    s.appendChild(el('rect',{x,y:40,width:W-6,height:50,rx:5,fill:gone?'var(--paper)':active?'var(--pencil-soft)':'var(--blue-soft)',stroke:gone?'var(--line)':active?'var(--pencil)':'var(--blue)','stroke-dasharray':gone?'4 3':''}));
+    if(W>40)s.appendChild(el('text',{x:x+(W-6)/2,y:70,'text-anchor':'middle','font-size':11,class:'t-mono s-ink'},gone?'deleted':active?'active':`d${a}-${b}`))});
+  s.appendChild(el('text',{x:20,y:28,'font-size':12,class:'s-muted'},'segment files of one partition (a new segment every 2 days in this demo)'));
+  s.appendChild(el('text',{x:20,y:120,'font-size':12,class:'s-muted'},'blue = closed  ·  orange = active  ·  dashed = removed by 7-day retention'));
+  $('#segTxt').textContent=`Day ${d}: ${segs.length} segments created, ${del} deleted. A segment is only deleted when its newest message passes the 7-day limit, so some data lives longer than 7 days.`}
+$('#dN').addEventListener('input',drawSeg);drawSeg();
+
+/* 6 calculator */
+function calc(){const t=+$('#tN').value,p=+$('#ppN').value,c=+$('#ccN').value;$('#tV').textContent=t;$('#ppV').textContent=p;$('#ccV').textContent=c;
+  const n=Math.ceil(Math.max(t/p,t/c));$('#nOut').textContent=n+' partitions';$('#nTxt').textContent=`max(${t}/${p}, ${t}/${c}) = max(${(t/p).toFixed(1)}, ${(t/c).toFixed(1)}). ${t/c>t/p?'Consumers are the bottleneck here.':'Producers are the bottleneck here.'} Round up and add headroom for growth.`}
+['#tN','#ppN','#ccN'].forEach(i=>$(i).addEventListener('input',calc));calc();
+
+/* 7 compaction */
+let log=[],off=0;const keys=['ACC-1','ACC-2','ACC-3'];
+function reset(){log=[];off=0;[['ACC-1',100],['ACC-2',40],['ACC-1',120],['ACC-3',75],['ACC-2',55],['ACC-1',90]].forEach(([k,v])=>log.push({o:off++,k,v,gone:false}));drawC('Six updates for three accounts. Old values for ACC-1 and ACC-2 are still in the log.')}
+function drawC(t){$('#clog').innerHTML=log.map(r=>`<span class="r ${r.gone?'gone':''} ${r.v===null?'tomb':''}"><small>offset ${r.o}</small>${r.k}: ${r.v===null?'null':r.v}</span>`).join('');$('#cTxt').textContent=t}
+$('#cAdd').onclick=()=>{const k=keys[Math.floor(Math.random()*3)];log.push({o:off++,k,v:Math.floor(Math.random()*200),gone:false});drawC('Appended. Nothing is overwritten in place; the new value just goes on the end.')};
+$('#cTomb').onclick=()=>{log.push({o:off++,k:'ACC-2',v:null,gone:false});drawC('Tombstone appended: key ACC-2 with a null value.')};
+$('#cRun').onclick=()=>{const last={};log.forEach(r=>{if(!r.gone)last[r.k]=r.o});let n=0;log.forEach(r=>{if(!r.gone&&last[r.k]!==r.o){r.gone=true;n++}});
+  const tomb=log.filter(r=>!r.gone&&r.v===null);drawC(`Cleaner removed ${n} superseded record(s). Offsets keep their numbers, leaving gaps.`+(tomb.length?' The tombstone itself stays for a while (delete.retention.ms) so consumers can see the delete, then it goes too.':''));
+  if(tomb.length)setTimeout(()=>{tomb.forEach(r=>r.gone=true);drawC('Later: the tombstone is purged as well. ACC-2 no longer exists in the topic.')},1600)};
+$('#cRes').onclick=reset;reset();
+
+quiz('#quiz','#qScore',[
+ {q:'A topic has 6 partitions. How many consumers in one group can actively read it?',o:['6','12','Unlimited'],a:0,why:'Each partition goes to one consumer in a group; extra consumers stay idle.'},
+ {q:'Is order guaranteed across all partitions of a topic?',o:['Yes','Only within a partition'],a:1,why:'Use the same key for related messages so they land in the same partition.'},
+ {q:'RF 3, min.insync.replicas 2, two of the three replica brokers fail. What happens to acks=all writes?',o:['Still accepted','Rejected with an error'],a:1,why:'Only one in-sync replica remains, below the minimum of 2, so Kafka refuses writes rather than weaken durability.'},
+ {q:'Can you reduce a topic from 12 to 6 partitions?',o:['Yes, with a config change','No, recreate the topic'],a:1,why:'Kafka supports only increasing the partition count, and even that remaps keys.'},
+ {q:'What does a tombstone in a compacted topic look like?',o:['A key with a null value','A header named delete','An empty key'],a:0,why:'A null value for a key marks it for deletion during compaction.'}]);
+
+})();
+</script>
+</body>
+</html>

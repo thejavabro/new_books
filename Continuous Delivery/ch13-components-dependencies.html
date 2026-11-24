@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Managing Components and Dependencies</title>
+<meta name="description" content="How to keep the application always releasable while making big changes, and how to split a large system into components whose builds and versions you can actually manage.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Continuous Delivery companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* Continuous Delivery additions */
+pre.code{font-family:var(--mono);font-size:.82rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;margin:0;line-height:1.5;white-space:pre;max-width:100%}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--d2)}
+.callout.bad{border-color:var(--bad);background:var(--bad-soft)}
+.callout.mid{border-color:var(--mid);background:var(--mid-soft)}
+button.tag{cursor:pointer}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:6em;max-height:15em;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.log .ok{color:var(--ok)} .log .bad{color:var(--bad)} .log .mid{color:var(--mid)}
+.pill{display:inline-block;font-family:var(--mono);font-size:.72rem;padding:2px 8px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.pill.ok{background:var(--ok-soft);color:var(--ok);border-color:var(--ok)} .pill.bad{background:var(--bad-soft);color:var(--bad);border-color:var(--bad)} .pill.mid{background:var(--mid-soft);color:var(--mid);border-color:var(--mid)}
+.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}
+.svgbox.fit svg{max-width:480px;margin:0 auto}
+
+/* page */
+
+.dep .node{cursor:pointer}
+.dep text{pointer-events:none}
+.trig{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.app-mock{border:1px solid var(--line);border-radius:10px;background:var(--surface);overflow:hidden}
+.app-mock .bar{display:flex;gap:6px;padding:8px 12px;border-bottom:1px solid var(--line);background:var(--paper);flex-wrap:wrap}
+.app-mock .bar span{font-size:.85rem;padding:3px 10px;border-radius:6px;border:1px solid var(--line);background:var(--surface)}
+.app-mock .bar span.new{border-color:var(--pencil);background:var(--pencil-soft)}
+.app-mock .body{padding:14px;font-size:.92rem;color:var(--muted)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Continuous Delivery · visual companion</a><span class="tag">Part III · Chapter 13 of 15</span><button class="tag" id="themeBtn" type="button" aria-label="Switch light or dark theme">Light / dark</button></div>
+  <h1>Managing Components and Dependencies</h1>
+  <p class="lede">How to keep the application always releasable while making big changes, and how to split a large system into components whose builds and versions you can actually manage.</p>
+  <nav class="toc" aria-label="Sections"><a href="#intro">Components</a><a href="#releasable">Stay releasable</a><a href="#bba">Branch by abstraction</a><a href="#deps">Dependencies</a><a href="#libraries">Libraries</a><a href="#split">Splitting</a><a href="#graph">Dependency graph</a><a href="#triggers">Triggers</a><a href="#circular">Circular deps</a><a href="#binaries">Artifact repository</a><a href="#quiz">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="intro" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Why components and dependencies matter</h2></div>
+  <p>Large systems are built from components: reasonably large-scale pieces with a well-defined API that could be swapped for another implementation (DLLs, JARs, gems, services). The opposite is a monolith with no clear boundaries. Components bring their own problems: each may have release branches and versions, and finding a set that works together is exactly the integration problem CI exists to solve. The chapter first asks how to keep an application releasable while it changes, then how to manage the components and dependencies of large systems.</p>
+</section>
+
+<section id="releasable" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Four ways to stay releasable without branching</h2></div>
+  <p>Teams keep adding features and making big changes. Branching until work is done delays integration. Instead the authors offer four strategies: hide new functionality until it is finished; make every change incrementally, each step releasable; use branch by abstraction for large changes; and use components to decouple parts that change at different rates.</p>
+  <div class="two">
+    <div class="stack">
+      <h3>Hide unfinished features</h3>
+      <p>Ship the code, but don't link to it from the UI, or switch it off with configuration. On one of Jez's projects a whole new UI was built this way inside the live application, reachable at a separate URL, then switched over once it was complete. The chapter notes that a world-leading search engine works like this too.</p>
+      <pre class="code"><span class="k">if</span> config.feature(<span class="s">"new-reports"</span>):
+    menu.add(<span class="s">"Reports (beta)"</span>, NewReports)</pre>
+    </div>
+    <div class="sheet">
+      <div class="row between"><b>Production, release 41</b><label class="small"><input type="checkbox" id="flag"> new-reports = on</label></div>
+      <div class="app-mock"><div class="bar" id="menu"></div><div class="body" id="mbody"></div></div>
+      <p class="small" id="flagTxt"></p>
+    </div>
+  </div>
+</section>
+
+<section id="bba" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Branch by abstraction</h2></div>
+  <p>For a change too big to do in one go, such as replacing a persistence layer or a UI framework, the pattern named by Paul Hammant lets you work on mainline the whole time. Step through it.</p>
+  <div class="sheet"><div class="stepper" id="bbStep"><div class="svgbox"><svg id="bbSvg" viewBox="0 0 640 220" role="img" aria-label="Branch by abstraction"></svg></div></div></div>
+  <p class="small">The hardest parts are isolating the entry points to the part you are changing, and managing changes to it while the replacement is underway. It also works for carving a monolith into components.</p>
+</section>
+
+<section id="deps" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Kinds of dependency, and dependency hell</h2></div>
+  <p>Two distinctions help. <b>Libraries</b> are packages your team does not control, updated rarely; <b>components</b> are pieces your organization develops, which change often. <b>Build-time</b> dependencies must be present to compile and link; <b>runtime</b> ones only to run. "Dependency hell" happens when an application needs one version of something and another application on the same system needs a different one: DLL hell on early Windows, the classpath on Java. A build-time version of the same problem is the <b>diamond dependency</b>.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Versions"><button data-dm="0" aria-pressed="true">Both use framework 1.2</button><button data-dm="1" aria-pressed="false">Pricing upgraded to 1.3</button></div>
+    <div class="svgbox fit"><svg id="dmSvg" viewBox="0 0 420 230" role="img" aria-label="Diamond dependency"></svg></div>
+    <p id="dmTxt" aria-live="polite"></p>
+  </div>
+  <p class="small">Remedies: .NET assemblies carry versions so several can coexist; Linux shared libraries append a version number to the file name; static linking or shipping your own copies of frameworks avoids OS-wide sharing, at the cost of size and coupling.</p>
+</section>
+
+<section id="libraries" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Managing libraries</h2></div>
+  <p>Two reasonable options: check libraries (and even the toolchain) into version control, which is simple and works for small projects but bloats the repository over time; or declare them and let a tool like Maven or Ivy fetch them from a repository, ideally your organization's own, with exact versions pinned. Manage your own components the same way. If neither tool fits, a small home-grown declarative system can work.</p>
+</section>
+
+<section id="split" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>When to split out a component</h2></div>
+  <p>Good reasons, from the chapter: part of the code must be deployed independently; you want a core and plugins; it is an interface to another system; compiling and linking takes too long; opening the project in the IDE takes too long; the codebase is too big for one team. The last three may sound subjective, but they are real signals. Which apply to you?</p>
+  <div class="sheet">
+    <div class="chips" id="why"></div>
+    <p id="whyTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout bad"><b class="h">Don't make teams own components</b><span>Feature teams that cut through all components work better than component teams: requirements for a single component are hard to write and test in isolation, and every feature becomes a cross-team negotiation. And components don't imply an n-tier architecture; the chapter describes an architect who mandated seven layers, most of them adding nothing. Watch Conway's law: systems mirror the communication structure of the organization.</span></div>
+</section>
+
+<section id="graph" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Building a dependency graph</h2></div>
+  <p>The chapter's example: a portfolio management application depends on pricing, settlement and reports engines, which all depend on a framework; the pricing engine also depends on a third-party credit default swap (CDS) pricing library. Each component has its own pipeline; a component's success triggers builds of its downstream dependents. Click a component to change it and watch what rebuilds. Toggle a failure to see the graph protect itself.</p>
+  <div class="sheet">
+    <div class="row"><label class="small"><input type="checkbox" id="setFail"> Settlement engine fails its tests against the new framework</label><button class="btn" id="gReset">Reset</button></div>
+    <div class="svgbox"><svg class="dep" id="gSvg" viewBox="0 0 640 260" role="img" aria-label="Dependency graph of components"></svg></div>
+    <div class="log" id="gLog"></div>
+  </div>
+  <div class="callout blue"><b class="h">One version of the framework, everywhere</b><span>The application must never build against a pricing engine built on one framework version and a settlement engine built on another. That is the diamond problem at build time. Your CI tool should enforce consistent versions across the graph, and let you trace upstream and downstream: which versions went into this build, and what was built from this one.</span></div>
+</section>
+
+<section id="triggers" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>When to trigger builds: cautious optimism</h2></div>
+  <p>Always rebuilding on every upstream change gives fast feedback but a lot of churn and breakage from unstable dependencies. Never rebuilding means you integrate rarely and painfully. Alex Chaffee's <b>cautious optimism</b> marks each dependency as <b>static</b> (ignore new versions), <b>fluid</b> (rebuild on new versions), or <b>guarded</b> (a fluid trigger that broke the build, and now waits until fixed). Update both upstream components and see.</p>
+  <div class="sheet">
+    <div class="trig">
+      <label class="small">CDS library → pricing: <select id="t1"><option>fluid</option><option>static</option></select></label>
+      <label class="small">Framework → pricing: <select id="t2"><option>static</option><option>fluid</option></select></label>
+      <label class="small"><input type="checkbox" id="cdsBad"> new CDS version is broken</label>
+      <button class="btn primary" id="trigRun">Release new CDS and framework versions</button>
+    </div>
+    <div class="log" id="tLog"></div>
+  </div>
+  <p class="small">The less control and visibility you have over an upstream component, the more cautious you should be. For components from teams in your own organization, err toward continuous integration. Apache Gump was an early tool that built the whole open-source Java world against the latest of everything.</p>
+</section>
+
+<section id="circular" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Circular dependencies and the build ladder</h2></div>
+  <p>The nastiest case: A depends on B and B depends on A. You can build it like a ladder: build A against a previous binary of B, then B against the new A, then A again against the new B. The authors have seen projects survive this, but recommend removing the cycle.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn primary" id="ladder">Climb one rung</button><button class="btn" id="ladReset">Reset</button></div>
+    <div class="svgbox fit"><svg id="lSvg" viewBox="0 0 420 220" role="img" aria-label="Build ladder for circular dependency"></svg></div>
+  </div>
+</section>
+
+<section id="binaries" class="stack">
+  <div class="sec-head"><span class="num">10</span><h2>Managing binaries</h2></div>
+  <div class="two">
+    <pre class="code">artifacts/
+  portfolio-app/         <span class="c">one dir per pipeline</span>
+    412/                 <span class="c">one dir per build number</span>
+      portfolio-1.4.412.war
+      portfolio-1.4.412.war.sha1
+      reports/
+      index.json         <span class="c">status per stage</span>
+    413/ ...
+  pricing-engine/
+    207/ ...</pre>
+    <div class="stack">
+      <p>Components should depend on each other's <b>binaries</b>, not source. An artifact repository holds them. Its key property: it must hold nothing you can't re-create. Artifacts are big, so you may delete old ones, but always keep their hashes, so you can verify any binary later.</p>
+      <p>The simplest repository is a directory structure keyed by pipeline and build number, plus an index file recording each stage's result. The pipeline stores binaries in the compile stage, and later stages fetch them, run, and record status. Maven adds dependency declarations, version ranges and SNAPSHOT builds; use ranges and snapshots with care, since they make builds hard to reproduce. Maven's <span class="mono">dependencyManagement</span> lets a parent project define versions once, and its analysis tools flag unused or undeclared dependencies.</p>
+    </div>
+  </div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">11</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">12</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b class="blue">Stay releasable</b><span>Hide unfinished features, change incrementally, branch by abstraction, use components.</span></div>
+    <div><b>Dependencies</b><span>Libraries vs components; build-time vs runtime; beware diamonds.</span></div>
+    <div><b class="pencil">Split with reason</b><span>Independent deploys, plugins, external interfaces, slow builds, big teams. Feature teams, not component teams.</span></div>
+    <div><b class="okc">Pipelines per component</b><span>Then an integration pipeline; one framework version across the graph.</span></div>
+    <div><b>Triggers</b><span>Static, fluid, guarded: be more cautious the less you control upstream.</span></div>
+    <div><b class="badc">Binaries</b><span>Depend on binaries; keep hashes; pin versions; avoid snapshots for releases.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Continuous Delivery: Reliable Software Releases through Build, Test, and Deployment Automation</i> by Jez Humble and David Farley (Addison-Wesley, 2011). Explanations, examples, code snippets and drawings are original summaries, not text or figures copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch12-managing-data.html"><span>Previous · Chapter 12</span><b>Managing Data</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch14-advanced-version-control.html"><span>Next · Chapter 14</span><b>Advanced Version Control</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('cd:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('acc:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle in the header */
+(function(){const b=document.getElementById('themeBtn');const r=document.documentElement;const t=store.get('theme',null);if(t)r.dataset.theme=t;if(!b)return;
+  b.addEventListener('click',()=>{const dark=r.dataset.theme?r.dataset.theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches;r.dataset.theme=dark?'light':'dark';store.set('theme',r.dataset.theme)})})();
+/* pipeline drawing: svg, stages [{t,sub,st}] st in ok|bad|run|idle|skip; returns nothing. Lays out left to right in viewBox width W */
+function pipe(svg,stages,o){svg=typeof svg==='string'?$(svg):svg;o=o||{};const W=o.w||640,H=o.h||110,n=stages.length,gap=o.gap||22;const bw=(W-20-gap*(n-1))/n,bh=o.bh||58,y=(H-bh)/2;
+  svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.innerHTML='';
+  const col={ok:'ok',bad:'bad',run:'blue',idle:'line',skip:'line',mid:'mid'};
+  stages.forEach((s,i)=>{const x=10+i*(bw+gap);const c=col[s.st||'idle'];
+    if(i>0){const ax=x-gap+3;svg.appendChild(el('line',{x1:ax,y1:H/2,x2:x-5,y2:H/2,stroke:'var(--muted)','stroke-width':2,class:s.st==='run'?'flow':''}));svg.appendChild(el('polygon',{points:`${x-3},${H/2} ${x-10},${H/2-4} ${x-10},${H/2+4}`,fill:'var(--muted)'}))}
+    const g=el('g',{class:'fade'+(s.st==='skip'?' off':'')});
+    g.appendChild(el('rect',{x,y,width:bw,height:bh,rx:8,fill:s.st==='ok'?'var(--ok-soft)':s.st==='bad'?'var(--bad-soft)':s.st==='mid'?'var(--mid-soft)':'var(--surface)',stroke:`var(--${c==='line'?'line':c})`,'stroke-width':s.st==='run'?2.6:1.6,class:s.st==='run'?'pulse':''}));
+    const lines=s.t.split('\n');lines.forEach((l,k)=>g.appendChild(el('text',{x:x+bw/2,y:y+bh/2+(k-(lines.length-1)/2)*14+(s.sub?-4:4),'text-anchor':'middle','font-size':o.fs||12.5,'font-weight':700,fill:'var(--ink)'},l)));
+    if(s.sub)g.appendChild(el('text',{x:x+bw/2,y:y+bh-9,'text-anchor':'middle','font-size':10.5,fill:'var(--muted)',class:'t-mono'},s.sub));
+    svg.appendChild(g)});}
+
+
+function flag(){const on=$('#flag').checked;$('#menu').innerHTML='<span>Home</span><span>Trades</span><span>Accounts</span>'+(on?'<span class="new">Reports (beta)</span>':'');$('#mbody').textContent=on?'New reports screen visible to users.':'The new reports code is deployed in this release but nothing links to it.';$('#flagTxt').textContent=on?'Flip the configuration back off at any time, no redeploy needed.':'Trunk stays releasable every day while the feature is built over several weeks.'}
+$('#flag').addEventListener('change',flag);flag();
+$('#bbStep').insertAdjacentHTML('beforeend',stepHTML());
+stepper('#bbStep',['Start: many callers use the old persistence code directly.','Create an abstraction over the part of the system you need to change.','Refactor the rest of the system to use the abstraction, in small releasable commits.','Build the new implementation behind the abstraction. It is not on the production code path yet.','Switch the abstraction to delegate to the new implementation (maybe by configuration, one part at a time).','Remove the old implementation.','Remove the abstraction layer if it no longer earns its keep. Trunk was releasable at every step.'],
+ i=>{const s=$('#bbSvg');s.innerHTML='';const callers=['orders','billing','reports','admin'];callers.forEach((c,k)=>{s.appendChild(el('rect',{x:20+k*150,y:10,width:120,height:34,rx:6,fill:'var(--surface)',stroke:'var(--line)'}));s.appendChild(el('text',{x:80+k*150,y:32,'text-anchor':'middle','font-size':12,fill:'var(--ink)'},c))});
+  const abs=i>=1&&i<6,useAbs=i>=2&&i<6,newImpl=i>=3,oldImpl=i<5,active=i>=4?'new':'old';
+  if(abs){s.appendChild(el('rect',{x:120,y:90,width:400,height:36,rx:6,fill:'var(--blue-soft)',stroke:'var(--blue)','stroke-width':2}));s.appendChild(el('text',{x:320,y:113,'text-anchor':'middle','font-size':12.5,'font-weight':700,fill:'var(--ink)'},'Repository interface (the abstraction)'))}
+  if(oldImpl){s.appendChild(el('rect',{x:100,y:170,width:180,height:38,rx:6,fill:active==='old'?'var(--ok-soft)':'var(--surface)',stroke:active==='old'?'var(--ok)':'var(--line)'}));s.appendChild(el('text',{x:190,y:194,'text-anchor':'middle','font-size':12,fill:'var(--ink)'},'old persistence'))}
+  if(newImpl){s.appendChild(el('rect',{x:360,y:170,width:180,height:38,rx:6,fill:active==='new'?'var(--ok-soft)':'var(--pencil-soft)',stroke:active==='new'?'var(--ok)':'var(--pencil)'}));s.appendChild(el('text',{x:450,y:194,'text-anchor':'middle','font-size':12,fill:'var(--ink)'},'new persistence'))}
+  callers.forEach((c,k)=>{const x=80+k*150;const viaAbs=useAbs||(i===1&&k<1);if(viaAbs)s.appendChild(el('line',{x1:x,y1:44,x2:Math.max(140,Math.min(500,x)),y2:90,stroke:'var(--muted)'}));else{const tx=i>=6?450:190;s.appendChild(el('line',{x1:x,y1:44,x2:tx,y2:170,stroke:i>=6?'var(--ok)':'var(--muted)'}))}});
+  if(abs){const tx=active==='new'?450:190;s.appendChild(el('line',{x1:320,y1:126,x2:tx,y2:170,stroke:'var(--ok)','stroke-width':2.4,class:'flow'}))}});
+function dm(v){const s=$('#dmSvg');s.innerHTML='';const N={app:[210,30,'portfolio app'],pr:[90,115,'pricing engine'],se:[330,115,'settlement engine'],f1:[90,200,'framework 1.2'],f2:[330,200,v?'framework 1.3':'framework 1.2']};
+ const E=v?[['app','pr'],['app','se'],['pr','f2'],['se','f1']]:[['app','pr'],['app','se'],['pr','f1'],['se','f1']];
+ E.forEach(([a,b])=>{const A=N[a],B=N[b];const tgt=!v&&b==='f1'?[210,200]:[B[0],B[1]];s.appendChild(el('line',{x1:A[0],y1:A[1]+14,x2:tgt[0],y2:tgt[1]-14,stroke:v&&(b==='f2'||b==='f1')&&a!=='app'?'var(--bad)':'var(--muted)','stroke-width':2}))});
+ const nodes=v?['app','pr','se','f1','f2']:['app','pr','se'];nodes.forEach(k=>{const n=N[k];s.appendChild(el('rect',{x:n[0]-70,y:n[1]-14,width:140,height:28,rx:6,fill:'var(--surface)',stroke:k[0]==='f'?'var(--bad)':'var(--blue)'}));s.appendChild(el('text',{x:n[0],y:n[1]+5,'text-anchor':'middle','font-size':12,fill:'var(--ink)'},n[2]))});
+ if(!v){s.appendChild(el('rect',{x:140,y:186,width:140,height:28,rx:6,fill:'var(--surface)',stroke:'var(--ok)'}));s.appendChild(el('text',{x:210,y:205,'text-anchor':'middle','font-size':12,fill:'var(--ink)'},'framework 1.2'))}
+ $('#dmTxt').innerHTML=v?'<span class="badc">The app now needs two versions of the framework at once. At runtime only one can load: this is the diamond.</span>':'<span class="okc">One framework version, shared by everything.</span>'}
+seg('[data-dm]',b=>dm(+b.dataset.dm));dm(0);
+const W=['Must deploy independently','Core + plugins','Interface to another system','Compile/link too slow','IDE too slow to open','Too big for one team','"Reuse" in general','Each team wants its own'];const WG=[1,1,1,1,1,1,0,0];
+$('#why').innerHTML=W.map((w,i)=>`<button class="chip" data-w="${i}" aria-pressed="false">${w}</button>`).join('');
+$$('#why button').forEach(b=>b.addEventListener('click',()=>{b.setAttribute('aria-pressed',b.getAttribute('aria-pressed')==='true'?'false':'true');b.style.background=b.getAttribute('aria-pressed')==='true'?'var(--blue-soft)':'';const on=$$('#why button').filter(x=>x.getAttribute('aria-pressed')==='true').map(x=>+x.dataset.w);
+ const good=on.filter(i=>WG[i]).length,bad=on.filter(i=>!WG[i]);$('#whyTxt').innerHTML=(good?`<span class="okc">${good} good reason${good>1?'s':''} to split.</span> `:'')+(bad.includes(6)?'<span class="badc">Reuse alone is a weak reason; components earn their keep through independent change and deployment.</span> ':'')+(bad.includes(7)?'<span class="badc">Team ownership of components adds communication cost; prefer feature teams.</span>':'')+(on.length?'':'')+(!on.length?'':'')}));
+const G={fw:[70,200,'framework'],cds:[70,60,'CDS library'],pr:[300,60,'pricing engine'],se:[300,140,'settlement engine'],re:[300,220,'reports engine'],pf:[540,140,'portfolio app']};
+const DN={fw:['pr','se','re'],cds:['pr'],pr:['pf'],se:['pf'],re:['pf'],pf:[]};const UP={pr:['cds','fw'],se:['fw'],re:['fw'],pf:['pr','se','re']};
+let st={};function gdraw(){const s=$('#gSvg');s.innerHTML='';Object.keys(DN).forEach(a=>DN[a].forEach(b=>{const A=G[a],B=G[b];s.appendChild(el('line',{x1:A[0]+60,y1:A[1],x2:B[0]-64,y2:B[1],stroke:st[a]==='ok'&&st[b]?'var(--ok)':'var(--line)','stroke-width':2}))}));
+ Object.entries(G).forEach(([k,[x,y,t]])=>{const v=st[k];const c=v==='ok'?'ok':v==='bad'?'bad':v==='skip'?'mid':'line';const g=el('g',{class:'node',tabindex:0,role:'button'});g.appendChild(el('rect',{x:x-62,y:y-18,width:124,height:36,rx:7,fill:v?`var(--${c}-soft)`:'var(--surface)',stroke:v?`var(--${c})`:'var(--blue)','stroke-width':1.8}));g.appendChild(el('text',{x,y:y+5,'text-anchor':'middle','font-size':12,'font-weight':600,fill:'var(--ink)'},t));
+  g.addEventListener('click',()=>change(k));g.addEventListener('keydown',e=>{if(e.key==='Enter')change(k)});s.appendChild(g)})}
+function change(k){st={};const L=$('#gLog');L.innerHTML=`Change committed to <b>${G[k][2]}</b>.\n`;const q=[k];const done=new Set();const fail=$('#setFail').checked;
+ while(q.length){const c=q.shift();if(done.has(c))continue;if(c!=='pf'&&c!==k&&UP[c]&&UP[c].some(u=>!done.has(u)&&(u===k||isDown(k,u)))){q.push(c);continue}
+  done.add(c);let ok=true;if(c==='se'&&fail&&(k==='fw'))ok=false;if(c==='pf'&&UP.pf.some(u=>st[u]==='bad')){st[c]='skip';L.innerHTML+=`<span class="mid">⏸ portfolio app not rebuilt: an upstream build failed; keep the last good version</span>\n`;continue}
+  st[c]=ok?'ok':'bad';L.innerHTML+=`<span class="${ok?'ok':'bad'}">${ok?'✓':'✗'} ${G[c][2]} ${c===k?'builds and passes':'rebuilt'+(ok?' against new upstream, passes':' and FAILS')}</span>\n`;if(ok)DN[c].forEach(d=>q.push(d))}
+ if(k==='fw'&&fail)L.innerHTML+='The framework change is treated as broken until all three engines pass against it.';gdraw()}
+function isDown(from,to){return(DN[from]||[]).some(d=>d===to||isDown(d,to))}
+$('#gReset').addEventListener('click',()=>{st={};$('#gLog').innerHTML='Click any component to commit a change to it.';gdraw()});$('#gReset').click();
+$('#trigRun').addEventListener('click',()=>{const a=$('#t1').value,b=$('#t2').value,bad=$('#cdsBad').checked;const L=$('#tLog');L.innerHTML='New CDS library and new framework published.\n';
+ const take=[];if(a==='fluid')take.push('CDS');else L.innerHTML+='CDS trigger is static: new CDS version ignored.\n';if(b==='fluid')take.push('framework');else L.innerHTML+='Framework trigger is static: new framework ignored.\n';
+ if(!take.length){L.innerHTML+='No rebuild of the pricing engine. Safe, but you are drifting behind upstream.';return}
+ L.innerHTML+=`One pricing engine build with new ${take.join(' + ')}.\n`;if(bad&&take.includes('CDS')){L.innerHTML+='<span class="bad">✗ Build fails.</span>\n';L.innerHTML+=take.length>1?'<span class="mid">Both triggers become guarded, and you don\'t know which upstream change broke it. You have to investigate.</span>':'<span class="mid">CDS trigger becomes guarded: further CDS releases are ignored until this is fixed. The cause is clear.</span>'}else L.innerHTML+='<span class="ok">✓ Build passes; triggers stay fluid.</span>'});
+let rung=0;function lad(){const s=$('#lSvg');s.innerHTML='';const steps=[['A','v1',''],['B','v1','built against A v1'],['A','v2','built against B v1'],['B','v2','built against A v2'],['A','v3','built against B v2']];
+ steps.slice(0,rung+1).forEach((r,i)=>{const x=r[0]==='A'?70:270,y=190-i*42;s.appendChild(el('rect',{x,y,width:90,height:30,rx:6,fill:i===rung?'var(--blue-soft)':'var(--surface)',stroke:r[0]==='A'?'var(--blue)':'var(--pencil)'}));s.appendChild(el('text',{x:x+45,y:y+20,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--ink)'},`${r[0]} ${r[1]}`));
+  if(i){const p=steps[i-1];const px=p[0]==='A'?160:270,cx=r[0]==='A'?160:270;s.appendChild(el('line',{x1:r[0]==='A'?270:160,y1:y+42+15,x2:cx===160?160:270,y2:y+15,stroke:'var(--muted)','stroke-width':1.6}))}
+  if(r[2])s.appendChild(el('text',{x:r[0]==='A'?10:370,y:y+20,'font-size':10,fill:'var(--muted)','text-anchor':r[0]==='A'?'start':'start'},''))});
+ s.appendChild(el('text',{x:210,y:14,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},rung?`${steps[rung][0]} ${steps[rung][1]} ${steps[rung][2]}`:'start from an existing binary of A'))}
+$('#ladder').addEventListener('click',()=>{rung=Math.min(4,rung+1);lad()});$('#ladReset').addEventListener('click',()=>{rung=0;lad()});lad();
+quiz('#qQuiz','#qScore',[
+ {q:'You need to swap out the ORM across the whole app without a long-lived branch. Use…',o:['A feature branch','Branch by abstraction'],a:1,why:'Abstraction, migrate callers, new implementation, switch, remove old.'},
+ {q:'The difference between a library and a component, in this book:',o:['Size','Libraries are outside your team\'s control and change rarely; components are developed in-house and change often'],a:1,why:'That affects how you version and integrate them.'},
+ {q:'The framework changes and the settlement engine fails against it. Should the portfolio app rebuild?',o:['Yes, with the new pricing and reports engines','No; treat the framework change as broken'],a:1,why:'The app must use one consistent framework version.'},
+ {q:'A "guarded" trigger is…',o:['A fluid trigger that broke the build and now waits','A trigger that never fires'],a:0,why:'Cautious optimism: static, fluid, guarded.'},
+ {q:'Should teams be organised around components?',o:['Yes','Generally no; feature teams that cut across components work better'],a:1,why:'Component teams make every feature a cross-team negotiation.'},
+]);
+
+})();
+</script>
+</body>
+</html>

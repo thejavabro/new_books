@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Case Study</title>
+<meta name="description" content="A routine database failover, one unclosed statement in a lookup service, and an airline&#x27;s check-in kiosks went dark. The story is small; the lesson about how cracks spread is not.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Release It! companion. Layout: an operations logbook on blueprint grid paper.
+   Blue ink = structure and healthy flow, orange pencil = load and stress, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+.callout.missing{border-color:var(--bad);background:var(--bad-soft)}
+.callout.missing b.h{color:var(--bad)}
+em.miss{font-style:normal;font-family:var(--mono);font-size:.72rem;color:var(--bad);border:1px solid var(--bad);border-radius:4px;padding:0 5px;margin-left:4px;white-space:nowrap}
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;max-height:220px;overflow:auto;display:flex;flex-direction:column;gap:2px}
+.log .e{color:var(--bad)} .log .w{color:var(--mid)} .log .g{color:var(--ok)}
+
+/* page */
+
+.pool{display:grid;grid-template-columns:repeat(20,minmax(0,1fr));gap:4px}
+.pool i{aspect-ratio:1;border-radius:3px;background:var(--ok-soft);border:1px solid var(--ok);transition:background .25s}
+.pool i.busy{background:var(--blue);border-color:var(--blue)}
+.pool i.leak{background:var(--bad);border-color:var(--bad)}
+.td{display:flex;flex-direction:column;gap:8px}
+.td button{text-align:left;border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:8px 12px;font-family:var(--mono);font-size:.78rem;white-space:pre-wrap;word-break:break-word}
+.td button.hit{border-color:var(--bad);background:var(--bad-soft)}
+.td button.miss{opacity:.5}
+.tline{display:flex;flex-direction:column;border-left:3px solid var(--line);margin-left:6px}
+.tline div{padding:6px 0 6px 16px;position:relative;font-size:.95rem}
+.tline div::before{content:"";position:absolute;left:-8px;top:12px;width:13px;height:13px;border-radius:50%;background:var(--surface);border:3px solid var(--blue)}
+.tline div.bad::before{border-color:var(--bad)} .tline div.ok::before{border-color:var(--ok)}
+.tline b{font-family:var(--mono);font-size:.82rem;color:var(--muted);margin-right:6px}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Release It! · visual companion</a><span class="tag">Part I · Create Stability · Chapter 2 of 17</span></div>
+  <h1>Case Study: The Exception That Grounded an Airline</h1>
+  <p class="lede">A routine database failover, one unclosed statement in a lookup service, and an airline's check-in kiosks went dark. The story is small; the lesson about how cracks spread is not.</p>
+  <nav class="toc" aria-label="Sections"><a href="#setup">The setup</a><a href="#night">The night</a><a href="#cost">Consequences</a><a href="#dumps">Thread dumps</a><a href="#bug">The bug</a><a href="#prevent">Prevention</a><a href="#check">Quick check</a></nav>
+  
+</header>
+
+<section id="setup" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>A textbook high-availability system</h2></div>
+  <p>The airline was moving to shared services. Its "core facilities" service (CF) answered flight searches for the self-service check-in kiosks, the phone system (IVR) and the feeds to travel-booking partners. Gate agent and call center apps were scheduled to move onto CF later, which turned out to be lucky. CF was built to be bulletproof: a cluster of app servers behind redundant load balancers, a clustered database with a virtual IP address, redundant everything, even a second site. Tap a box to see its role.</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="aSvg" viewBox="0 0 660 300" role="img" aria-label="Kiosks, IVR and partner feeds all depend on CF, which depends on a clustered database"></svg></div>
+    <div class="detail" id="aTxt" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="night" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>A routine change, then darkness</h2></div>
+  <p>The change itself went perfectly. Two hours after everyone signed off, every kiosk in the country went red, then the phone system. Follow the night.</p>
+  <div class="sheet">
+    <div class="tline">
+      <div><b>23:00</b>Planned database failover from DB 1 to DB 2 for maintenance, then back again. Cluster software moves the virtual IP in about a minute.</div>
+      <div class="ok"><b>00:30</b>Monitoring stays green throughout. Change marked "Completed, Success". The engineer goes to bed after a 22-hour shift.</div>
+      <div class="bad"><b>02:30</b>All check-in kiosks go red at once, nationwide. Minutes later, the IVR servers follow. It is 5:30 a.m. on the East Coast: peak check-in.</div>
+      <div><b>02:35</b>Severity 1 call. Scripted thread dumps and database snapshots are taken right away (no improvising).</div>
+      <div><b>~03:30</b>Monitoring says CF is fine, but it only checks a status page. CF is the one shared dependency, so the team restarts CF servers. IVR recovers. Kiosks stay red.</div>
+      <div class="ok"><b>~05:40</b>On a hunch, the kiosk app servers are restarted too. All green. A little over three hours in total.</div>
+    </div>
+  </div>
+  <div class="callout blue"><b class="h">Restore service first</b><span>Investigation comes second, unless data can be gathered without lengthening the outage. Pre-built scripts that capture thread dumps and snapshots strike that balance. "Reboot the world" works but is slow; like a doctor, look for the one culprit the symptoms point to.</span></div>
+</section>
+
+<section id="cost" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Three hours, a whole day of damage</h2></div>
+  <p>The outage lasted three hours, but the airline could not check in passengers by hand fast enough. Off-shift agents were called in on overtime and only cleared the backlog by mid-afternoon. Planes could not leave gates, incoming flights were moved to other gates, the delays made national TV, and on-time numbers that feed the regulator's report card (and the CEO's bonus) suffered. Drag the slider to see how one hung service ripples outward.</p>
+  <div class="sheet">
+    <label class="rng"><span>Hours since the kiosks went dark: <b id="hV"></b></span><input type="range" id="h" min="0" max="12" value="0"></label>
+    <div class="bars" id="cBars"></div>
+    <p class="small">Illustrative curve of the knock-on effects described in the chapter, not data from the book.</p>
+  </div>
+</section>
+
+<section id="dumps" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Read the thread dumps like a detective</h2></div>
+  <p>A postmortem is a murder mystery with no body: the servers are back up, so the failed state is gone. What survives are logs, configs and, best of all, <b>thread dumps</b>, which show what every thread was doing. The cluster configuration was textbook. Then the dumps. Tap the line in each that gives the game away.</p>
+  <div class="sheet">
+    <div class="row"><div class="seg" role="group" aria-label="Server"><button data-d="0" aria-pressed="true">Kiosk app server</button><button data-d="1" aria-pressed="false">CF app server</button></div></div>
+    <div class="td" id="td"></div>
+    <p id="tdTxt" aria-live="polite" class="small">Pick the most suspicious frame.</p>
+  </div>
+  <div class="callout"><b class="h">Two quiet villains</b><span>The kiosks called CF over a remote-procedure mechanism that offered <b>no timeout</b>, so a hung CF meant hung callers. And CF's health page ran on a separate HTTP thread pool that stayed idle and happy while every worker thread was stuck.</span></div>
+</section>
+
+<section id="bug" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>The smoking gun: one unhandled exception</h2></div>
+  <p>The lookup method looked careful: get a connection, create a statement, and close both in a <i>finally</i> block. The flaw: closing a statement is allowed to throw. After a failover, every pooled connection points at a dead TCP socket. The driver still happily creates statements, but closing one throws, so the line that closes the connection never runs. Here is the same shape in sketch form:</p>
+  <div class="two">
+    <pre class="code">// leaky: if stmt.close() throws,
+// conn.close() is skipped forever
+try {
+  conn = pool.get();
+  stmt = conn.statement();
+  return lookup(stmt);
+} finally {
+  if (stmt) stmt.close();  // may throw!
+  if (conn) conn.close();
+}</pre>
+    <pre class="code">// safe: each resource closed on its own,
+// failures in one don't skip the other
+try (var conn = pool.get();
+     var stmt = conn.statement()) {
+  return lookup(stmt);
+}
+// or: close each in its own try/catch,
+// and log what failed</pre>
+  </div>
+  <p>Now run it. The pool has 40 connections, like CF's. Before the failover, calls borrow and return connections. After it, each call leaks one.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn" id="fo">Fail over the database</button><button class="btn primary" id="run">Run 10 lookups</button><button class="btn" id="rst">Restart CF</button></div>
+    <div class="pool" id="pool" aria-label="Connection pool, 40 slots"></div>
+    <div class="row between"><span class="small"><span class="okc">green</span> free · <span class="blue">blue</span> in use · <span class="badc">red</span> leaked</span><b id="pTxt" class="mono"></b></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="prevent" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>An ounce of prevention?</h2></div>
+  <p>"This must never happen again." But how? A code review would only catch it if a reviewer knew the driver's internals. A stress test reproduced it easily once people knew where to look. The honest answer is that bugs like this will always exist. The better question: <b>how do we stop a bug in one system from taking down everything else?</b> Which of these defenses would have contained it?</p>
+  <div class="cardgrid" id="defs"></div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Four questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Release It! Design and Deploy Production-Ready Software</i>, second edition, by Michael T. Nygard (Pragmatic Bookshelf, 2018). Explanations, examples, code snippets and drawings are original summaries; nothing here is copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch01-living-in-production.html"><span>Previous · Chapter 1</span><b>Living in Production</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch03-stabilize-your-system.html"><span>Next · Chapter 3</span><b>Stabilize Your System</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('rel:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('rel:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>{if(data[i])f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%'})))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+
+const N=[{id:'k',x:90,y:60,t:'Check-in kiosks',d:'Self-service check-in, already migrated to CF. All 40 request threads ended up blocked reading from CF.'},
+{id:'i',x:90,y:150,t:'Phone (IVR)',d:'Interactive voice response, also migrated to CF. Recovered as soon as CF was restarted.'},
+{id:'p',x:90,y:240,t:'Partner feeds',d:'Data feeds for travel-booking sites, also on CF.'},
+{id:'lb',x:270,y:150,t:'Load balancers',d:'A redundant pair directs traffic to CF app servers. No single point of failure here.'},
+{id:'cf',x:420,y:150,t:'CF app servers',d:'Flight search as a shared service, on a cluster. Separate thread pools for remote calls and HTTP, which hid the problem from monitoring.'},
+{id:'db',x:580,y:150,t:'DB cluster',d:'Two database hosts sharing a RAID array, with a virtual IP that moves on failover. Configured by the book.'}];
+const E=[['k','lb'],['i','lb'],['p','lb'],['lb','cf'],['cf','db']];
+function drawA(sel){const s=$('#aSvg');s.innerHTML='';const M={};N.forEach(n=>M[n.id]=n);
+  E.forEach(([a,b])=>s.appendChild(el('line',{x1:M[a].x+60,y1:M[a].y,x2:M[b].x-60,y2:M[b].y,stroke:'var(--blue)','stroke-width':2,class:'flow'})));
+  N.forEach(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const on=n.id===sel;
+    g.appendChild(el('rect',{x:n.x-60,y:n.y-24,width:120,height:48,rx:8,fill:on?'var(--blue-soft)':'var(--surface)',stroke:'var(--blue)','stroke-width':on?3:1.6}));
+    g.appendChild(el('text',{x:n.x,y:n.y+5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},n.t));
+    g.addEventListener('click',()=>drawA(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'){drawA(n.id)}});s.appendChild(g)});
+  s.appendChild(el('text',{x:330,y:290,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},'Gate agent and call center apps were not on CF yet'));
+  const n=M[sel];$('#aTxt').innerHTML=`<h3 class="blue">${n.t}</h3><p>${n.d}</p>`}
+drawA('cf');
+
+function cost(){const h=+$('#h').value;$('#hV').textContent=h;const sat=(k,d)=>Math.min(100,Math.max(0,(h-d)*k));
+  bars('#cBars',[{l:'Kiosks down',v:h<=3?100:0,c:'bad',txt:h<=3?'down':'back up'},{l:'Check-in backlog',v:h<=3?h*33:Math.max(0,100-(h-3)*11),c:'pencil'},{l:'Overtime agents called in',v:sat(25,0.5),c:'mid'},{l:'Flights delayed at gates',v:h<1?0:Math.min(100,h*14),c:'bad'},{l:'Gate reassignments',v:sat(12,2),c:'d5'},{l:'Brand and regulator damage',v:sat(9,2),c:'d4'}],100,v=>Math.round(v)+'%')}
+$('#h').addEventListener('input',cost);cost();
+
+const D=[[['"kiosk-req-17" RUNNABLE','  at SocketInputStream.socketRead0(Native)','  at remote.CallStub.invoke','  at FlightSearch.lookupByCity  (remote stub)','  at KioskServlet.doGet'],1,'All 40 kiosk request threads sat here: inside a remote call to CF, reading a socket for a reply that never came. No timeout was possible.'],
+ [['"rpc-worker-9" WAITING','  at Object.wait(Native)','  at ConnectionPool.getConnection','  at FlightSearch.lookupByCity','  at rpc.Dispatcher.run'],2,'Every remote-call thread on every CF server was waiting to check out a database connection. The pool was empty. The HTTP pool, meanwhile, was idle, so the status page stayed green.']];
+function showD(k){const [lines,hit,why]=D[k];$('#td').innerHTML=lines.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('');$('#tdTxt').textContent='Pick the most suspicious frame.';
+  $$('#td button').forEach(b=>b.addEventListener('click',()=>{const ok=+b.dataset.i===hit;$$('#td button').forEach((x,i)=>{x.classList.toggle('hit',i===hit);x.classList.toggle('miss',i!==hit)});$('#tdTxt').innerHTML=(ok?'<b class="okc">Yes.</b> ':'<b class="badc">Look again:</b> the highlighted frame. ')+why}))}
+seg('[data-d]',b=>showD(+b.dataset.d));showD(0);
+
+let pool=Array(40).fill(0),failed=false,blocked=0;
+$('#pool').innerHTML=pool.map(()=>'<i></i>').join('');
+function logl(t,c){const d=document.createElement('div');d.className=c||'';d.textContent=t;$('#log').prepend(d)}
+function drawP(){$$('#pool i').forEach((x,i)=>{x.className=pool[i]===2?'leak':pool[i]===1?'busy':''});const f=pool.filter(v=>v===0).length;$('#pTxt').textContent=`${f} / 40 free`+(blocked?` · ${blocked} threads blocked`:'')}
+$('#fo').addEventListener('click',()=>{failed=true;logl('DB failover: virtual IP moved; old TCP sockets are now dead','w')});
+$('#rst').addEventListener('click',()=>{pool.fill(0);blocked=0;failed=false;logl('CF restarted: fresh pool, fresh connections','g');drawP()});
+$('#run').addEventListener('click',()=>{let n=10;const tick=()=>{if(!n--)return;const i=pool.indexOf(0);
+  if(i<0){blocked++;logl('getConnection() ... waiting forever (pool exhausted)','e');drawP();return setTimeout(tick,90)}
+  pool[i]=1;drawP();setTimeout(()=>{if(failed){pool[i]=2;logl(`lookup #${i}: statement.close() threw; connection never returned`,'e')}else{pool[i]=0;logl(`lookup #${i}: ok, connection returned`,'g')}drawP();tick()},120)};tick()});
+drawP();logl('Pool ready. Try a few lookups, then fail over.','');
+
+cards('#defs',[{t:'Timeouts on the kiosk side',c:'ok',d:'Yes. Kiosk threads would have given up on CF and freed themselves instead of hanging. The kiosks would still lose flight search, but not their whole server.'},
+{t:'Circuit breaker around CF calls',c:'ok',d:'Yes. After a few failures, calls stop going to CF at all, and the kiosk can show a fallback such as "see an agent".'},
+{t:'Bulkheads: split CF into groups',c:'ok',d:'Yes. Separate CF pools per caller would have limited the damage to one set of clients.'},
+{t:'A real health check',c:'ok',d:'It would not prevent the failure, but probing a real transaction would have flagged CF as sick long before customers did.'},
+{t:'More redundant hardware',c:'bad',d:'No. Every server already had a twin. The bug was in code shared by all of them, so redundancy just meant identical failures.'},
+{t:'A rule: "never fail over again"',c:'bad',d:'No. The failover only exposed the leak. Any network blip could have done the same.'}]);
+
+quiz('#qQuiz','#qScore',[
+ {q:'The database failover was carried out incorrectly.',a:1,why:'The cluster work was textbook. The failover merely exposed a latent bug.'},
+ {q:'All the CF threads were stuck waiting to check out a database connection.',a:0,why:'The pool had been drained by leaked connections.'},
+ {q:'Monitoring missed the problem because it only checked a status page on a different thread pool.',a:0,why:'A shallow health check can stay green while real work is blocked.'},
+ {q:'The main lesson is to find and remove every bug of this kind before release.',a:1,why:'Bugs will happen; the lesson is to stop one system\'s bug from spreading to the rest.'}],['True','False']);
+
+})();
+</script>
+</body>
+</html>

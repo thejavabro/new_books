@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Organizing a Kafka Project</title>
+<meta name="description" content="Kafka projects fail on organization more often than on technology. Turn workflows into events, manage topics as code, and test at every level.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<script>try{var t=JSON.parse(localStorage.getItem('kfa:theme'));if(t)document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
+<style>
+/* Shared base for the Accelerate companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+button.tag{cursor:pointer}
+button.tag:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{font-family:var(--mono);font-size:.84rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:0;overflow-x:auto;white-space:pre}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--pencil)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+.field{border:1px dashed var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:6px;background:var(--surface)}
+.field .eyebrow{color:var(--pencil)}
+.missing{border:2px solid var(--bad);background:var(--bad-soft);color:var(--bad);border-radius:10px;padding:12px 16px}
+
+/* page */
+
+.board{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start}
+.sticky{width:128px;min-height:80px;padding:8px;border-radius:3px;font-size:.84rem;line-height:1.3;box-shadow:0 2px 0 rgba(0,0,0,.12);border:1px solid rgba(0,0,0,.08);text-align:left;color:#2a2a2a}
+.sticky.ev{background:#ffb470}.sticky.cmd{background:#9cc8ff}.sticky.act{background:#ffe680}.sticky.sys{background:#f4a6d0}
+.sticky[aria-pressed="true"]{outline:3px solid var(--ink);outline-offset:2px}
+.sticky small{display:block;font-family:var(--mono);font-size:.64rem;opacity:.75;text-transform:uppercase}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:.85rem;color:var(--muted)}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.req{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.req .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+@media (max-width:560px){.req .it{grid-template-columns:1fr}}
+.pyr{display:flex;flex-direction:column;align-items:center;gap:6px}
+.pyr button{border:1.5px solid var(--line);border-radius:6px;padding:10px;font-weight:600;background:var(--surface);max-width:100%}
+.pyr button[aria-pressed="true"]{border-color:var(--blue);background:var(--blue-soft)}
+.calc{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:640px){.calc{grid-template-columns:1fr}}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Kafka for Architects · visual companion</a><span class="tag">Part III · Chapter 10 of 12</span><button class="tag themebtn" id="themeBtn" type="button" aria-label="Toggle light or dark theme">Theme</button></div>
+  <h1>Organizing a Kafka Project</h1>
+  <p class="lede">Kafka projects fail on organization more often than on technology. Turn workflows into events, manage topics as code, and test at every level.</p>
+  <nav class="toc" aria-label="Sections"><a href="#workflows">Event storming</a><a href="#functional">Topic requirements</a><a href="#nfr">Nonfunctional</a><a href="#gitops">Cluster as code</a><a href="#envs">Environments</a><a href="#testing">Testing</a><a href="#recap">Recap and quiz</a></nav>
+</header>
+
+<section id="workflows" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Start with the business, not the broker</h2></div>
+  <p>Successful event-driven systems start at the strategic level, before schemas or topics. Teams map business workflows, often with <b>event storming</b>: sticky notes on a wall for domain events (things that happened, past tense), the commands that cause them, the actors who issue them and the systems involved. Ideas from domain-driven design (bounded contexts, aggregates) help find boundaries. Tap the notes of this loan-processing storm.</p>
+  <div class="sheet">
+    <div class="legend"><span><i style="background:#ffb470"></i>domain event</span><span><i style="background:#9cc8ff"></i>command</span><span><i style="background:#ffe680"></i>actor</span><span><i style="background:#f4a6d0"></i>system</span></div>
+    <div class="board" id="board"></div>
+    <div class="detail" id="bInfo" aria-live="polite"></div>
+  </div>
+  <p>The result goes into an <b>event catalogue</b>: for every event its purpose, producer, consumers, key data and owner, written by and for business and technical people alike. Early catalogues can be spreadsheets; later, general metadata or catalogue tools work better than hand-kept lists.</p>
+  <div class="tbl"><table class="t" id="cat"></table></div>
+</section>
+
+<section id="functional" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>From questions to topic design</h2></div>
+  <p>Next, a set of questions at the meeting point of business and technology decides whether a process fits Kafka at all and how each topic should look. Answer them for a hypothetical <code>LOAN_DECISIONS</code> topic and watch the draft configuration change.</p>
+  <div class="sheet">
+    <div class="req" id="req"></div>
+<pre class="code" id="reqOut"></pre>
+  </div>
+</section>
+
+<section id="nfr" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Nonfunctional requirements</h2></div>
+  <p>Then the numbers that size and tune everything: message format and <b>average and peak message size</b>, <b>latency</b> targets (average and maximum), <b>throughput</b> now and in a year (peaks at month-end or campaigns, bursts from imports), <b>security</b> needs (PII, payment data, encryption in transit or at rest) and <b>data-loss tolerance</b>: critical, important, or best effort. Also: what happens to messages that keep failing, and who reprocesses them?</p>
+  <div class="sheet">
+    <div class="calc">
+      <label class="rng"><span>Peak throughput: <b id="ntV"></b> MB/s</span><input type="range" id="nt" min="1" max="300" value="40"></label>
+      <label class="rng"><span>Max latency target: <b id="nlV"></b> ms</span><input type="range" id="nl" min="5" max="2000" step="5" value="100"></label>
+      <label class="rng"><span>Loss tolerance: <b id="nrV"></b></span><input type="range" id="nr" min="0" max="2" value="0"></label>
+    </div>
+<pre class="code" id="nOut"></pre>
+    <p class="small">A sketch of how requirements map to settings; numbers are illustrative starting points to validate in performance tests.</p>
+  </div>
+</section>
+
+<section id="gitops" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Maintaining the cluster structure</h2></div>
+  <p>Topics, ACLs, schemas and connectors are shared infrastructure, and they drift without governance. First switch off <code>auto.create.topics.enable</code> (it defaults to true): otherwise a typo in a producer's topic name silently creates a new topic with default settings. Then choose how changes are made.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Approach"><button data-g="cli" aria-pressed="true">CLI and UI tools</button><button data-g="git" aria-pressed="false">GitOps pipeline</button><button data-g="op" aria-pressed="false">Kubernetes operator</button><button data-g="api" aria-pressed="false">Admin API</button></div>
+    <div class="svgbox fit"><svg id="gSvg" viewBox="0 0 640 180" role="img" aria-label="Change flow for the selected approach"></svg></div>
+    <p id="gTxt" aria-live="polite"></p>
+  </div>
+<pre class="code"><span class="c"># topics.yaml in Git: the desired state (illustrative)</span>
+<span class="k">topics:</span>
+  - name: <span class="s">CUSTOMER_PROFILES</span>
+    partitions: 12
+    replication: 3
+    config: { cleanup.policy: compact, min.insync.replicas: 2 }
+    owner: team-profile
+<span class="k">acls:</span>
+  - principal: User:c360-svc
+    allow: [Read]
+    topic: CUSTOMER_PROFILES</pre>
+  <div class="field"><span class="eyebrow">Field notes</span><p>Northwind's team picks GitOps and wants their AsyncAPI specifications to be the single source of truth for the cluster. Since the tools expect their own formats, they plan a small generator that turns AsyncAPI documents into the configuration the GitOps tool applies.</p></div>
+</section>
+
+<section id="envs" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Environments</h2></div>
+  <p>At minimum: <b>Dev</b> for building and prototyping, <b>Test</b> (or QA/staging) for integration and performance testing with production-like settings, and <b>Prod</b>. Each needs topics, schemas, ACLs and connectors kept in step, which is exactly what cluster-as-code gives you: the same definitions applied with environment-specific values.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Layout"><button data-e="sep" aria-pressed="true">Separate clusters</button><button data-e="shared" aria-pressed="false">One shared non-prod cluster</button></div>
+    <div class="svgbox fit"><svg id="eSvg" viewBox="0 0 640 150" role="img" aria-label="Environment layout"></svg></div>
+    <p id="eTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="testing" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Testing Kafka applications</h2></div>
+  <p>Three layers, each answering a different question. Tap a layer.</p>
+  <div class="sheet">
+    <div class="two">
+      <div class="pyr" id="pyr"></div>
+      <div class="detail" id="pInfo" aria-live="polite"></div>
+    </div>
+  </div>
+<pre class="code" id="tCode"></pre>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Recap and quick check</h2></div>
+  <div class="recap">
+    <div><b>Business first</b><span>Event storming and an event catalogue before topics.</span></div>
+    <div><b>Requirements become config</b><span>Order, retention, criticality, latency, throughput, size.</span></div>
+    <div><b>Cluster as code</b><span>Disable auto-create; review changes as pull requests.</span></div>
+    <div><b>Test in layers</b><span>Mocks, embedded or containerized Kafka, then load tests.</span></div>
+  </div>
+  <div class="sheet"><div class="row between"><h3>Quick check</h3><span class="score" id="qScore"></span></div><div class="quiz" id="quiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Kafka for Architects: Event-driven architecture, logs, microservices, real-time event processing</i> by Katya Gorshkova (Manning, 2026). Explanations, examples, code snippets and drawings are original summaries, not copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch09-managing-kafka.html"><span>Previous · Chapter 9</span><b>Managing Kafka Within the Enterprise</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch11-operating-kafka.html"><span>Next · Chapter 11</span><b>Operating Kafka</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('kfa:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('acc:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: cycles auto -> light -> dark */
+(function(){const r=document.documentElement;let t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+ const b=document.getElementById('themeBtn');if(!b)return;
+ function lab(){b.textContent='Theme: '+(r.getAttribute('data-theme')||'auto')}lab();
+ b.addEventListener('click',()=>{const c=r.getAttribute('data-theme');const n=c==null?'light':c==='light'?'dark':null;
+  if(n)r.setAttribute('data-theme',n);else r.removeAttribute('data-theme');store.set('theme',n);lab()});})();
+
+
+function bx(s,x,y,w,h,t,col,fill,fs){s.appendChild(el('rect',{x,y,width:w,height:h,rx:7,fill:fill||'var(--surface)',stroke:col||'var(--blue)','stroke-width':1.6}));t.split('\n').forEach((l,i,a)=>s.appendChild(el('text',{x:x+w/2,y:y+h/2+4+(i-(a.length-1)/2)*14,'text-anchor':'middle','font-size':fs||12,'font-weight':600,fill:'var(--ink)'},l)))}
+function ar(s,x1,y1,x2,y2,col,fl){const L=el('line',{x1,y1,x2,y2,stroke:col||'var(--muted)','stroke-width':2});if(fl)L.setAttribute('class','flow');s.appendChild(L);const a=Math.atan2(y2-y1,x2-x1);s.appendChild(el('polygon',{points:`${x2},${y2} ${x2-9*Math.cos(a-.4)},${y2-9*Math.sin(a-.4)} ${x2-9*Math.cos(a+.4)},${y2-9*Math.sin(a+.4)}`,fill:col||'var(--muted)'}))}
+/* board */
+const B=[['act','Applicant','A person applying for a loan.'],['cmd','Submit application','Command issued by the applicant through the web portal.'],['ev','Loan application submitted','First domain event. Producer: Loan portal. Consumers: Credit check, CRM.'],['sys','Credit bureau','External system queried during the credit check.'],['ev','Credit check completed','Producer: Credit service. Carries score and risk band. Consumer: Underwriting.'],['act','Underwriter','Reviews borderline cases manually.'],['cmd','Approve / reject','Decision command from automated rules or an underwriter.'],['ev','Loan approved','Producer: Underwriting. Consumers: Contracts, Notifications, Customer 360.'],['ev','Loan rejected','Producer: Underwriting. Consumers: Notifications, Customer 360, Reporting.'],['ev','Contract signed','Producer: Contracts. Consumer: Payout.']];
+$('#board').innerHTML=B.map((b,i)=>`<button class="sticky ${b[0]}" data-i="${i}" aria-pressed="false"><small>${{ev:'event',cmd:'command',act:'actor',sys:'system'}[b[0]]}</small>${b[1]}</button>`).join('');
+seg('#board button',b=>{const x=B[+b.dataset.i];$('#bInfo').innerHTML=`<span class="eyebrow">${{ev:'Domain event',cmd:'Command',act:'Actor',sys:'External system'}[x[0]]}</span><h3>${x[1]}</h3><p>${x[2]}</p>`});
+$('#bInfo').innerHTML='<p class="small">Read left to right: the timeline of a loan, told as things that happen.</p>';
+$('#cat').innerHTML='<thead><tr><th>Event</th><th>Purpose</th><th>Producer</th><th>Consumers</th><th>Key data</th></tr></thead><tbody>'+[['LoanApplicationSubmitted','Start of the process','Loan portal','Credit check, CRM','applicationId, applicant, amount'],['CreditCheckCompleted','Risk known','Credit service','Underwriting','applicationId, score, band'],['LoanApproved','Customer can sign','Underwriting','Contracts, Notifications, C360','applicationId, terms'],['LoanRejected','Close application','Underwriting','Notifications, C360, Reporting','applicationId, reason']].map(r=>'<tr>'+r.map((c,i)=>`<td>${i===0?'<code>'+c+'</code>':c}</td>`).join('')+'</tr>').join('')+'</tbody>';
+
+/* functional */
+const RQ=[['Must events for one application be processed in order?','ord'],['Must events be retained permanently (state, audit)?','keep'],['Is this critical business data?','crit'],['Are events idempotent (safe to process twice)?','idem'],['Real-time processing needed (versus batch)?','rt'],['Does the payload contain personal data?','pii']];
+const ra={ord:true,keep:false,crit:true,idem:false,rt:true,pii:true};
+$('#req').innerHTML=RQ.map(([q,k])=>`<div class="it"><span>${q}</span><div class="seg" role="group"><button data-k="${k}" data-v="1" aria-pressed="${ra[k]}">Yes</button><button data-k="${k}" data-v="0" aria-pressed="${!ra[k]}">No</button></div></div>`).join('');
+function drq(){const L=[];L.push('<span class="k">topic</span>: LOAN_DECISIONS');L.push(ra.ord?'<span class="k">key</span>: applicationId            <span class="c"># same key, same partition, ordered</span>':'<span class="k">key</span>: none (sticky)             <span class="c"># spread evenly</span>');
+  L.push(ra.keep?'<span class="k">cleanup.policy</span>: compact          <span class="c"># or retention.ms=-1 for full history</span>':'<span class="k">retention.ms</span>: 604800000           <span class="c"># 7 days</span>');
+  L.push(ra.crit?'<span class="k">replication.factor</span>: 3\n<span class="k">min.insync.replicas</span>: 2\n<span class="k">producer acks</span>: all, idempotence on':'<span class="k">replication.factor</span>: 3\n<span class="k">min.insync.replicas</span>: 1');
+  L.push(ra.idem?'<span class="c"># consumers: at-least-once is fine</span>':'<span class="c"># consumers: deduplicate by event id, or use transactions</span>');
+  L.push(ra.rt?'<span class="c"># consumers: streaming, watch lag alerts</span>':'<span class="c"># consider whether Kafka fits; batch loads may suit ETL better</span>');
+  if(ra.pii)L.push('<span class="c"># PII: SASL_SSL/mTLS, tight ACLs, consider field encryption,</span>\n<span class="c">#      and how deletion requests reach compacted topics (tombstones)</span>');
+  $('#reqOut').innerHTML=L.join('\n')}
+$$('#req button').forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);ra[b.dataset.k]=b.dataset.v==='1';drq()}));drq();
+
+/* nfr */
+const LT=['critical','important','best effort'];
+function dn(){const t=+$('#nt').value,l=+$('#nl').value,r=+$('#nr').value;$('#ntV').textContent=t;$('#nlV').textContent=l;$('#nrV').textContent=LT[r];
+  const parts=Math.max(3,Math.ceil(t/10/3)*3);const linger=l<20?0:l<200?5:20;const out=[`<span class="k">partitions</span>: ${parts}                 <span class="c"># ~10 MB/s per partition assumed, rounded to a multiple of 3</span>`,`<span class="k">linger.ms</span>: ${linger}                   <span class="c"># ${l<20?'tight latency: send immediately':'room to batch'}</span>`,`<span class="k">batch.size</span>: ${l<20?'16384':'131072'}`,`<span class="k">compression.type</span>: ${l<20?'lz4':'zstd'}`];
+  out.push(r===0?'<span class="k">acks</span>: all\n<span class="k">min.insync.replicas</span>: 2\n<span class="k">enable.idempotence</span>: true\n<span class="c"># consumer: manual commit after processing, dead-letter topic</span>':r===1?'<span class="k">acks</span>: all\n<span class="k">min.insync.replicas</span>: 2\n<span class="c"># fallback: replay from source system if needed</span>':'<span class="k">acks</span>: 1\n<span class="k">min.insync.replicas</span>: 1\n<span class="c"># metrics, logs: occasional loss acceptable</span>');
+  $('#nOut').innerHTML=out.join('\n')}
+['#nt','#nl','#nr'].forEach(i=>$(i).addEventListener('input',dn));dn();
+
+/* gitops */
+const GO={cli:[s=>{bx(s,20,60,130,50,'Admin');bx(s,250,60,140,50,'kafka-topics.sh\n/ UI console','var(--d3)',null,11);bx(s,490,60,130,50,'Cluster','var(--pencil)','var(--pencil-soft)');ar(s,150,85,248,85,'var(--muted)',true);ar(s,390,85,488,85,'var(--muted)',true)},'Quick and fine for exploration. But changes are manual, unreviewed and unrecorded; environments drift apart, and nobody knows why a topic has 7 partitions.'],
+ git:[s=>{bx(s,10,60,110,50,'Consumer team\npull request','var(--d2)',null,11);bx(s,150,60,110,50,'Owner team\nreview','var(--d3)',null,11);bx(s,290,60,90,50,'Git (main)','var(--blue)');bx(s,410,60,100,50,'CI/CD: diff\nand apply','var(--d4)',null,11);bx(s,540,60,90,50,'Cluster','var(--pencil)','var(--pencil-soft)');[[120,148],[260,288],[380,408],[510,538]].forEach(([a,b])=>ar(s,a,85,b,85,'var(--muted)',true))},'Configuration lives as text in Git. Consumer teams propose changes through pull requests; the data owners (producer team) approve. The pipeline reads the current cluster state, computes the difference and applies it. Tools: Terraform providers, kafka-gitops style tools, Julie-ops and others.'],
+ op:[s=>{bx(s,20,60,120,50,'Git: YAML\ncustom resources','var(--blue)',null,11);bx(s,190,60,120,50,'Argo CD / Flux','var(--d3)');bx(s,360,60,120,50,'Kubernetes\noperator','var(--d4)',null,11);bx(s,520,60,100,50,'Kafka','var(--pencil)','var(--pencil-soft)');[[140,188],[310,358],[480,518]].forEach(([a,b])=>ar(s,a,85,b,85,'var(--muted)',true))},'On Kubernetes, topics and users are custom resources (CRDs), for example with Strimzi. A GitOps tool syncs them from Git into the cluster, and the operator reconciles Kafka to match continuously, undoing manual drift.'],
+ api:[s=>{bx(s,20,60,140,50,'Platform service\n/ self-service portal','var(--d2)',null,11);bx(s,250,40,140,30,'Admin API','var(--blue)',null,11);bx(s,250,80,140,30,'Schema Registry REST','var(--blue)',null,10);bx(s,250,120,140,30,'Connect REST','var(--blue)',null,11);bx(s,490,60,130,50,'Kafka ecosystem','var(--pencil)','var(--pencil-soft)');[55,95,135].forEach(y=>{ar(s,160,85,248,y,'var(--muted)');ar(s,390,y,488,85,'var(--muted)')})},'Admin APIs (Java AdminClient, Schema Registry REST, Connect REST) let you build automation and self-service platforms: create topics, manage ACLs and schemas, deploy connectors, with your own policies and validation in front.']};
+function dg(k){const s=$('#gSvg');s.innerHTML='';GO[k][0](s);$('#gTxt').textContent=GO[k][1]}seg('[data-g]',b=>dg(b.dataset.g));dg('cli');
+
+/* environments */
+function de(k){const s=$('#eSvg');s.innerHTML='';if(k==='sep'){['Dev','Test','Prod'].forEach((e,i)=>bx(s,20+i*215,40,170,60,e+' cluster',i===2?'var(--pencil)':'var(--blue)',i===2?'var(--pencil-soft)':null))}
+  else{bx(s,20,30,380,80,'',"var(--blue)");bx(s,40,50,160,40,'dev.* topics','var(--d2)',null,11);bx(s,220,50,160,40,'test.* topics','var(--d3)',null,11);bx(s,450,40,170,60,'Prod cluster','var(--pencil)','var(--pencil-soft)');s.appendChild(el('text',{x:210,y:128,'text-anchor':'middle','font-size':11,class:'s-muted'},'one non-prod cluster, separated by prefixes and ACLs'))}
+  $('#eTxt').textContent=k==='sep'?'Strong isolation and realistic tests (Test mirrors Prod settings), at the cost of more clusters to run and pay for.':'Cheaper, but noisy neighbours, shared quotas and prefix conventions instead of real isolation. Keep production separate in any case.'}
+seg('[data-e]',b=>de(b.dataset.e));de('sep');
+
+/* testing pyramid */
+const PY=[['Performance tests',60,'Do we meet the nonfunctional requirements? Simulate load with varied settings (batch, linger, acks, partitions) and measure throughput and latency. Tools: kafka-producer-perf-test and consumer-perf-test, JMeter with Kafka plugins, Trogdor (Kafka\'s own fault-injection and workload framework).',`# quick producer benchmark (illustrative)
+kafka-producer-perf-test.sh --topic perf-test \\
+  --num-records 1000000 --record-size 1024 --throughput -1 \\
+  --producer-props bootstrap.servers=broker:9092 acks=all linger.ms=5`],
+ ['Integration tests',80,'Does our code really talk to Kafka correctly? Send through the real producer and check with a test consumer (or the reverse). Use an in-memory EmbeddedKafkaBroker (Spring Kafka) for speed, or Testcontainers to start a real broker in Docker for fidelity.',`@Testcontainers
+class ProfileServiceIT {
+  @Container static KafkaContainer kafka =
+      new KafkaContainer(DockerImageName.parse("apache/kafka:3.9.0"));
+
+  @Test void publishesProfileUpdate() {
+    service.updateProfile(new Profile("C-17", "Ana"));
+    var rec = testConsumer.pollOne("CUSTOMER_PROFILES");
+    assertEquals("C-17", rec.key());
+  }
+}`],
+ ['Unit tests',100,'Does the logic behave? Test public behaviour in isolation: replace the producer or consumer with a mock (Mockito) or Kafka\'s MockProducer/MockConsumer, call the handler directly with a deserialized message, assert on return values and side effects. No cluster, milliseconds per test.',`@Test void sendsKeyedByCustomerId() {
+  var producer = new MockProducer<>(true, new StringSerializer(), new StringSerializer());
+  new ProfileService(producer).updateProfile(new Profile("C-17", "Ana"));
+  assertEquals("C-17", producer.history().get(0).key());
+}`]];
+$('#pyr').innerHTML=PY.map((p,i)=>`<button data-i="${i}" aria-pressed="${i===2}" style="width:${p[1]}%">${p[0]}</button>`).join('');
+function dp(i){$('#pInfo').innerHTML=`<span class="eyebrow">${['Top: fewest, slowest','Middle','Base: most, fastest'][i]}</span><h3 class="blue">${PY[i][0]}</h3><p>${PY[i][2]}</p>`;$('#tCode').textContent=PY[i][3]}
+seg('#pyr button',b=>dp(+b.dataset.i));dp(2);
+
+quiz('#quiz','#qScore',[
+ {q:'What does event storming put on the wall first?',o:['Topics and partitions','Domain events in business language'],a:1,why:'Start from meaningful business state changes, not technology.'},
+ {q:'Why disable auto.create.topics.enable?',o:['A typo creates a stray topic with defaults','It slows producers'],a:0,why:'Topics should be created deliberately with reviewed settings.'},
+ {q:'In the GitOps flow, who approves a consumer team\'s change to a topic?',o:['The data owners (producer team)','Anyone with Git access'],a:0,why:'Producers own their data and its configuration.'},
+ {q:'Which tool runs a real broker in Docker for integration tests?',o:['Mockito','Testcontainers'],a:1,why:'Testcontainers starts disposable containers from tests.'},
+ {q:'Which requirement most directly drives partition count?',o:['Throughput','Schema format'],a:0,why:'Partitions bound parallelism, so target throughput sizes them.'}]);
+
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Creating Consumer Applications</title>
+<meta name="description" content="Consumers pull, track their own position, and share partitions within a group. Most production incidents with Kafka are really questions about offsets, timeouts and rebalances.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<script>try{var t=JSON.parse(localStorage.getItem('kfa:theme'));if(t)document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
+<style>
+/* Shared base for the Accelerate companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+button.tag{cursor:pointer}
+button.tag:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{font-family:var(--mono);font-size:.84rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:0;overflow-x:auto;white-space:pre}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--pencil)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+.field{border:1px dashed var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:6px;background:var(--surface)}
+.field .eyebrow{color:var(--pencil)}
+.missing{border:2px solid var(--bad);background:var(--bad-soft);color:var(--bad);border-radius:10px;padding:12px 16px}
+
+/* page */
+
+.calc{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:640px){.calc{grid-template-columns:1fr}}
+.recs{display:flex;flex-wrap:wrap;gap:6px}
+.recs span{font-family:var(--mono);font-size:.8rem;width:44px;text-align:center;padding:6px 0;border-radius:6px;border:1.5px solid var(--line);background:var(--surface)}
+.recs span.done{background:var(--ok-soft);border-color:var(--ok)}
+.recs span.dup{background:var(--mid-soft);border-color:var(--mid)}
+.recs span.lost{background:var(--bad-soft);border-color:var(--bad);text-decoration:line-through}
+.recs span.cur{outline:2px solid var(--blue);outline-offset:2px}
+.recs span.cm{box-shadow:inset 0 -4px 0 var(--pencil)}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:8px 10px;max-height:150px;overflow:auto;white-space:pre-wrap}
+.asg{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+@media (max-width:560px){.asg{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.asg>div{border:1.5px solid var(--line);border-radius:8px;padding:8px;background:var(--surface);min-height:96px;display:flex;flex-direction:column;gap:4px}
+.asg>div.gone{opacity:.4;border-style:dashed}
+.asg h4{margin:0;font-size:.82rem;font-family:var(--mono)}
+.asg .pp{font-family:var(--mono);font-size:.74rem;padding:2px 6px;border-radius:4px;background:var(--blue-soft);border:1px solid var(--blue)}
+.asg .pp.mv{background:var(--pencil-soft);border-color:var(--pencil)}
+.verdict{padding:10px 14px;border-radius:8px;font-weight:600}
+.verdict.ok{background:var(--ok-soft);color:var(--ok)} .verdict.bad{background:var(--bad-soft);color:var(--bad)} .verdict.mid{background:var(--mid-soft);color:var(--mid)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Kafka for Architects · visual companion</a><span class="tag">Part I · Chapter 4 of 12</span><button class="tag themebtn" id="themeBtn" type="button" aria-label="Toggle light or dark theme">Theme</button></div>
+  <h1>Creating Consumer Applications</h1>
+  <p class="lede">Consumers pull, track their own position, and share partitions within a group. Most production incidents with Kafka are really questions about offsets, timeouts and rebalances.</p>
+  <nav class="toc" aria-label="Sections"><a href="#groups">Consumer groups</a><a href="#coord">Coordinator & leader</a><a href="#offsets">Committing offsets</a><a href="#reset">Where to start</a><a href="#timeouts">Timeouts & rebalance</a><a href="#assign">Assignment strategies</a><a href="#ods">Concurrent updates</a><a href="#problems">Common problems</a><a href="#extras">Compression & REST</a><a href="#recap">Recap and quiz</a></nav>
+</header>
+
+<section id="groups" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Pulling, and consumer groups</h2></div>
+  <p>Kafka never pushes. A consumer runs a loop: <b>poll</b> for new records, deserialize, process, then <b>commit</b> its offsets to say how far it got. The broker simply answers fetch requests.</p>
+  <p>Parallelism and pub-sub both come from one idea, the <b>consumer group</b> (<code>group.id</code>). Inside a group, the topic's partitions are divided so each is read by exactly one member. Different groups are independent: each gets every message. So "a microservice" is a group, and its instances are the members.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="View"><button data-g="one" aria-pressed="true">One group, three instances</button><button data-g="two" aria-pressed="false">Two services, two groups</button></div>
+    <div class="svgbox fit"><svg id="gSvg" viewBox="0 0 640 250" role="img" aria-label="Partitions shared within a group, duplicated across groups"></svg></div>
+    <p id="gTxt" class="small" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="coord" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Group coordinator and group leader</h2></div>
+  <p>Two roles organize a group. The <b>group coordinator</b> is a broker (different groups can have different ones) that tracks members and drives rebalances. The <b>group leader</b> is one of the consumers, chosen at join time, which computes the partition assignment in the classic protocol. Members never talk to each other.</p>
+  <div class="sheet stepper" id="join"><div class="svgbox fit"><svg id="jSvg" viewBox="0 0 640 220" role="img" aria-label="Consumers joining a group through the coordinator"></svg></div></div>
+</section>
+
+<section id="offsets" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Offsets: the one number that decides loss or duplication</h2></div>
+  <p>Committed offsets are stored per group in the internal topic <code>__consumer_offsets</code>. After a crash or rebalance, whoever takes the partition resumes from the last committed offset. <i>When</i> you commit relative to processing decides your guarantee. Play it: process some records, commit (or let auto-commit fire), then crash.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Commit mode"><button data-c="auto" aria-pressed="true">Auto-commit (default)</button><button data-c="after" aria-pressed="false">Commit after processing</button></div>
+    <div class="recs" id="recs"></div>
+    <div class="row"><button class="btn primary" id="oPoll">Poll a batch (fetch 4)</button><button class="btn" id="oProc">Process one record</button><button class="btn" id="oCommit">Commit</button><button class="btn" id="oCrash">Crash and restart</button><button class="btn" id="oReset">Reset</button></div>
+    <div class="log" id="oLog" aria-live="polite"></div>
+    <p class="small">Legend: green processed · amber processed twice · red skipped for ever · orange underline = committed position.</p>
+  </div>
+  <div class="field"><span class="eyebrow">Field notes</span><p>Customer 360's dashboard must not lose messages, so the team sets <code>enable.auto.commit=false</code> and commits in code after processing. They accept that a crash can replay a few records, which means processing has to be idempotent.</p></div>
+</section>
+
+<section id="reset" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>When there is no committed offset</h2></div>
+  <p>A brand-new group has no offsets, and committed offsets also expire if a group stays inactive longer than <code>offsets.retention.minutes</code> (7 days by default). Then <code>auto.offset.reset</code> decides:</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="auto.offset.reset"><button data-r="latest" aria-pressed="true">latest (default)</button><button data-r="earliest" aria-pressed="false">earliest</button><button data-r="none" aria-pressed="false">none</button></div>
+    <div class="svgbox fit"><svg id="rSvg" viewBox="0 0 640 100" role="img" aria-label="Starting position in the partition"></svg></div>
+    <p id="rTxt" aria-live="polite"></p>
+  </div>
+  <p>For explicit control, skip groups altogether: <b>assign</b> partitions in code and <b>seek</b> to an offset or timestamp, for example to reload a local cache from a whole topic. Reading a compacted topic uses the same API; just remember you may still see several values for a key if the cleaner has not run yet, and that tombstones arrive as null values.</p>
+</section>
+
+<section id="timeouts" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Liveness: heartbeats and poll intervals</h2></div>
+  <p>The group must notice a dead member and hand its partitions to someone else: a <b>rebalance</b>. Two separate checks exist. A background thread sends <b>heartbeats</b> every <code>heartbeat.interval.ms</code>; no heartbeat for <code>session.timeout.ms</code> means the process is gone. And if the app does not call poll again within <code>max.poll.interval.ms</code> (5 minutes by default), it is considered stuck even though it is alive.</p>
+  <div class="sheet">
+    <div class="calc">
+      <label class="rng"><span>Records per poll (max.poll.records): <b id="mprV"></b></span><input type="range" id="mpr" min="10" max="1000" step="10" value="500"></label>
+      <label class="rng"><span>Processing time per record: <b id="ptV"></b> ms</span><input type="range" id="pt" min="1" max="2000" value="200"></label>
+      <label class="rng"><span>max.poll.interval.ms: <b id="mpiV"></b> s</span><input type="range" id="mpi" min="30" max="900" step="30" value="300"></label>
+    </div>
+    <div class="verdict" id="tVer" aria-live="polite"></div>
+  </div>
+  <div class="cardgrid" id="rbCards"></div>
+</section>
+
+<section id="assign" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Assignment strategies and rebalances</h2></div>
+  <p>The <code>partition.assignment.strategy</code> decides who gets what, and how much moves when membership changes. Remove a consumer and compare.</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Strategy"><button data-a="range" aria-pressed="true">Range</button><button data-a="rr" aria-pressed="false">RoundRobin</button><button data-a="sticky" aria-pressed="false">Sticky</button><button data-a="coop" aria-pressed="false">CooperativeSticky</button></div>
+    <button class="btn primary" id="aKill">Consumer C2 leaves</button></div>
+    <div class="asg" id="asg"></div>
+    <p id="aTxt" class="small" aria-live="polite"></p>
+  </div>
+  <div class="callout blue"><b class="h">The next-generation rebalance protocol</b><span>Classic groups put the assignment logic in clients, which makes debugging and upgrades awkward and lets one slow member stall everyone. The newer consumer protocol (KIP-848, <code>group.protocol=consumer</code>) moves assignment to the broker-side coordinator, makes rebalances incremental per member, and is configured with broker settings such as <code>group.consumer.assignors</code>. A member that does not give up revoked partitions within <code>max.poll.interval.ms</code> is removed.</span></div>
+</section>
+
+<section id="ods" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Two consumers, one aggregate</h2></div>
+  <p>Customer 360 has one consumer for <code>CUSTOMER_PROFILES</code> and another for <code>TRANSACTIONS</code>, both updating the same customer record in a database. Done naively, they overwrite each other. Step through it with and without <b>optimistic locking</b> (a version number checked on write).</p>
+  <div class="sheet stepper" id="lock">
+    <div class="seg" role="group" aria-label="Locking"><button data-l="0" aria-pressed="true">Naive read-modify-write</button><button data-l="1" aria-pressed="false">Optimistic locking</button></div>
+    <div class="svgbox fit"><svg id="lSvg" viewBox="0 0 640 170" role="img" aria-label="Two consumers updating one database row"></svg></div>
+  </div>
+</section>
+
+<section id="problems" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Common consumer problems</h2></div>
+  <div class="cardgrid" id="probCards"></div>
+</section>
+
+<section id="extras" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Compression and the REST Proxy</h2></div>
+  <p><b>Compression</b> shrinks network traffic and disk. Usually the producer compresses whole batches (<code>compression.type</code> = gzip, snappy, lz4 or zstd); the broker stores them as is and the consumer decompresses. The broker-side <code>compression.type</code> defaults to <code>producer</code>, meaning keep whatever the producer chose; set it to a codec and the broker recompresses, costing CPU.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Codec"><button data-z="none" aria-pressed="false">none</button><button data-z="gzip" aria-pressed="false">gzip</button><button data-z="snappy" aria-pressed="false">snappy</button><button data-z="lz4" aria-pressed="true">lz4</button><button data-z="zstd" aria-pressed="false">zstd</button></div>
+    <div class="bars" id="zBars"></div>
+    <p class="small">Illustrative relative values for typical JSON batches; measure with your own data. Larger batches compress better.</p>
+  </div>
+  <p>When no native client exists for your language, the <b>Confluent REST Proxy</b> lets apps produce and consume over HTTP. It translates requests into the Kafka protocol, at the cost of an extra hop, extra infrastructure and less control over client behaviour.</p>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">10</span><h2>Recap and quick check</h2></div>
+  <div class="recap">
+    <div><b>Group = service</b><span>Members share partitions; separate groups each get everything.</span></div>
+    <div><b>Commit after processing</b><span>At-least-once; make processing idempotent.</span></div>
+    <div><b>Two liveness checks</b><span>Heartbeats for crashes, poll interval for stuck processing.</span></div>
+    <div><b>Cooperative or static</b><span>Incremental rebalances and group.instance.id reduce stop-the-world pauses.</span></div>
+    <div><b>Watch lag</b><span>Consumer lag is the signal to scale, up to the partition count.</span></div>
+  </div>
+  <div class="sheet"><div class="row between"><h3>Quick check</h3><span class="score" id="qScore"></span></div><div class="quiz" id="quiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Kafka for Architects: Event-driven architecture, logs, microservices, real-time event processing</i> by Katya Gorshkova (Manning, 2026). Explanations, examples, code snippets and drawings are original summaries, not copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch03-producers.html"><span>Previous · Chapter 3</span><b>Kafka Clients and Message Production</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch05-real-world-use-cases.html"><span>Next · Chapter 5</span><b>Kafka in Real-World Use Cases</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('kfa:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('acc:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: cycles auto -> light -> dark */
+(function(){const r=document.documentElement;let t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+ const b=document.getElementById('themeBtn');if(!b)return;
+ function lab(){b.textContent='Theme: '+(r.getAttribute('data-theme')||'auto')}lab();
+ b.addEventListener('click',()=>{const c=r.getAttribute('data-theme');const n=c==null?'light':c==='light'?'dark':null;
+  if(n)r.setAttribute('data-theme',n);else r.removeAttribute('data-theme');store.set('theme',n);lab()});})();
+
+
+function bx(s,x,y,w,h,t,col,fill,fs){s.appendChild(el('rect',{x,y,width:w,height:h,rx:7,fill:fill||'var(--surface)',stroke:col||'var(--blue)','stroke-width':1.6}));t.split('\n').forEach((l,i,a)=>s.appendChild(el('text',{x:x+w/2,y:y+h/2+4+(i-(a.length-1)/2)*14,'text-anchor':'middle','font-size':fs||12,'font-weight':600,fill:'var(--ink)'},l)))}
+function ar(s,x1,y1,x2,y2,col,fl){const L=el('line',{x1,y1,x2,y2,stroke:col||'var(--muted)','stroke-width':2});if(fl)L.setAttribute('class','flow');s.appendChild(L);const a=Math.atan2(y2-y1,x2-x1);s.appendChild(el('polygon',{points:`${x2},${y2} ${x2-9*Math.cos(a-.4)},${y2-9*Math.sin(a-.4)} ${x2-9*Math.cos(a+.4)},${y2-9*Math.sin(a+.4)}`,fill:col||'var(--muted)'}))}
+/* groups */
+function drawG(m){const s=$('#gSvg');s.innerHTML='';for(let p=0;p<4;p++)bx(s,20,20+p*55,110,40,'P'+p,'var(--blue)','var(--blue-soft)');
+  if(m==='one'){const C=[[0,1],[2],[3]];C.forEach((ps,i)=>{bx(s,420,30+i*70,180,46,'billing-svc #'+(i+1),'var(--d2)');ps.forEach(p=>ar(s,130,40+p*55,418,53+i*70,'var(--d2)',true))});
+    s.appendChild(el('text',{x:510,y:18,'text-anchor':'middle','font-size':12,class:'s-muted t-mono'},'group.id = billing'));
+    $('#gTxt').textContent='Four partitions split across three instances of one service. Each record is processed once by the group. Instance 1 has two partitions; add a fourth instance and it gets one.'}
+  else{bx(s,420,25,180,40,'billing-svc',  'var(--d2)');bx(s,420,165,180,40,'customer360-svc','var(--d4)');
+    for(let p=0;p<4;p++){ar(s,130,40+p*55,418,45,'var(--d2)',true);ar(s,130,40+p*55,418,185,'var(--d4)',true)}
+    $('#gTxt').textContent='Two groups, each with one instance. Both receive every record from all partitions, with independent offsets. That is publish-subscribe: adding a subscriber is just adding a group.'}}
+seg('[data-g]',b=>drawG(b.dataset.g));drawG('one');
+
+/* join */
+const JS=['Each consumer asks any broker which broker is the coordinator for its group.id (FindCoordinator).','All members send JoinGroup to the coordinator. The first to join becomes the group leader and receives the list of members and their subscriptions.','The leader computes the assignment with the configured strategy and sends it back in SyncGroup. Other members send an empty SyncGroup and wait.','The coordinator hands each member its partitions. Members then fetch directly from each partition\'s leader broker and heartbeat to the coordinator.'];
+function drawJ(i){const s=$('#jSvg');s.innerHTML='';bx(s,250,20,140,50,'Coordinator\n(broker 2)','var(--pencil)','var(--pencil-soft)');
+  ['C1','C2','C3'].forEach((c,k)=>bx(s,40+k*210,150,140,46,c+(i>=1&&k===0?' = leader':''),k===0&&i>=1?'var(--d1)':'var(--blue)'));
+  if(i===0)[0,1,2].forEach(k=>ar(s,110+k*210,148,320,72,'var(--muted)',true));
+  if(i===1)[0,1,2].forEach(k=>ar(s,110+k*210,148,320,72,'var(--blue)',true));
+  if(i===2){ar(s,110,148,300,72,'var(--d1)',true);s.appendChild(el('text',{x:150,y:110,'font-size':12,fill:'var(--d1)','font-weight':700},'assignment'))}
+  if(i===3){[0,1,2].forEach(k=>ar(s,320,72,110+k*210,148,'var(--ok)',true));s.appendChild(el('text',{x:320,y:214,'text-anchor':'middle','font-size':12,class:'s-muted'},'then: fetch from partition leaders, heartbeat to coordinator'))}}
+$('#join').insertAdjacentHTML('beforeend',stepHTML());stepper('#join',JS,drawJ);
+
+/* offsets game */
+let om='auto',st;function oreset(){st={n:16,state:Array(16).fill(''),pos:0,fetched:0,committed:0,lost:new Set(),dup:new Set(),seen:new Set(),polls:0};$('#oLog').textContent='';log('Consumer starts at committed offset 0.');drawO()}
+function log(t){$('#oLog').textContent=t+'\n'+$('#oLog').textContent}
+function drawO(){$('#recs').innerHTML=st.state.map((s,i)=>`<span class="${s} ${i===st.pos?'cur':''} ${i===st.committed-1?'cm':''}">${i}</span>`).join('')}
+$('#oPoll').onclick=()=>{if(om==='auto'&&st.polls>0){st.committed=st.fetched;log('auto-commit fired during poll(): committed offset '+st.committed+' (everything fetched so far, processed or not).')}
+  st.polls++;st.fetched=Math.min(st.n,st.fetched+4);log('poll() returned offsets up to '+(st.fetched-1)+'.');drawO()};
+$('#oProc').onclick=()=>{if(st.pos>=st.fetched){log('Nothing fetched to process. Poll first.');return}const i=st.pos;st.state[i]=st.seen.has(i)?'dup':'done';if(st.seen.has(i))st.dup.add(i);st.seen.add(i);st.pos++;log('processed offset '+i+(st.state[i]==='dup'?' AGAIN (duplicate side effect)':'')+'.');drawO()};
+$('#oCommit').onclick=()=>{st.committed=om==='auto'?st.fetched:st.pos;log('commit: next offset to read = '+st.committed+'.');drawO()};
+$('#oCrash').onclick=()=>{const from=st.committed;let msg='CRASH. Restarted consumer resumes at committed offset '+from+'. ';
+  if(from>st.pos){for(let i=st.pos;i<from;i++){st.state[i]='lost';st.lost.add(i)}msg+='Offsets '+st.pos+'-'+(from-1)+' were committed but never processed: LOST.'}
+  else if(from<st.pos)msg+='Offsets '+from+'-'+(st.pos-1)+' were processed but not committed: they will be processed again.';else msg+='Nothing lost, nothing repeated.';
+  st.pos=from;st.fetched=from;st.polls=0;log(msg);drawO()};
+$('#oReset').onclick=oreset;seg('[data-c]',b=>{om=b.dataset.c;oreset();log(om==='auto'?'Mode: auto-commit. Offsets of fetched records are committed periodically inside poll(), whether you finished them or not.':'Mode: manual. Commit only the position you have actually processed.')});oreset();
+
+/* reset */
+function drawR(m){const s=$('#rSvg');s.innerHTML='';for(let i=0;i<14;i++)s.appendChild(el('rect',{x:20+i*42,y:30,width:38,height:34,rx:4,fill:i<10?'var(--blue-soft)':'var(--paper)',stroke:i<10?'var(--blue)':'var(--line)','stroke-dasharray':i<10?'':'3 3'}));
+  s.appendChild(el('text',{x:20,y:20,'font-size':12,class:'s-muted'},'existing records 0-9'));s.appendChild(el('text',{x:440,y:20,'font-size':12,class:'s-muted'},'future records'));
+  const x=m==='earliest'?39:m==='latest'?459:null;if(x){s.appendChild(el('polygon',{points:`${x},70 ${x-8},84 ${x+8},84`,fill:'var(--pencil)'}));s.appendChild(el('text',{x,y:98,'text-anchor':'middle','font-size':12,fill:'var(--pencil)','font-weight':700},'start'))}
+  else s.appendChild(el('text',{x:320,y:92,'text-anchor':'middle','font-size':12,fill:'var(--bad)','font-weight':700},'no start position: the consumer throws an exception'));
+  $('#rTxt').textContent=m==='latest'?'Only records that arrive after the consumer joins. Fine for live notifications, a nasty surprise for a service that should have loaded existing data, and a gap if offsets expired while the group was down.':m==='earliest'?'Read everything still retained. Right for building state such as Customer 360, but a big backlog on the first start.':'Fail loudly instead of guessing. Useful when an operator must decide where to start.'}
+seg('[data-r]',b=>drawR(b.dataset.r));drawR('latest');
+
+/* timeouts */
+function drawT(){const n=+$('#mpr').value,t=+$('#pt').value,m=+$('#mpi').value;$('#mprV').textContent=n;$('#ptV').textContent=t;$('#mpiV').textContent=m;
+  const need=n*t/1000;const v=$('#tVer');
+  if(need>m){v.className='verdict bad';v.textContent=`One batch takes ${need.toFixed(0)} s, longer than the ${m} s poll interval. The consumer is evicted mid-batch, its partitions move, the batch is redelivered to someone else, and the cycle repeats: a rebalance storm. Fewer records per poll, faster processing, or a longer interval.`}
+  else if(need>m*0.7){v.className='verdict mid';v.textContent=`One batch takes ${need.toFixed(0)} s of ${m} s allowed. Works, but one slow downstream call away from eviction.`}
+  else{v.className='verdict ok';v.textContent=`One batch takes ${need.toFixed(1)} s, comfortably inside ${m} s.`}}
+['#mpr','#pt','#mpi'].forEach(i=>$(i).addEventListener('input',drawT));drawT();
+cards('#rbCards',[{t:'Eager rebalance',d:'Stop the world: every member revokes all partitions, then a fresh assignment is handed out. Simple, but all processing pauses.',c:'d1'},
+ {t:'Incremental (cooperative)',d:'Only the partitions that must move are revoked, over a couple of short rounds. Everyone else keeps working.',c:'d2'},
+ {t:'Static membership',d:'Give each instance a group.instance.id. A restart within session.timeout.ms reclaims the same partitions with no rebalance: ideal for rolling deploys.',c:'d3'}]);
+
+/* assignment */
+let as='range',killed=false;
+function assign(strat,cons){const P=['A0','A1','A2','B0','B1','B2'];const out={};cons.forEach(c=>out[c]=[]);
+  if(strat==='range'){['A','B'].forEach(t=>{const ps=[0,1,2].map(i=>t+i);const per=Math.floor(3/cons.length),ex=3%cons.length;let k=0;cons.forEach((c,ci)=>{const n=per+(ci<ex?1:0);for(let j=0;j<n;j++)out[c].push(ps[k++])})})}
+  else P.forEach((p,i)=>out[cons[i%cons.length]].push(p));return out}
+function drawA(){const all=['C1','C2','C3'];const before=assign(as==='range'?'range':'rr',all);let after=before;
+  if(killed){const live=['C1','C3'];if(as==='sticky'||as==='coop'){after={C1:[...before.C1],C3:[...before.C3]};before.C2.forEach((p,i)=>after[live[i%2]].push(p))}else after=assign(as==='range'?'range':'rr',live)}
+  const owner={};all.forEach(c=>before[c].forEach(p=>owner[p]=c));let moved=0;
+  $('#asg').innerHTML=all.map(c=>{const g=killed&&c==='C2';const list=g?[]:(after[c]||[]);return `<div class="${g?'gone':''}"><h4>${c}${g?' (left)':''}</h4>${list.map(p=>{const mv=owner[p]!==c;if(mv)moved++;return `<span class="pp ${mv?'mv':''}">${p}</span>`}).join('')}</div>`}).join('')+`<div><h4>topics</h4><span class="small">A and B, 3 partitions each</span></div>`;
+  const notes={range:'Range assigns contiguous partitions of each topic separately, so the first consumers get extra partitions of every topic. It can be lopsided with many topics.',rr:'RoundRobin spreads all partitions evenly, ignoring topics. After a change it reshuffles freely.',sticky:'Sticky gives the same even result but, after a change, keeps existing ownership and only moves the orphaned partitions. Its rebalance is still eager (everyone pauses).',coop:'CooperativeSticky makes the same minimal moves and does it incrementally: C1 and C3 keep processing their partitions throughout. Recommended for most groups.'};
+  $('#aTxt').textContent=killed?`${moved} partition(s) changed owner (orange). `+notes[as]:notes[as];$('#aKill').textContent=killed?'Bring C2 back':'Consumer C2 leaves'}
+seg('[data-a]',b=>{as=b.dataset.a;drawA()});$('#aKill').onclick=()=>{killed=!killed;drawA()};drawA();
+
+/* locking */
+let lk=0;const LSn=['The customer row is {name:"Ana", balance:100, version:7}. Consumer X (profiles) and consumer Y (transactions) both receive an update for customer 123.','X reads the row (version 7). Y reads the same row (version 7).','X changes name to "Ana Silva" and writes the whole row.','Y adds a transaction (balance 160) and writes the whole row it read earlier.','Result.'];
+function drawL(i){const s=$('#lSvg');s.innerHTML='';bx(s,240,60,160,56,'customer 123','var(--blue)');bx(s,20,20,150,44,'Consumer X\nprofiles','var(--d2)');bx(s,470,20,150,44,'Consumer Y\ntransactions','var(--d4)');
+  let row='Ana · 100 · v7',col='var(--ink)';
+  if(i>=1){ar(s,240,75,172,48,'var(--d2)');ar(s,400,75,468,48,'var(--d4)')}
+  if(i>=2){row=lk?'Ana Silva · 100 · v8':'Ana Silva · 100';ar(s,170,52,238,95,'var(--d2)',true)}
+  if(i>=3){if(lk){row='Ana Silva · 100 · v8';s.appendChild(el('text',{x:545,y:100,'text-anchor':'middle','font-size':12,fill:'var(--bad)','font-weight':700},'write rejected: v7 ≠ v8'));s.appendChild(el('text',{x:545,y:116,'text-anchor':'middle','font-size':12,class:'s-muted'},'re-read and retry'))}else{row='Ana · 160';col='var(--bad)';ar(s,470,52,402,95,'var(--d4)',true)}}
+  if(i>=4){if(lk){row='Ana Silva · 160 · v9';col='var(--ok)'}}
+  s.appendChild(el('text',{x:320,y:140,'text-anchor':'middle','font-size':13,'font-weight':700,fill:col,class:'t-mono'},row));
+  if(i===4)$('#lock .step-cap').innerHTML+=lk?' Y retried on the fresh row: both changes survive.':' Y overwrote X\'s name change with stale data. The lost update is silent.'}
+$('#lock').insertAdjacentHTML('beforeend',stepHTML());const goL=stepper('#lock',LSn,drawL);seg('[data-l]',b=>{lk=+b.dataset.l;goL(0)});
+
+cards('#probCards',[
+ {t:'Scaling hits the partition wall',d:'Watch consumer lag (records produced but not yet processed). Scale instances up to the partition count; beyond that, hand records to a bounded worker pool, carefully, since it complicates ordering and commits.',c:'d1'},
+ {t:'Batch sizing',d:'max.poll.records caps records per poll; fetch.min.bytes, fetch.max.wait.ms and max.partition.fetch.bytes shape the bytes. Message sizes vary, so test with realistic data.',c:'d2'},
+ {t:'Timeouts',d:'Long work per record (external calls, files) must fit max.poll.interval.ms. Tune it together with max.poll.records via benchmarks.',c:'d3'},
+ {t:'Poison pills',d:'Brokers never validate payloads. One undeserializable record can crash a consumer in a loop. Catch errors, log, skip or route to a dead-letter topic.',c:'d4'},
+ {t:'Offset initialization',d:'latest is the default. Services that must load existing data need earliest. Expired offsets after a long outage silently re-trigger the reset rule.',c:'d5'},
+ {t:'Committing too early',d:'Auto-commit can commit records that were fetched but not yet processed. Crash in between and they are gone. Commit after processing.',c:'pencil'},
+ {t:'Database plus offsets',d:'Store results then commit offsets, or the other way round? No distributed transactions. Prefer idempotent writes, or store offsets in the same database transaction as the results.',c:'ok'}]);
+
+const Z={none:[100,0,0],gzip:[30,90,60],snappy:[50,20,15],lz4:[45,15,10],zstd:[28,45,25]};
+function drawZ(z){const v=Z[z];bars('#zBars',[{l:'Size on wire/disk',v:v[0],c:'d1',txt:v[0]+'%'},{l:'Producer CPU',v:v[1],c:'pencil',txt:v[1]?v[1]+'':'0'},{l:'Consumer CPU',v:v[2],c:'d3',txt:v[2]?v[2]+'':'0'}],100)}
+seg('[data-z]',b=>drawZ(b.dataset.z));drawZ('lz4');
+
+quiz('#quiz','#qScore',[
+ {q:'Two services must each receive every order event. How do you configure them?',o:['Same group.id','Different group.ids'],a:1,why:'Each group gets its own copy of the stream; within a group, partitions are shared.'},
+ {q:'Which setting catches a consumer that is alive but stuck processing?',o:['session.timeout.ms','max.poll.interval.ms'],a:1,why:'Heartbeats come from a background thread; only the poll interval detects a stalled processing loop.'},
+ {q:'Committing offsets after processing gives...',o:['At-most-once','At-least-once'],a:1,why:'A crash before commit replays already-processed records; nothing is skipped.'},
+ {q:'Which assignor keeps other members processing during a rebalance?',o:['RoundRobin','CooperativeSticky'],a:1,why:'Cooperative rebalancing revokes only the partitions that move.'},
+ {q:'A new group starts on a topic with existing data and default settings. What does it read?',o:['Everything','Only new records'],a:1,why:'auto.offset.reset defaults to latest.'}]);
+
+})();
+</script>
+</body>
+</html>

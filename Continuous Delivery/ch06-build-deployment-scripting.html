@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Build and Deployment Scripting</title>
+<meta name="description" content="From make to Maven to Rake, build tools model tasks and their dependencies. The real skill is writing deployment scripts that work the same way everywhere and can be run again safely.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Continuous Delivery companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* Continuous Delivery additions */
+pre.code{font-family:var(--mono);font-size:.82rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;margin:0;line-height:1.5;white-space:pre;max-width:100%}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--d2)}
+.callout.bad{border-color:var(--bad);background:var(--bad-soft)}
+.callout.mid{border-color:var(--mid);background:var(--mid-soft)}
+button.tag{cursor:pointer}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:6em;max-height:15em;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.log .ok{color:var(--ok)} .log .bad{color:var(--bad)} .log .mid{color:var(--mid)}
+.pill{display:inline-block;font-family:var(--mono);font-size:.72rem;padding:2px 8px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.pill.ok{background:var(--ok-soft);color:var(--ok);border-color:var(--ok)} .pill.bad{background:var(--bad-soft);color:var(--bad);border-color:var(--bad)} .pill.mid{background:var(--mid-soft);color:var(--mid);border-color:var(--mid)}
+.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}
+.svgbox.fit svg{max-width:480px;margin:0 auto}
+
+/* page */
+
+.dg .node{cursor:pointer}
+.tools{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px}
+.tools button{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:10px;font-family:var(--display);font-weight:600;text-align:left;display:flex;flex-direction:column;gap:2px}
+.tools button span{font-family:var(--mono);font-size:.7rem;color:var(--muted);font-weight:400}
+.tools button[aria-pressed="true"]{background:var(--blue-soft);border-color:var(--blue)}
+.state{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+@media (max-width:560px){.state{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.state div{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--surface);font-size:.85rem;display:flex;flex-direction:column;gap:2px}
+.state div b{font-family:var(--mono);font-size:.75rem;color:var(--muted);font-weight:600}
+.state div.ok{border-color:var(--ok);background:var(--ok-soft)} .state div.bad{border-color:var(--bad);background:var(--bad-soft)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Continuous Delivery · visual companion</a><span class="tag">Part II · Chapter 6 of 15</span><button class="tag" id="themeBtn" type="button" aria-label="Switch light or dark theme">Light / dark</button></div>
+  <h1>Build and Deployment Scripting</h1>
+  <p class="lede">From make to Maven to Rake, build tools model tasks and their dependencies. The real skill is writing deployment scripts that work the same way everywhere and can be run again safely.</p>
+  <nav class="toc" aria-label="Sections"><a href="#intro">Why scripts</a><a href="#network">Dependency networks</a><a href="#tools">Build tools</a><a href="#principles">Principles</a><a href="#idem">Idempotent</a><a href="#layers">Layers</a><a href="#remote">Remote deploys</a><a href="#tips">Tips</a><a href="#jvm">JVM layout</a><a href="#quiz">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="intro" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>From IDE button to deployment system</h2></div>
+  <p>On a tiny project the IDE can build and test everything. Beyond that you need scripts: a build that runs from the command line, the same way on a developer's machine and on the CI server. Deployment is harder still: configuring middleware, copying files, migrating data, restarting services, across many machines. The chapter warns against stretching a general-purpose build tool into a deployment system for anything but simple cases. Build and deployment scripts are first-class parts of the system, living as long as it does and maintained just as carefully.</p>
+</section>
+
+<section id="network" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Every build tool models a dependency network</h2></div>
+  <p>At heart every build tool lets you declare tasks and the tasks they depend on, then works out what to run and in what order, running each one only once. Tools differ in one important way. <b>Task-oriented</b> tools (Ant, NAnt, MSBuild, Rake) describe the network in terms of tasks and keep no state between runs. <b>Product-oriented</b> tools (Make, SCons) describe it in terms of the files produced, and skip work whose outputs are newer than their inputs. Edit a file and run the build each way.</p>
+  <div class="sheet">
+    <div class="row"><span class="small">Touch:</span><button class="btn" data-touch="src">a source file</button><button class="btn" data-touch="test">a test file</button><button class="btn" data-touch="none">nothing</button></div>
+    <div class="seg" role="group" aria-label="Tool type"><button data-m="task" aria-pressed="true">Task-oriented</button><button data-m="prod" aria-pressed="false">Product-oriented</button></div>
+    <div class="svgbox"><svg class="dg" id="dgSvg" viewBox="0 0 640 220" role="img" aria-label="Build dependency network"></svg></div>
+    <p id="dgTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="tools" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>A tour of build tools (as of 2010)</h2></div>
+  <p>The chapter surveys the tools of its day. The names have aged; the trade-offs have not: external XML DSLs versus internal DSLs in a real language, convention versus configuration, and automatic dependency downloading versus reproducibility.</p>
+  <div class="tools" id="toolBtns" role="group" aria-label="Build tool"></div>
+  <div class="detail" id="toolTip" aria-live="polite"></div>
+  <pre class="code" id="toolCode"></pre>
+</section>
+
+<section id="principles" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Principles of build and deployment scripting</h2></div>
+  <div class="cardgrid" id="prCards"></div>
+</section>
+
+<section id="idem" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Ensure the deployment process is idempotent</h2></div>
+  <p>Your deployment should leave the target in the same correct state whatever state it started in. The simplest way: start from a known-good baseline (provisioned automatically or a virtual machine image), then install the full set of artifacts for this version every time, not just the ones that changed. Run each script against a server in different starting states.</p>
+  <div class="sheet">
+    <div class="row"><span class="small">Starting state:</span><div class="seg" role="group" aria-label="Start"><button data-st="fresh" aria-pressed="true">Fresh server</button><button data-st="old" aria-pressed="false">Has v1.3</button><button data-st="half" aria-pressed="false">Half-failed last deploy</button></div></div>
+    <div class="row"><button class="btn" id="runNaive">Run "copy changed files"</button><button class="btn primary" id="runIdem">Run idempotent deploy</button></div>
+    <div class="state" id="state"></div>
+    <p id="idTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="layers" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Deploy and test in layers</h2></div>
+  <p>Deploy from the bottom up: operating system, then middleware and other software your application depends on, then your application and its configuration. After each layer, run a quick smoke test of that layer. If something fails, you know which layer is broken instead of trawling through logs. Deploy a stack and inject a fault.</p>
+  <div class="sheet">
+    <div class="row"><label class="small" for="fault">Inject a fault in:</label><select id="fault"><option value="-1">nothing</option><option value="0">OS (wrong patch level)</option><option value="1">Middleware (port blocked)</option><option value="2">App config (bad DB URL)</option></select><button class="btn primary" id="deployL">Deploy</button></div>
+    <div class="svgbox"><svg id="lSvg" viewBox="0 0 640 220" role="img" aria-label="Layered deployment with smoke tests"></svg></div>
+    <p id="lTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout blue"><b class="h">Environment smoke tests from the chapter</b><span>Retrieve a record from the database. Contact the website. Check the message broker has the right queues registered. Ping through the firewall. In one .NET project, a short script that read every config file and tried to connect to each URI in it made multi-tier connection problems trivial to diagnose.</span></div>
+</section>
+
+<section id="remote" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Three ways to deploy to remote machines</h2></div>
+  <div class="cardgrid" id="remCards"></div>
+</section>
+
+<section id="tips" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Tips and tricks</h2></div>
+  <p>Each of these is a small habit with an outsized effect. Spot the problem in each snippet, then reveal.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Tip" id="tipSeg"></div>
+    <pre class="code" id="tipCode"></pre>
+    <div class="row"><button class="btn" id="tipShow">Show the fix</button></div>
+    <p id="tipTxt" hidden></p>
+  </div>
+</section>
+
+<section id="jvm" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Project structure for JVM applications</h2></div>
+  <div class="two">
+    <pre class="code">project/
+  pom.xml / build file
+  src/
+    main/java/      <span class="c">production code, by package</span>
+    main/resources/
+    test/java/      <span class="c">unit tests mirror packages</span>
+    test/resources/
+  acceptance/       <span class="c">other test kinds, separate</span>
+  lib/              <span class="c">if not using a repo manager</span>
+  target/           <span class="c">ALL build output; never commit</span>
+    classes/  reports/  app.war</pre>
+    <div class="stack">
+      <p>The book uses the Maven standard directory layout even for non-Maven projects, because a shared convention lets anyone find their way around. Keep source in directories named after packages; never check in generated code or config; keep unit tests apart from other kinds of test; send everything the build produces to one output directory that a clean deletes.</p>
+      <p>Split into multiple JARs to make deployment simpler and to enforce dependencies between components; a build step that checks no forbidden dependencies have crept in helps. Libraries go in an organization repository (Chapter 13).</p>
+    </div>
+  </div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">10</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">11</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b class="blue">Dependency networks</b><span>Task-oriented tools keep no state; product-oriented ones skip up-to-date outputs.</span></div>
+    <div><b>Choose well</b><span>Internal DSLs (Rake, Buildr) are easier to factor than XML; watch Maven's self-updating defaults.</span></div>
+    <div><b class="okc">One script per stage</b><span>Same scripts in every environment, versioned with the code, written with ops.</span></div>
+    <div><b class="pencil">Idempotent deploys</b><span>From a known baseline, deploy everything, every time. Use OS packages.</span></div>
+    <div><b>Layers</b><span>OS, middleware, app; smoke-test each one as it goes in.</span></div>
+    <div><b class="badc">Tips</b><span>Relative paths, no manual steps, trace binaries to revisions, no build output in VCS, run all tests before failing.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Continuous Delivery: Reliable Software Releases through Build, Test, and Deployment Automation</i> by Jez Humble and David Farley (Addison-Wesley, 2011). Explanations, examples, code snippets and drawings are original summaries, not text or figures copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch05-deployment-pipeline.html"><span>Previous · Chapter 5</span><b>Anatomy of the Deployment Pipeline</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch07-commit-stage.html"><span>Next · Chapter 7</span><b>The Commit Stage</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('cd:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('acc:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle in the header */
+(function(){const b=document.getElementById('themeBtn');const r=document.documentElement;const t=store.get('theme',null);if(t)r.dataset.theme=t;if(!b)return;
+  b.addEventListener('click',()=>{const dark=r.dataset.theme?r.dataset.theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches;r.dataset.theme=dark?'light':'dark';store.set('theme',r.dataset.theme)})})();
+/* pipeline drawing: svg, stages [{t,sub,st}] st in ok|bad|run|idle|skip; returns nothing. Lays out left to right in viewBox width W */
+function pipe(svg,stages,o){svg=typeof svg==='string'?$(svg):svg;o=o||{};const W=o.w||640,H=o.h||110,n=stages.length,gap=o.gap||22;const bw=(W-20-gap*(n-1))/n,bh=o.bh||58,y=(H-bh)/2;
+  svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.innerHTML='';
+  const col={ok:'ok',bad:'bad',run:'blue',idle:'line',skip:'line',mid:'mid'};
+  stages.forEach((s,i)=>{const x=10+i*(bw+gap);const c=col[s.st||'idle'];
+    if(i>0){const ax=x-gap+3;svg.appendChild(el('line',{x1:ax,y1:H/2,x2:x-5,y2:H/2,stroke:'var(--muted)','stroke-width':2,class:s.st==='run'?'flow':''}));svg.appendChild(el('polygon',{points:`${x-3},${H/2} ${x-10},${H/2-4} ${x-10},${H/2+4}`,fill:'var(--muted)'}))}
+    const g=el('g',{class:'fade'+(s.st==='skip'?' off':'')});
+    g.appendChild(el('rect',{x,y,width:bw,height:bh,rx:8,fill:s.st==='ok'?'var(--ok-soft)':s.st==='bad'?'var(--bad-soft)':s.st==='mid'?'var(--mid-soft)':'var(--surface)',stroke:`var(--${c==='line'?'line':c})`,'stroke-width':s.st==='run'?2.6:1.6,class:s.st==='run'?'pulse':''}));
+    const lines=s.t.split('\n');lines.forEach((l,k)=>g.appendChild(el('text',{x:x+bw/2,y:y+bh/2+(k-(lines.length-1)/2)*14+(s.sub?-4:4),'text-anchor':'middle','font-size':o.fs||12.5,'font-weight':700,fill:'var(--ink)'},l)));
+    if(s.sub)g.appendChild(el('text',{x:x+bw/2,y:y+bh-9,'text-anchor':'middle','font-size':10.5,fill:'var(--muted)',class:'t-mono'},s.sub));
+    svg.appendChild(g)});}
+
+
+const N=[['init',60,40],['compile-src',220,40],['compile-tests',220,140],['run-tests',400,90],['package',560,90]];
+const E=[['init','compile-src'],['init','compile-tests'],['compile-src','compile-tests'],['compile-src','run-tests'],['compile-tests','run-tests'],['run-tests','package']];
+let mode='task',touched='src';const P={};N.forEach(n=>P[n[0]]={x:n[1],y:n[2]});
+function dg(){const s=$('#dgSvg');s.innerHTML='';const run=new Set();
+ if(mode==='task')N.forEach(n=>run.add(n[0]));else{if(touched==='src'){['compile-src','compile-tests','run-tests','package'].forEach(x=>run.add(x))}else if(touched==='test'){['compile-tests','run-tests','package'].forEach(x=>run.add(x))}}
+ E.forEach(([a,b])=>{const A=P[a],B=P[b];s.appendChild(el('line',{x1:A.x+50,y1:A.y+20,x2:B.x-52,y2:B.y+20,stroke:'var(--muted)','stroke-width':1.6}));s.appendChild(el('circle',{cx:B.x-52,cy:B.y+20,r:3.5,fill:'var(--muted)'}))});
+ N.forEach(([id,x,y])=>{const r=run.has(id);s.appendChild(el('rect',{x:x-50,y,width:100,height:40,rx:8,fill:r?'var(--blue-soft)':'var(--surface)',stroke:r?'var(--blue)':'var(--line)','stroke-width':r?2:1.2}));s.appendChild(el('text',{x,y:y+24,'text-anchor':'middle','font-size':12,'font-weight':700,fill:r?'var(--ink)':'var(--muted)',class:'t-mono'},id));
+  s.appendChild(el('text',{x,y:y+56,'text-anchor':'middle','font-size':10.5,fill:r?'var(--blue)':'var(--muted)'},r?'runs':'skipped: up to date'))});
+ $('#dgTxt').innerHTML=mode==='task'?`Task-oriented: every task in the network runs (${run.size} of 5) because the tool remembers nothing from last time. Simple and predictable, but slower; tasks must guard themselves if they should not repeat.`:`Product-oriented: ${run.size} of 5 run. Timestamps on the outputs tell the tool what is stale. Faster, but the tool's state lives in your filesystem, which can mislead it (e.g. clock skew).`}
+seg('[data-m]',b=>{mode=b.dataset.m;dg()});$$('[data-touch]').forEach(b=>b.addEventListener('click',()=>{touched=b.dataset.touch;dg()}));dg();
+const TL=[['Make','product-oriented','Powerful and fast for C/C++, tracking exactly what changed. But makefiles grow hard to maintain, whitespace (tabs) causes infamous bugs, and everything runs through the shell, hurting portability. SCons is a Python-based alternative.',`app: main.o util.o
+\tcc -o app main.o util.o   <span class="c"># must be a TAB</span>
+main.o: main.c util.h
+\tcc -c main.c`],
+['Ant','task-oriented, XML','Cross-platform Java tasks for compiling, copying, testing. But XML is verbose, the domain model is thin (just "tasks"), it is declarative with awkward imperative bits, and reuse via import/macrodef is poorly understood. Scripts grow long.',`&lt;target name=<span class="s">"test"</span> depends=<span class="s">"compile"</span>&gt;
+  &lt;junit haltonfailure=<span class="s">"false"</span>&gt; ... &lt;/junit&gt;
+&lt;/target&gt;`],
+['NAnt / MSBuild','task-oriented, XML','.NET ports of the Ant idea. MSBuild is integrated with Visual Studio project files. Same limitations as Ant.',`&lt;Target Name=<span class="s">"Build"</span> DependsOnTargets=<span class="s">"Restore"</span>&gt;
+  &lt;MSBuild Projects=<span class="s">"App.sln"</span> /&gt;
+&lt;/Target&gt;`],
+['Maven','convention over configuration','Huge reduction in boilerplate if you follow its layout, plus dependency management. Hard if your project doesn\'t fit; still an XML DSL; self-updating by default (plugins can change under you); SNAPSHOT dependencies make builds unrepeatable. Pin everything.',`&lt;dependency&gt;
+  &lt;artifactId&gt;json-lib&lt;/artifactId&gt;
+  &lt;version&gt;2.4&lt;/version&gt;  <span class="c">&lt;!-- pin it --&gt;</span>
+&lt;/dependency&gt;`],
+['Rake','internal DSL in Ruby','Make\'s model as a Ruby library. Since build scripts are real code, you get refactoring, debugging, libraries, and modular design. Downsides: you need a Ruby runtime on every box, and some library support.',`task :test => [:compile] <span class="k">do</span>
+  sh <span class="s">"run-tests --fast"</span>
+<span class="k">end</span>`],
+['Buildr','Rake for the JVM','Built on Rake, understands Java/Scala/Groovy projects and Maven repositories. The authors strongly suggested it for new Java projects at the time.',`define <span class="s">"bank"</span> <span class="k">do</span>
+  compile.with JUNIT
+  package :jar
+<span class="k">end</span>`],
+['Psake','internal DSL in PowerShell','The Rake idea for Windows: task-oriented dependency networks written in PowerShell.',`task Test -depends Compile {
+  exec { dotnet test }
+}`]];
+$('#toolBtns').innerHTML=TL.map((t,i)=>`<button data-tl="${i}" aria-pressed="${i===0}">${t[0]}<span>${t[1]}</span></button>`).join('');
+function tool(i){const t=TL[i];$('#toolTip').innerHTML=`<span class="eyebrow">${t[1]}</span><h3 class="blue">${t[0]}</h3><p>${t[2]}</p>`;$('#toolCode').innerHTML=t[3]}seg('#toolBtns button',b=>tool(+b.dataset.tl));tool(0);
+cards('#prCards',[{t:'A script for each pipeline stage',c:'blue',d:'Start with one script; split it as the project grows: commit stage, acceptance stage, deploy, nonfunctional tests. Keep them all in version control with the code.'},{t:'Use the right technology to deploy',c:'blue',d:'Deployment is done by developers, testers and ops, on laptops and in production. Choose tools ops are comfortable with, and design it together. The chapter tells of a telecom where a shared tool built by a cross-team build group finally won ops over.'},{t:'Same scripts for every environment',c:'ok',d:'Differences live in configuration; the script fetches it. Scripts must work on developers\' machines too, or they will be bypassed.'},{t:'Use your OS packaging tools',c:'ok',d:'Debian packages, RPMs or MSIs know how to install, upgrade, remove and declare dependencies. Use them instead of sprinkling files around. Use specialised tools only for things like middleware.'},{t:'Make deployment idempotent',c:'pencil',d:'Same result regardless of starting state. Deploy everything from a known baseline; or use tools that converge state (like Puppet).'},{t:'Evolve incrementally',c:'pencil',d:'You get value before the system is finished. Start by having ops and devs automate deployment to one test environment, then extend.'}]);
+const ST={fresh:{os:'ok',pkg:'missing',app:'none',cfg:'none'},old:{os:'ok',pkg:'v2.1',app:'v1.3',cfg:'v1.3'},half:{os:'ok',pkg:'v2.1',app:'v1.4 partial',cfg:'v1.3'}};let start='fresh';
+function showState(o,res){$('#state').innerHTML=[['OS baseline',o.os],['Middleware',o.pkg],['App binaries',o.app],['App config',o.cfg]].map(([k,v])=>`<div class="${res?(/1\.4$|v2\.2|ok/.test(v)?'ok':'bad'):''}"><b>${k}</b>${v}</div>`).join('')}
+seg('[data-st]',b=>{start=b.dataset.st;showState(ST[start]);$('#idTxt').textContent=''});showState(ST.fresh);
+$('#runNaive').addEventListener('click',()=>{const o={...ST[start]};o.app=start==='fresh'?'only changed files (broken)':start==='half'?'v1.4 partial + diff = corrupt':'v1.4';$('#idTxt').innerHTML=start==='old'?'Worked this time, because the server happened to be exactly in the state the diff assumed. Middleware and config were never checked.':'<span class="badc">The diff assumed a starting state the server was not in. Result unknown, and different each time.</span>';showState(o,true)});
+$('#runIdem').addEventListener('click',()=>{showState({os:'ok',pkg:'v2.2 (verified)',app:'v1.4',cfg:'v1.4'},true);$('#idTxt').innerHTML='<span class="okc">Same correct state from any starting point: middleware checked and brought to the right version, the full v1.4 artifact set installed, config applied from the repository.</span>'});
+const L=['Operating system','Middleware','Application + config'];
+function layers(f){const s=$('#lSvg');s.innerHTML='';L.forEach((l,i)=>{const y=160-i*62;s.appendChild(el('rect',{x:40,y,width:380,height:50,rx:6,fill:'var(--paper)',stroke:'var(--line)',id:'L'+i}));s.appendChild(el('text',{x:230,y:y+30,'text-anchor':'middle','font-size':13.5,'font-weight':700,fill:'var(--muted)',id:'Lt'+i},l));s.appendChild(el('circle',{cx:470,cy:y+25,r:14,fill:'var(--surface)',stroke:'var(--line)',id:'Lc'+i}));s.appendChild(el('text',{x:500,y:y+30,'font-size':12,fill:'var(--muted)',id:'Ls'+i},'smoke test'))});
+ if(f===undefined)return;let stop=false;L.forEach((l,i)=>setTimeout(()=>{if(stop)return;const bad=i===f;$('#L'+i).setAttribute('fill',bad?'var(--bad-soft)':'var(--blue-soft)');$('#L'+i).setAttribute('stroke',bad?'var(--bad)':'var(--blue)');$('#Lt'+i).setAttribute('fill','var(--ink)');
+  setTimeout(()=>{$('#Lc'+i).setAttribute('fill',bad?'var(--bad)':'var(--ok)');$('#Ls'+i).textContent=bad?'FAILED':'passed';$('#Ls'+i).setAttribute('fill',bad?'var(--bad)':'var(--ok)');
+   if(bad){stop=true;$('#lTxt').innerHTML=`<span class="badc">Stopped at the ${l.toLowerCase()} layer.</span> You know exactly where to look, and nothing above it was deployed onto a broken base.`}else if(i===2)$('#lTxt').innerHTML='<span class="okc">All three layers deployed and verified.</span>'},350)},i*800))}
+$('#deployL').addEventListener('click',()=>{$('#lTxt').textContent='';layers(+$('#fault').value)});layers();
+cards('#remCards',[{t:'Infrastructure or deployment tools',d:'Package the app with OS packaging and have a tool (Puppet, ControlTier, BladeLogic, Marimba and the like) push out the new version. One toolset for infrastructure and apps, with auditing and error handling built in.'},{t:'CI server agents',d:'If the CI server runs agents on target boxes, write scripts as if they ran locally and let the CI server orchestrate. You get job management, reruns and logs for free.'},{t:'Script it yourself (last resort)',d:'Log in over SSH and run commands. Works, but you own all the error handling, parallelism and retry logic that tools give you.'}]);
+const TP=[['Relative paths',`OUTPUT=/home/jez/projects/bank/build
+cp $OUTPUT/app.war /opt/tomcat/webapps/`,'Absolute paths tie the build to one machine layout. Default to paths relative to the project root, so many copies of the build can run side by side; keep any unavoidable absolute path in configuration.'],
+['Manual steps',`<span class="c"># deploy.txt</span>
+1. RDP to server, open IIS Manager
+2. Click "Stop", copy files from share
+3. Edit web.config, change connection string`,'Manual deploys are tedious, error-prone and their documentation is always out of date. The rule of thumb: when you have to do it a second time, automate it, and certainly by the third.'],
+['Traceability',`app.jar   <span class="c"># built ... sometime? from ... something?</span>`,'You must be able to tell which revision built any binary. Embed the revision in the manifest or assembly metadata, and store an MD5 or SHA hash so you can check binaries are unchanged.'],
+['Binaries in VCS',`build.sh:
+  compile &amp;&amp; svn commit -m <span class="s">"build output"</span> target/`,'Committing build output creates revisions that are not changes, muddying traceability and bloating the repository. Put binaries and reports on a shared filesystem or artifact repository.'],
+['Test targets fail the build',`test-unit:       run unit tests  <span class="c"># fails -&gt; build stops</span>
+test-component:  never runs
+report:          never runs`,'If the first failing test target halts the build, you lose the results of the others. Set a flag on failure, run every test target, generate the reports, then fail at the end.']];
+$('#tipSeg').innerHTML=TP.map((t,i)=>`<button data-tp="${i}" aria-pressed="${i===0}">${t[0]}</button>`).join('');
+function tip(i){$('#tipCode').innerHTML=TP[i][1];$('#tipTxt').textContent=TP[i][2];$('#tipTxt').hidden=true}seg('#tipSeg button',b=>tip(+b.dataset.tp));tip(0);
+$('#tipShow').addEventListener('click',()=>$('#tipTxt').hidden=false);
+quiz('#qQuiz','#qScore',[
+ {q:'A build tool that skips tasks whose outputs are newer than inputs is…',o:['Task-oriented','Product-oriented'],a:1,why:'Make and SCons keep state as file timestamps.'},
+ {q:'Which is a recognised Maven pitfall?',o:['It has no dependency management','Self-updating plugins and SNAPSHOT dependencies make builds unrepeatable','It can only build C'],a:1,why:'Pin versions and use a local repository.'},
+ {q:'An idempotent deployment…',o:['Copies only changed files','Leaves the target in the same correct state whatever it started as','Runs once only'],a:1,why:'Deploy the full set from a known baseline, or use converging tools.'},
+ {q:'Why deploy and test in layers?',o:['It is faster','A failing layer smoke test tells you exactly where the problem is'],a:1,why:'OS, middleware, app: verify each before building on it.'},
+ {q:'A unit test target fails. What should the build do?',o:['Stop immediately','Record the failure, run the other test targets and reports, then fail'],a:1,why:'You want the full picture from one run.'},
+]);
+
+})();
+</script>
+</body>
+</html>

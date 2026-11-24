@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Seeking SRE 16–17: Database Reliability and Data Durability</title>
+<meta name="description" content="Downtime is survivable. Losing data often is not. Two chapters on the tier with the least tolerance for risk: how database work becomes reliability engineering, and how Dropbox engineers against losing a single block.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Seeking SRE companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = systems and measurement, orange pencil = people and conversation, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* additions for Seeking SRE */
+.themebtn{cursor:pointer}
+.authors{font-size:.95rem;color:var(--muted)}
+.authors b{color:var(--ink);font-weight:600}
+.chhead{display:flex;flex-direction:column;gap:6px;border-left:4px solid var(--pencil);padding:6px 0 6px 14px}
+.chhead .eyebrow{color:var(--pencil)}
+.chhead h2{font-size:clamp(1.6rem,4vw,2.3rem)}
+.missing{border:2px dashed var(--bad);background:var(--bad-soft);border-radius:10px;padding:16px 18px;display:flex;flex-direction:column;gap:8px}
+.missing b.h{font-family:var(--display);color:var(--bad);font-size:1.05rem}
+.tl{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}
+.tl button{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:9px 10px;text-align:left;display:flex;flex-direction:column;gap:2px}
+.tl button b{font-family:var(--mono);color:var(--blue);font-size:.85rem}
+.tl button span{font-size:.85rem;color:var(--muted)}
+.tl button[aria-pressed="true"]{background:var(--blue-soft);border-color:var(--blue)}
+.quote{font-family:var(--display);font-size:1.15rem;border-left:4px solid var(--blue);padding:4px 0 4px 14px;max-width:60ch}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.kv>div{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--paper);display:flex;flex-direction:column;gap:2px}
+.kv b{font-family:var(--mono);font-size:1.2rem}
+.kv span{font-size:.85rem;color:var(--muted)}
+code,.code{font-family:var(--mono);font-size:.86rem}
+pre.code{background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;margin:0;line-height:1.5;max-width:100%}
+.log{font-family:var(--mono);font-size:.82rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:5em;max-height:14em;overflow:auto;white-space:pre-wrap}
+.pill{display:inline-block;font-family:var(--mono);font-size:.72rem;padding:2px 7px;border-radius:999px;border:1px solid currentColor}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media (max-width:600px){.grid2{grid-template-columns:1fr}}
+
+/* page */
+
+.tiers{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+@media (max-width:640px){.tiers{grid-template-columns:1fr 1fr}}
+.tiers div{border:2px solid var(--line);border-radius:10px;padding:10px;font-size:.85rem;display:flex;flex-direction:column;gap:4px;transition:all .3s}
+.tiers div.on{border-color:var(--ok);background:var(--ok-soft)}
+.tiers b{font-family:var(--display);font-size:.95rem}
+.term{font-family:var(--mono);font-size:.85rem;background:#0f1a26;color:#d8e6f5;border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+.term .hl{color:#f2877c}.term .ok{color:#76cf91}
+.fleet{display:grid;grid-template-columns:repeat(20,minmax(0,1fr));gap:3px}
+.fleet i{aspect-ratio:1;border-radius:3px;background:var(--blue);transition:background .25s}
+.fleet i.re{background:var(--mid)}.fleet i.down{background:var(--bad)}
+.ver{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+@media (max-width:640px){.ver{grid-template-columns:1fr}}
+.ver div{border:1px solid var(--line);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px;background:var(--surface)}
+.ver b{font-family:var(--display)}
+.ver .cnt{font-family:var(--mono);font-size:1.3rem;color:var(--blue)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Seeking SRE · visual companion</a><span class="tag">Part II · Chapters 16–17</span><button class="tag themebtn" id="themeBtn" type="button">Theme: auto</button></div>
+  <h1>Database Reliability and Data Durability</h1>
+  <p class="lede">Downtime is survivable. Losing data often is not. Two chapters on the tier with the least tolerance for risk: how database work becomes reliability engineering, and how Dropbox engineers against losing a single block.</p>
+  <p class="authors"><b>Contributors:</b> Laine Campbell (ch. 16), James Cowling (ch. 17)</p>
+  <nav class="toc" aria-label="Sections"><a href="#principles">Principles</a><a href="#recovery">Recovery strategy</a><a href="#cd">Continuous delivery</a><a href="#markov">Estimating durability</a><a href="#isolation">Isolation</a><a href="#verify">Verification</a><a href="#auto">Automation</a><a href="#check">Quick check</a></nav>
+</header>
+
+<div class="chhead"><span class="eyebrow">Chapter 16</span><h2>Database Reliability Engineering</h2><span class="small">Laine Campbell, excerpted from the book she wrote with Charity Majors.</span></div>
+
+<section id="principles" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>From DBA silo to database reliability engineer</h2></div>
+  <p>Traditional DBAs built silos and snowflakes: different tools, hardware and languages from everyone else. The database tier has the least tolerance for risk, which makes it the biggest opportunity for reliability culture. Campbell's guiding principles reduce the cognitive load of daily decisions and, added up, form a culture.</p>
+  <div class="cardgrid" id="prCards"></div>
+</section>
+
+<section id="recovery" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>A recovery strategy, not a backup strategy</h2></div>
+  <p>Backups are a means; recovery within your SLO parameters is the end. "Is the database backed up?" should be answered "yes, in multiple ways, depending on the scenario." Pick a scenario and see which storage tier and tool serve it.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Scenario" id="scSeg"></div>
+    <div class="tiers" id="tiers"></div>
+    <p id="scTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout"><b class="h">Replication is not a backup. Neither is RAID.</b><span>Replication is blind: it faithfully copies user errors, application bugs and corruption to every replica. RAID protects against a disk, not against a bad <code>DELETE</code>. Both are tools for availability and data movement, not recovery artifacts.</span></div>
+  <div class="cardgrid" id="blkCards"></div>
+</section>
+
+<section id="cd" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>From gatekeeper to enabler</h2></div>
+  <p>The old DBA reviewed every migration, object and query and hand-shepherded changes into production. That gatekeeper becomes a bottleneck and burns out. The DBRE instead educates developers, publishes living architecture and data-model knowledge, gives them tools (benchmarks, consistency checkers, templates), pairs with them, and builds safe migration pipelines.</p>
+  <div class="sheet stepper" id="migStep"><pre class="code" id="migCode"></pre></div>
+</section>
+
+<div class="chhead"><span class="eyebrow">Chapter 17</span><h2>Engineering for Data Durability</h2><span class="small">James Cowling on how Dropbox avoids losing or corrupting data across exabytes.</span></div>
+
+<section id="markov" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>How many nines does replication buy?</h2></div>
+  <p>Most companies survive downtime; few survive losing a big fraction of user data. Replication is table stakes, and a simple Markov model estimates what it buys. Each of <i>n</i> disks fails at rate λ = 1/MTTF; each failed disk is re-replicated at rate μ = 1/MTTR; data is lost if more than <i>m</i> disks in a group fail. The loss rate works out to</p>
+  <p class="mono" style="font-size:.95rem">R(loss) ≈ n! / (m! (n−m−1)!) · λ<sup>m+1</sup> / μ<sup>m</sup></p>
+  <div class="sheet">
+    <div class="grid2">
+      <label class="rng"><span>Scheme</span><select id="scheme"><option value="2,1">2 copies (n=2, survive 1)</option><option value="3,2" selected>3-way replication (n=3, survive 2)</option><option value="9,3">RS(9,6) erasure code (n=9, survive 3)</option><option value="5,4">5-way replication (n=5, survive 4)</option></select></label>
+      <label class="rng"><span>Annualized disk failure rate: <b id="afrV"></b></span><input type="range" id="afr" min="0.5" max="10" step="0.5" value="3"></label>
+      <label class="rng"><span>Time to replace and re-replicate (MTTR): <b id="mttrV"></b></span><input type="range" id="mttr" min="1" max="168" value="24"></label>
+      <label class="rng"><span>Replication groups in the fleet: <b id="grpV"></b></span><input type="range" id="grp" min="0" max="8" value="0"></label>
+    </div>
+    <div class="kv"><div><b id="nines"></b><span>nines of durability per group per year</span></div><div><b id="fleetP"></b><span>chance of losing any group this year</span></div></div>
+    <p class="small" id="mkTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout blue"><b class="h">Only an upper bound</b><span>Twenty-four nines is an MTTF longer than the age of the universe. These numbers model routine disk failure, which is easy to protect against. What actually loses data are the things you didn't see coming: a truck into the data center, an intern let loose on production, a bug that writes garbage everywhere.</span></div>
+</section>
+
+<section id="isolation" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Store your stuff on different stuff</h2></div>
+  <div class="cardgrid" id="isoCards"></div>
+  <p>The most dangerous component is usually the people operating the system. Here is a version of one of the worst incidents in Dropbox's history: an operator meant to reimage only databases scheduled for reinstall. Toggle the quotes.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Command"><button data-c="1" aria-pressed="true">With quotes (intended)</button><button data-c="0" aria-pressed="false">Quotes forgotten</button></div>
+    <div class="term" id="term"></div>
+    <div class="fleet" id="fleet" aria-hidden="true"></div>
+    <p id="dshTxt" aria-live="polite"></p>
+  </div>
+  <p>The operator wasn't to blame: if a simple mistake can take down production, the process failed. Dropbox added access controls against rebooting live database hosts, changed the tool's syntax to resist typos, rejected commands spanning multiple isolation domains, and above all automated the job so nobody runs such scripts by hand. "Don't hate the player, hate the game."</p>
+</section>
+
+<section id="verify" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>You will mess up: detect it</h2></div>
+  <p>Is your storage system correct, 100%? Most aren't: dangling references from an old bug, rows on the wrong shard, a background trickle of 404s everyone has learned to ignore. Dropbox aims for <b>the power of zero</b>: no unexplained errors, so any non-zero is a real signal. Building the verifiers took more effort than building the storage system. Run them for a simulated day.</p>
+  <div class="sheet">
+    <div class="ver">
+      <div><b>Disk Scrubber</b><span class="small">On every node, re-reads every block and checks application-level checksums. Disk checksums and SMART lie; fsyncs don't always fsync.</span><span class="cnt" id="v1">0</span><span class="small">corrupt blocks found</span></div>
+      <div><b>Index Scanner</b><span class="small">Walks the top-level indices and checks every expected node really holds each block. Over a million checks per second.</span><span class="cnt" id="v2">0</span><span class="small">metadata mismatches</span></div>
+      <div><b>Storage Watcher</b><span class="small">Written by an SRE who didn't build the system. Samples 1% of writes and reads them back after a minute, hour, day, week and month.</span><span class="cnt" id="v3">0</span><span class="small">blocks unreadable</span></div>
+    </div>
+    <div class="row"><button class="btn primary" id="vRun">Run a day</button><label class="row small"><input type="checkbox" id="vBroke"> Index Scanner silently crashed</label></div>
+    <p id="vTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="auto" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Automation shrinks the window of vulnerability</h2></div>
+  <p>MTTR defines the window in which a second (and third) failure turns into data loss. A RAID array waits days for someone to drive in and swap a disk; a distributed system re-replicates automatically in hours. Automation also fights operator fatigue (Cowling has seen people pipe <code>yes</code> into a tool that asked hundreds of confirmation questions) and is simply more reliable than a person at a keyboard. Try the durability calculator above at 168 hours versus 2 hours.</p>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Chapters 16 and 17</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Seeking SRE: Conversations About Running Production Systems at Scale</i>, curated and edited by David N. Blank-Edelman (O'Reilly, 2018); this page covers chapters 16–17 by Laine Campbell (ch. 16), James Cowling (ch. 17). Explanations, examples, code snippets and drawings are original summaries, not text from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch14-15-chaos-privacy.html"><span>Previous · Chapters 14–15</span><b>Chaos Engineering and Privacy</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch18-machine-learning.html"><span>Next · Chapter 18</span><b>Machine Learning for SRE</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('ssre:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('ssre:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle: cycles auto -> light -> dark */
+(function(){const b=document.getElementById('themeBtn');if(!b)return;const R=document.documentElement;
+  const names={auto:'Theme: auto',light:'Theme: light',dark:'Theme: dark'};
+  function apply(t){if(t==='auto')R.removeAttribute('data-theme');else R.setAttribute('data-theme',t);b.textContent=names[t];}
+  let t=store.get('theme','auto');apply(t);
+  b.addEventListener('click',()=>{t=t==='auto'?'light':t==='light'?'dark':'auto';store.set('theme',t);apply(t)});})();
+/* timeline: [{k,t,d}] buttons + detail panel */
+function timeline(sel,tipSel,items){const r=$(sel),tip=$(tipSel);
+  r.innerHTML=items.map((y,i)=>`<button data-i="${i}" aria-pressed="${i===0}"><b>${y.k}</b><span>${y.t}</span></button>`).join('');
+  function show(i){const y=items[i];tip.innerHTML=`<span class="eyebrow">${y.k}</span><h3 class="blue">${y.t}</h3>${y.d}`}
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{press(r,b);show(+b.dataset.i)}));show(0)}
+/* simple svg line chart. series:[{pts:[[x,y]],c,dash,w,label}], opt {x0,x1,y0,y1,W,H,pad,xl,yl,xt,yt} */
+function lineChart(svg,series,o){svg=typeof svg==='string'?$(svg):svg;svg.innerHTML='';const W=o.W||640,H=o.H||260,P=o.pad||[20,20,36,48];
+  const X=v=>P[3]+(v-o.x0)/(o.x1-o.x0)*(W-P[1]-P[3]),Y=v=>H-P[2]-(v-o.y0)/(o.y1-o.y0)*(H-P[0]-P[2]);
+  svg.appendChild(el('line',{x1:P[3],y1:H-P[2],x2:W-P[1],y2:H-P[2],stroke:'var(--line)'}));
+  svg.appendChild(el('line',{x1:P[3],y1:P[0],x2:P[3],y2:H-P[2],stroke:'var(--line)'}));
+  (o.yt||[]).forEach(v=>{svg.appendChild(el('line',{x1:P[3],y1:Y(v),x2:W-P[1],y2:Y(v),stroke:'var(--grid)'}));svg.appendChild(el('text',{x:P[3]-6,y:Y(v)+4,'text-anchor':'end','font-size':11,fill:'var(--muted)'},o.yf?o.yf(v):v))});
+  (o.xt||[]).forEach(v=>svg.appendChild(el('text',{x:X(v),y:H-P[2]+16,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},o.xf?o.xf(v):v)));
+  if(o.xl)svg.appendChild(el('text',{x:(W+P[3])/2,y:H-4,'text-anchor':'middle','font-size':12,fill:'var(--muted)'},o.xl));
+  if(o.yl)svg.appendChild(el('text',{x:12,y:(H)/2,'text-anchor':'middle','font-size':12,fill:'var(--muted)',transform:`rotate(-90 12 ${H/2})`},o.yl));
+  series.forEach(s=>{if(s.area){const d='M'+X(s.pts[0][0])+','+Y(o.y0)+s.pts.map(p=>'L'+X(p[0])+','+Y(p[1])).join('')+'L'+X(s.pts[s.pts.length-1][0])+','+Y(o.y0)+'Z';svg.appendChild(el('path',{d,fill:`var(--${s.c})`,opacity:.15}))}
+    const d=s.pts.map((p,i)=>(i?'L':'M')+X(p[0]).toFixed(1)+','+Y(p[1]).toFixed(1)).join('');
+    const p=el('path',{d,fill:'none',stroke:`var(--${s.c||'blue'})`,'stroke-width':s.w||2.2,'stroke-linejoin':'round'});if(s.dash)p.setAttribute('stroke-dasharray',s.dash);svg.appendChild(p);
+    if(s.label){const q=s.pts[s.pts.length-1];svg.appendChild(el('text',{x:X(q[0])-4,y:Y(q[1])-6,'text-anchor':'end','font-size':12,'font-weight':700,fill:`var(--${s.c||'blue'})`},s.label))}});
+  return{X,Y,svg};}
+function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+function fmt(n,d){return Number(n).toLocaleString('en-US',{maximumFractionDigits:d==null?0:d,minimumFractionDigits:d==null?0:d})}
+
+
+cards('#prCards',[{t:'Protect the data',d:'Still the first principle, but no longer through strict separation of duties and expensive software alone: through shared responsibility, standard processes, and automation that prevents mistakes.',c:'blue'},{t:'Self-service for scale',d:'A DBRE can\'t personally handle every request. Build tools and platforms that let engineers do the right thing themselves.',c:'ok'},{t:'Eliminate toil',d:'Automate the repetitive database chores so time goes into engineering.',c:'mid'},{t:'Databases are not special',d:'Standardize, automate and build resilience. Any component of a cluster should be losable and replaceable, like any other tier.',c:'pencil'},{t:'Remove barriers with software engineering',d:'Work alongside developers instead of behind a gate.',c:'d5'}]);
+
+const TI=[['Online, high-performance','Fast, low latency, pricey. Recent full copies and incrementals for quick recovery.'],['Online, low-performance','Big, cheap, slower disks. Older copies for long-running or infrequent recoveries.'],['Offline','Snapshots, tape, Glacier-style archives. Off-site, slow to retrieve, for disasters and retention.'],['Object storage','Versioned objects via API, replicated widely. Easy recovery of specific objects.']];
+const SC=[['Node died',[0],'Full physical backup (or a fresh replica) restored from fast online storage. Speed matters most.'],['Bad migration dropped a column',[0,1],'Full backup plus incremental or log replay to just before the migration, restored beside production so you can copy the lost data back.'],['User deleted their own files',[3],'Object versioning or logical backups let you restore just those objects, not the whole database.'],['Region lost',[1,2],'Copies in another region or off-site archives. Slow, but the only thing that survives.'],['Silent corruption, found weeks later',[1,2],'Older backups from low-performance or offline storage, because recent ones already contain the corruption. Detection and long retention windows are what save you.']];
+$('#scSeg').innerHTML=SC.map((s,i)=>`<button data-i="${i}" aria-pressed="${i===0}">${s[0]}</button>`).join('');
+$('#tiers').innerHTML=TI.map(t=>`<div><b>${t[0]}</b><span>${t[1]}</span></div>`).join('');
+function sc(i){$$('#tiers div').forEach((d,k)=>d.classList.toggle('on',SC[i][1].includes(k)));$('#scTxt').textContent=SC[i][2]}
+seg('#scSeg button',b=>sc(+b.dataset.i));sc(0);
+cards('#blkCards',[{t:'1. Detection',d:'Catch loss early, before backups age out. Wrap ad hoc production changes in tools that test, log and announce them; validate data downstream of apps (referential integrity, file pointers, PII); compare infrastructure against golden images.',c:'bad'},{t:'2. Diverse storage',d:'Different tiers serve different scenarios at the right cost and durability.',c:'blue'},{t:'3. A varied toolbox',d:'Full physical backups (node, cluster, data center restores), incremental physical backups, logical backups for single objects, object stores.',c:'ok'},{t:'4. Testing',d:'Monthly or quarterly restore tests leave long gaps where backups can silently break. Test continuously, e.g. by restoring into the environments you build anyway.',c:'mid'}]);
+
+$('#migStep').insertAdjacentHTML('beforeend',stepHTML());
+const MG=['-- 1. Impact analysis (automated in the pipeline)\nEXPLAIN ALTER TABLE orders ADD COLUMN gift_note TEXT;\n-- table: 180M rows; lock type? online DDL supported? replicas lag?','-- 2. Migration testing on a production-sized copy\n$ restore latest backup -> staging-db\n$ run migration, time it, watch replica lag\n  duration 11m, no blocking locks  ✓','-- 3. Rollback testing: can we go back?\n$ apply down-migration on staging copy\n  data written to gift_note during test preserved? ✓\n  app version N-1 works against new schema? ✓','-- 4. Deploy through the same pipeline as code\n$ deploy migration --canary 1 shard\n  monitoring: latency, errors, lag  ✓  -> roll out to all shards'];
+stepper('#migStep',['Analyze impact before anyone touches production.','Test on realistic data volumes, often by restoring a backup (which tests the backup too).','Test the way back. A migration with no rollback is a one-way door.','Ship it like code: canary, watch, proceed. No hand-crafted DBA ceremony.'],i=>$('#migCode').textContent=MG[i]);
+
+/* durability */
+function fact(k){let r=1;for(let i=2;i<=k;i++)r*=i;return r}
+function mk(){const [n,m]=$('#scheme').value.split(',').map(Number);const afr=+$('#afr').value/100,mttr=+$('#mttr').value,g=+$('#grp').value;
+ $('#afrV').textContent=(afr*100).toFixed(1)+'%';$('#mttrV').textContent=mttr+' h';$('#grpV').textContent='10^'+g+' = '+fmt(Math.pow(10,g));
+ const mttf=-8766/Math.log(1-afr),lam=1/mttf,mu=1/mttr;const R=fact(n)/(fact(m)*fact(n-m-1))*Math.pow(lam,m+1)/Math.pow(mu,m);const perYear=R*8766;
+ const nines=-Math.log10(perYear);$('#nines').textContent=nines.toFixed(1);const fleet=1-Math.exp(-perYear*Math.pow(10,g));$('#fleetP').textContent=fleet<1e-6?fleet.toExponential(1):(fleet*100).toFixed(fleet<0.01?4:2)+'%';
+ $('#mkTxt').textContent=`MTTF ≈ ${fmt(mttf)} h per disk; loss rate ≈ ${perYear.toExponential(2)} per group-year. `+(g>4?'Across many groups, rare per-group events add up.':'Raise the group count to see fleet-wide risk.')}
+['#scheme','#afr','#mttr','#grp'].forEach(s=>$(s).addEventListener('input',mk));mk();
+
+cards('#isoCards',[{t:'Physical isolation',d:'Disks, machines, racks, rows, power feeds, network clusters, data centers, regions. Each level up isolates better but costs money, complexity or latency. Dropbox places data with power and network domains in mind.',c:'blue'},{t:'Logical isolation',d:'Bugs propagate and failures cascade; replicas happily store corrupt data from the primary. Build loosely coupled systems so one bad component can\'t poison the rest.',c:'pencil'},{t:'Operational isolation',d:'The most overlooked. Never let one fleet-wide firmware upgrade or one reboot command touch every copy at once. Roll changes across isolation domains, not all of them together.',c:'bad'}]);
+$('#fleet').innerHTML='<i></i>'.repeat(60);const reinstall=new Set([3,17,29,44,51]);
+function dsh(q){$('#term').innerHTML=q?'$ dsh --group <span class="ok">"hwclass=database lifecycle=reinstall"</span> reimage.sh\n  matched 5 hosts (databases slated for reinstall)':'$ dsh --group <span class="hl">hwclass=database lifecycle=reinstall reimage.sh</span>\n  group = hwclass=database   (all databases!)\n  command = lifecycle=reinstall reimage.sh';
+ $$('#fleet i').forEach((c,i)=>{c.className='';setTimeout(()=>c.className=q?(reinstall.has(i)?'re':''):'down',q?0:i*25)});
+ $('#dshTxt').innerHTML=q?'Five hosts reimaged, as intended.':'<b class="badc">Every database matched.</b> Without the quotes the shell split the group expression, so the command ran on the whole fleet. In the real incident this caused a widely publicized two-day outage.'}
+seg('#isolation [data-c]',b=>dsh(+b.dataset.c));dsh(1);
+
+$('#vRun').addEventListener('click',()=>{const br=$('#vBroke').checked;const a=Math.floor(Math.random()*6)+2,b=br?0:(Math.random()<.5?0:1),c=Math.random()<.3?1:0;let t=0;const iv=setInterval(()=>{t++;$('#v1').textContent=Math.round(a*t/20);$('#v2').textContent=br?0:Math.round(b*t/20);$('#v3').textContent=Math.round(c*t/20);if(t>=20){clearInterval(iv);
+ $('#vTxt').innerHTML=br?'<b class="badc">Index Scanner reports zero. Is that good news?</b> It crashed, and a dead verifier looks exactly like a healthy system with no errors. Dropbox once didn\'t notice for days. Watch the watchers: alert on missing heartbeats and check throughput, and run disaster-recovery drills (shutting nodes, black-holing clusters; in staging, corrupting blocks on purpose) to prove the alerts fire.':`Scrubber found ${a} corrupt blocks, as it does every day at scale; each triggers automatic re-replication from healthy copies. `+(b||c?'A non-zero from the scanner or watcher is a real signal worth an investigation, precisely because the baseline is zero.':'Index Scanner and Storage Watcher: zero. Trustworthy, as long as you know they ran.')}},60)});
+
+quiz('#qQuiz','#qScore',[
+ {q:'Why isn\'t replication a backup?',o:['It is too slow','It faithfully copies errors and corruption to every replica','It costs too much'],a:1,why:'Replication is blind.'},
+ {q:'Which recovery scenario needs old backups from slow or offline tiers?',o:['A node died','Corruption discovered weeks later','A single user deleted a file'],a:1,why:'Recent backups already contain the corruption.'},
+ {q:'Halving MTTR (faster re-replication) does what to 3-way replication loss rate?',o:['Halves it','Divides it by about 4','Nothing'],a:1,why:'Loss rate scales with 1/μ^m = MTTR² for m=2.'},
+ {q:'What is the most overlooked kind of isolation?',o:['Physical','Logical','Operational'],a:2,why:'One fleet-wide command can hit every copy.'},
+ {q:'A verifier has reported zero errors for a week. What should you check?',o:['Nothing; zero is perfect','That it is actually running','Its color scheme'],a:1,why:'A dead verifier also reports zero.'}]);
+
+})();
+</script>
+</body>
+</html>

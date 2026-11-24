@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Diffusion Models</title>
+<meta name="description" content="Image generators do not predict the next token. They learn to remove noise, step by step, guided by text. Meet the four parts of a diffusion pipeline.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Fine-Tuning AI companion (adapted from the Accelerate companion). Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+.themebtn{cursor:pointer}
+.themebtn:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)} pre.code .n{color:var(--pencil)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+.missing{border:2px dashed var(--bad);background:var(--bad-soft);color:var(--bad);padding:12px 16px;border-radius:8px}
+.tokrow{display:flex;flex-wrap:wrap;gap:4px}
+.tok{font-family:var(--mono);font-size:.8rem;padding:2px 6px;border-radius:4px;border:1px solid var(--line);background:var(--paper)}
+.tok.m{opacity:.4;text-decoration:line-through}
+.tok.l{background:var(--ok-soft);border-color:var(--ok)}
+.tok.p{background:var(--blue-soft);border-color:var(--blue)}
+.tok.a{background:var(--pencil-soft);border-color:var(--pencil)}
+.out{font-family:var(--mono);font-size:.85rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:2.5em;white-space:pre-wrap;word-break:break-word}
+label.rng{min-width:0} label.rng select{width:100%}
+.stat .big{font-size:clamp(1.6rem,5vw,2.4rem);color:var(--ink)}
+.stat .big.blue{color:var(--blue)} .stat .big.pencil{color:var(--pencil)} .stat .big.okc{color:var(--ok)} .stat .big.badc{color:var(--bad)} .stat .big.midc{color:var(--mid)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:.85rem}
+.legend i{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+
+code,pre,kbd,.mf,.out{font-variant-ligatures:none;font-feature-settings:"calt" 0,"liga" 0}
+
+/* page */
+
+canvas.px{width:100%;max-width:256px;aspect-ratio:1;image-rendering:pixelated;border-radius:10px;border:1px solid var(--line);display:block;margin:0 auto}
+.cvrow{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;align-items:center}
+@media (max-width:640px){.cvrow{grid-template-columns:1fr}}
+.toks{display:flex;flex-wrap:wrap;gap:6px}
+.toks span{border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-family:var(--mono);font-size:.85rem;background:var(--surface)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Fine-Tuning AI · visual companion</a><span class="tag">Part III · Chapter 12 of 15</span><button class="tag themebtn" type="button" data-theme-toggle>Theme: auto</button></div>
+  <h1>Diffusion Models</h1>
+  <p class="lede">Image generators do not predict the next token. They learn to remove noise, step by step, guided by text. Meet the four parts of a diffusion pipeline.</p>
+  <nav class="toc" aria-label="Sections"><a href="#shift">A different kind of model</a><a href="#forward">Forward process</a><a href="#reverse">Reverse process</a><a href="#unet">The UNet</a><a href="#latent">The latent trick</a><a href="#sched">Schedulers and guidance</a><a href="#lora">Where LoRA goes</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="shift" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>From next token to denoise a bit</h2></div>
+  <p>Chapter 11 taught a transformer to read pixels. Diffusion models do the reverse: they <b>paint</b>. You could try generating an image autoregressively, one pixel at a time in raster order (PixelRNN and PixelCNN did). But a 512 × 512 RGB image has 786,432 values, so that means 786,432 sequential passes. Worse, early pixels are locked in: the ears you committed to at the top may belong to a fox by the time you reach the bottom.</p>
+  <p>Diffusion starts with <i>every</i> pixel at once, as pure static, and refines the whole canvas in parallel for a few dozen steps. It also works on a compressed <b>latent</b>, so there are fewer values to refine. The good news for a fine-tuner: LoRA, PEFT, data curation and the train, save, evaluate loop all carry over. What changes is the network (a UNet), the loss (mean squared error on noise, not cross-entropy on tokens) and the data (image-caption pairs).</p>
+  <div class="sheet"><div class="bars" id="cmpBars"></div><p class="small">Forward passes to make one 512 × 512 image (log scale).</p></div>
+</section>
+
+<section id="forward" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Controlled destruction: the forward process</h2></div>
+  <p>Take any image and add a whisper of <b>Gaussian noise</b> (ε ~ N(0, 1): one bell-curve random number per value, centered on zero). Repeat. By step T = 1,000 it is indistinguishable from static. A <b>beta schedule</b> is the volume knob. Stable Diffusion's "scaled linear" schedule runs from β₁ = 0.00085 (√β ≈ 0.029, so a +1.5 draw becomes a +0.044 nudge) to β₁₀₀₀ = 0.012 (√β ≈ 0.11, so the same draw becomes +0.17). Thanks to the schedule you can jump straight to any step: x<sub>t</sub> = √ᾱ<sub>t</sub> · x₀ + √(1 − ᾱ<sub>t</sub>) · ε.</p>
+  <div class="sheet">
+    <label class="rng"><span>Timestep t: <b id="tV">0</b></span><input type="range" id="t" min="0" max="999" value="200"></label>
+    <div class="cvrow"><canvas class="px" id="fw" width="64" height="64" aria-label="An image with noise added at timestep t"></canvas>
+    <div class="stack" style="gap:10px"><div class="stat"><span class="big blue" id="sig">1</span><span>signal weight √ᾱ</span></div><div class="stat"><span class="big pencil" id="noi">0</span><span>noise weight √(1 − ᾱ)</span></div><p class="small" id="fwTxt"></p></div></div>
+    <div class="svgbox"><svg id="sch" viewBox="0 0 660 160" role="img" aria-label="Signal and noise weights across 1,000 timesteps"></svg></div>
+  </div>
+  <div class="callout"><b class="h">Why a schedule, not a constant?</b><span>With fixed noise per step, most timesteps would be trivially easy (almost clean) or hopeless (almost pure noise). The schedule spreads training across the middle range, where the model has to decide what is signal and what is noise.</span></div>
+</section>
+
+<section id="reverse" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Learning to undo it</h2></div>
+  <p>Training creates triples: noisy latent x<sub>t</sub>, timestep t, and the exact noise ε that was added. The network sees only x<sub>t</sub> and t and guesses ε<sub>θ</sub>. Comparing a known target with a same-shaped prediction is a textbook case for <b>MSE</b>. Timesteps are sampled at random so every step is learned on its own. At inference you start from pure noise, which has no original image behind it. The network's knowledge of real images makes it "hallucinate" something plausible, and conditioning on a prompt steers it. Here hallucination is the feature.</p>
+  <div class="sheet stepper" id="rvStep">
+    <div class="cvrow"><canvas class="px" id="rv" width="64" height="64" aria-label="Latent being denoised step by step"></canvas><div class="stack"><div class="stat"><span class="big okc" id="rvT">999</span><span>current timestep</span></div><button class="btn" id="rvPlay">Play all 25 steps</button><p class="small">Idealized: the noise predictor is assumed perfect, so each step moves exactly along the schedule. A real model's guesses are noisier, and the prompt decides what emerges.</p></div></div>
+  </div>
+</section>
+
+<section id="unet" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>The UNet: global context, pixel precision</h2></div>
+  <p>To decide whether a value is noise or signal, the network needs the whole scene (global context). Its output must also line up exactly with each position (pixel precision). Downsampling gives context: each halving doubles a feature's view. <b>Skip connections</b> carry high-resolution detail straight across to the upsampling side. SD 1.5's UNet adds attention layers and a timestep embedding on top of the classic encoder-decoder. Tap a block.</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="uSvg" viewBox="0 0 660 270" role="img" aria-label="UNet: four down blocks, a mid block and four up blocks with skip connections"></svg></div>
+    <div class="detail" id="uInfo" aria-live="polite"></div>
+  </div>
+  <div class="cardgrid" id="pipeCards"></div>
+</section>
+
+<section id="latent" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>The latent trick and the full pipeline</h2></div>
+  <p>A <b>variational autoencoder</b> learns to compress, unlike ZIP or JPEG, which follow hand-designed rules. SD's VAE packs 512 × 512 × 3 (786,432 values) into a 64 × 64 × 4 latent (16,384 values), so the diffusion works on 48× less data. One generation is three kinds of forward pass: CLIP once, the UNet about 20 times, the VAE decoder once.</p>
+  <div class="sheet stepper" id="plStep">
+    <div class="svgbox"><svg id="plSvg" viewBox="0 0 660 170" role="img" aria-label="Stable Diffusion inference pipeline"></svg></div>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>Cross-attention: tap a region of the latent</h3><span class="small">"a corgi wearing sunglasses"</span></div>
+    <div class="cvrow"><div class="svgbox fit"><svg id="xa" viewBox="0 0 200 200" role="img" aria-label="Latent grid; selected cell's attention over prompt tokens"></svg></div><div><div class="bars" id="xaBars"></div><p class="small" id="xaTxt"></p></div></div>
+    <p class="small">Image features are the queries; the 77 × 768 text vectors are the keys and values. Each location asks which words apply to it and pulls in a weighted blend. It is the VLM's cross-modal attention running the other way. The timestep enters separately, as a sinusoidal embedding (like transformer positions) that conditions every layer.</p>
+  </div>
+</section>
+
+<section id="sched" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Schedulers and classifier-free guidance</h2></div>
+  <p>The scheduler has no weights. In training it defines how much noise sits at step t. At inference it turns (latent, predicted noise, t) into the next, cleaner latent. DDPM's 1,000 steps are too slow, so modern solvers jump:</p>
+  <div class="sheet"><div class="bars" id="schBars"></div><p class="small">Typical step counts. Swapping SD 1.5 from a 50-step default to DPM++ at 25 steps takes it from about 12 to 15 seconds down to 6 to 8, with little visible difference.</p></div>
+  <div class="sheet">
+    <div class="row between"><h3>Classifier-free guidance</h3><div class="seg" role="group" aria-label="Unconditional prompt"><button data-neg="0" aria-pressed="true">Empty prompt</button><button data-neg="1" aria-pressed="false">Negative prompt</button></div></div>
+    <label class="rng"><span>guidance_scale: <b id="gV">7.5</b></span><input type="range" id="g" min="0" max="15" step="0.5" value="7.5"></label>
+    <div class="svgbox fit"><svg id="cfg" viewBox="0 0 400 220" role="img" aria-label="Vectors for unconditional, conditional and guided noise predictions"></svg></div>
+    <p id="cfgTxt" class="small" aria-live="polite"></p>
+  </div>
+  <p>During training the prompt is dropped 5 to 10% of the time, so one network learns both conditional and unconditional prediction. At inference each step runs the UNet twice and computes ε = ε<sub>uncond</sub> + s · (ε<sub>cond</sub> − ε<sub>uncond</sub>). That doubles the compute, but prompt adherence improves a lot. Replace the empty prompt with a <b>negative prompt</b> ("blurry, watermark, extra fingers") and the push is away from those. Keep the negative prompt fixed when comparing base vs. LoRA.</p>
+</section>
+
+<section id="lora" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Where the LoRA goes</h2></div>
+  <p>Almost every diffusion fine-tune attaches LoRA to the UNet's attention projections. The same four names cover self-attention (the image attending to itself) and cross-attention (the image attending to the text). The text encoder (123.1M) and VAE (83.7M) stay frozen in nearly all cases. The exceptions are rare-token training such as DreamBooth or Textual Inversion, where a new token like <code>&lt;my-subject&gt;</code> needs a meaningful embedding.</p>
+  <pre class="code">lora_config = LoraConfig(
+    r=<span class="n">8</span>, lora_alpha=<span class="n">8</span>,           <span class="c"># 8 to 32 typical for images</span>
+    target_modules=[<span class="s">"to_q"</span>, <span class="s">"to_k"</span>, <span class="s">"to_v"</span>, <span class="s">"to_out.0"</span>],
+    lora_dropout=<span class="n">0.0</span>, bias=<span class="s">"none"</span>)   <span class="c"># note: no task_type</span></pre>
+  <div class="sheet"><div class="bars" id="paBars"></div><p class="small">Pipeline components in millions of parameters. The rank-8 LoRA adds about 0.8M (0.09% of the UNet), placed exactly where image and text meet.</p></div>
+  <p>The objective stays the same: MSE between predicted and actual noise. You need no preference data or reward model, only image-caption pairs and gradient descent. Chapter 13 puts this to work with DreamBooth and style LoRAs.</p>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="row between"><span class="small">Pick an answer for each.</span><span class="score" id="qs"></span></div>
+  <div class="quiz" id="qz"></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Fine-Tuning AI: Customizing Large Language Models</i> by Laurence Moroney (O’Reilly, 2026). Explanations, code snippets and drawings are original summaries, not text or figures copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch11-vision-language-models.html"><span>Previous · Chapter 11</span><b>Vision Language Models</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch13-fine-tuning-diffusion.html"><span>Next · Chapter 13</span><b>Fine-Tuning Diffusion Models</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('fta:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('fta:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle: auto -> light -> dark */
+(function(){const modes=['auto','light','dark'];let m=store.get('theme','auto');
+  function apply(){if(m==='auto')document.documentElement.removeAttribute('data-theme');else document.documentElement.setAttribute('data-theme',m);
+    $$('[data-theme-toggle]').forEach(b=>b.textContent='Theme: '+m)}
+  apply();$$('[data-theme-toggle]').forEach(b=>b.addEventListener('click',()=>{m=modes[(modes.indexOf(m)+1)%3];store.set('theme',m);apply()}));})();
+
+
+bars('#cmpBars',[{l:'Pixel-by-pixel (raster)',v:Math.log10(786432),txt:'786,432',c:'bad'},{l:'Diffusion, DDPM',v:Math.log10(1000),txt:'1,000',c:'pencil'},{l:'Diffusion, DPM++',v:Math.log10(25),txt:'~25',c:'ok'}],6);
+
+/* schedule */
+const NT=1000,AB=[];{let a=1;const s0=Math.sqrt(0.00085),s1=Math.sqrt(0.012);for(let i=0;i<NT;i++){const b=Math.pow(s0+(s1-s0)*i/(NT-1),2);a*=1-b;AB.push(a)}}
+/* procedural image + fixed noise */
+function rng(seed){return()=>{seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function gauss(r){let u=0,v=0;while(!u)u=r();v=r();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v)}
+const IMG=new Float32Array(64*64*3),EPS=new Float32Array(64*64*3);
+{const r=rng(42);for(let y=0;y<64;y++)for(let x=0;x<64;x++){let c;
+ if(y<40)c=[.45+y/160,.68+y/200,.95];else c=[.35,.62-((y-40)/120),.3];
+ const d=Math.hypot(x-48,y-14);if(d<7)c=[1,.82,.3];
+ if(x>=14&&x<=34&&y>=28&&y<46)c=[.85,.45,.35];
+ if(y<28&&y>=16&&Math.abs(x-24)<(y-15)*0.95)c=[.45,.2,.2];
+ if(x>=21&&x<=27&&y>=36&&y<46)c=[.35,.22,.15];
+ if(x>=29&&x<=32&&y>=31&&y<35)c=[.95,.95,.7];
+ for(let k=0;k<3;k++){IMG[(y*64+x)*3+k]=c[k]*2-1;EPS[(y*64+x)*3+k]=gauss(r)}}}
+function paint(cv,t){const ctx=cv.getContext('2d'),im=ctx.createImageData(64,64);const a=t<0?1:AB[t],sa=Math.sqrt(a),sn=Math.sqrt(1-a);
+ for(let i=0;i<64*64;i++){for(let k=0;k<3;k++){const v=sa*IMG[i*3+k]+sn*EPS[i*3+k];im.data[i*4+k]=Math.max(0,Math.min(255,(v+1)*127.5))}im.data[i*4+3]=255}ctx.putImageData(im,0,0);return[sa,sn]}
+const sch=$('#sch');{const X=t=>40+t/999*600,Y=v=>140-v*120;sch.appendChild(el('line',{x1:40,y1:140,x2:640,y2:140,class:'st-line'}));
+ [[a=>Math.sqrt(a),'blue','signal'],[a=>Math.sqrt(1-a),'pencil','noise']].forEach(([f,c,l],k)=>{sch.appendChild(el('path',{d:AB.map((a,i)=>(i?'L':'M')+X(i).toFixed(1)+' '+Y(f(a)).toFixed(1)).join(''),fill:'none',class:'st-'+c,'stroke-width':2.5}));sch.appendChild(el('text',{x:k?600:90,y:k?30:30,'font-size':12,class:'s-'+c},l))});
+ [0,250,500,750,999].forEach(t=>sch.appendChild(el('text',{x:X(t),y:156,'text-anchor':'middle','font-size':10,class:'s-muted'},t)));}
+const tMark=el('line',{y1:16,y2:140,class:'st-ink','stroke-width':1.5,'stroke-dasharray':'4 3'});sch.appendChild(tMark);
+function fwd(){const t=+$('#t').value;$('#tV').textContent=t;const[sa,sn]=paint($('#fw'),t);$('#sig').textContent=sa.toFixed(2);$('#noi').textContent=sn.toFixed(2);const x=40+t/999*600;tMark.setAttribute('x1',x);tMark.setAttribute('x2',x);
+ $('#fwTxt').textContent=t<250?'Recognizable through the static: big shapes and colors are intact.':t<550?'Shapes survive; detail is going.':t<850?'Mostly noise; only big color masses remain.':'Effectively pure Gaussian noise.'}
+$('#t').addEventListener('input',fwd);fwd();
+
+/* reverse */
+const RS=[];for(let i=0;i<=25;i++)RS.push(Math.round(999*(1-i/25)));RS[25]=-1;
+$('#rvStep').insertAdjacentHTML('beforeend',stepHTML());
+const rvLab=['Start: z_T is pure Gaussian noise, seeded by the generator. No image exists yet.','Early steps decide the big picture: where sky, ground and the main object sit.','Middle steps firm up shapes and colors.','Late steps add fine detail: edges, windows and texture.','t = 0: a clean latent, ready for the VAE decoder.'];
+const rvIdx=[0,5,12,19,25];
+stepper('#rvStep',rvLab,i=>{const t=RS[rvIdx[i]];paint($('#rv'),t);$('#rvT').textContent=t<0?0:t});
+let rvTimer=null;$('#rvPlay').addEventListener('click',()=>{clearInterval(rvTimer);let k=0;rvTimer=setInterval(()=>{const t=RS[k];paint($('#rv'),t);$('#rvT').textContent=t<0?0:t;if(++k>25)clearInterval(rvTimer)},140)});
+
+/* UNet */
+const UB=[['down[0]','CrossAttnDownBlock2D','in 320 → out 320, attention. Output (1, 320, 32, 32).',0,'d'],['down[1]','CrossAttnDownBlock2D','in 320 → out 640, attention. (1, 640, 16, 16).',1,'d'],['down[2]','CrossAttnDownBlock2D','in 640 → out 1,280, attention. (1, 1280, 8, 8).',2,'d'],['down[3]','DownBlock2D','1,280 → 1,280, no attention: pure ResNet. (1, 1280, 8, 8).',3,'d'],
+ ['mid','UNetMidBlock2DCrossAttn','ResNet + self-attention + cross-attention + ResNet at 8 × 8. Each cell summarizes a big region; the prompt\'s global influence is strongest here.',4,'m'],
+ ['up[0]','UpBlock2D','in 2,560 (1,280 from below + 1,280 skip) → 1,280. (1, 1280, 16, 16). The wider input is the skip connection, not a bug.',3,'u'],['up[1]','CrossAttnUpBlock2D','in 2,560 → 1,280, attention. (1, 1280, 32, 32).',2,'u'],['up[2]','CrossAttnUpBlock2D','in 1,920 → 640, attention. (1, 640, 64, 64).',1,'u'],['up[3]','CrossAttnUpBlock2D','in 960 → 320, attention. (1, 320, 64, 64); then an output projection back to 64 × 64 × 4: the predicted noise.',0,'u']];
+const us=$('#uSvg');const ug=[];
+UB.forEach((b,i)=>{const lvl=b[3];const x=b[4]==='d'?20+i*70:b[4]==='m'?290:330+(i-5)*80+20;const y=20+lvl*48;const w=b[4]==='m'?80:60,h=b[4]==='m'?44:40;
+ const g=el('g',{style:'cursor:pointer',tabindex:0,role:'button','aria-label':b[0]});g.appendChild(el('rect',{x,y,width:w,height:h,rx:8,class:'s-surface',style:`stroke:var(--${b[4]==='d'?'blue':b[4]==='m'?'pencil':'ok'})`,'stroke-width':2}));
+ g.appendChild(el('text',{x:x+w/2,y:y+h/2+4,'text-anchor':'middle','font-size':11,'font-weight':700,class:'s-ink'},b[0]));us.appendChild(g);ug.push([g,x,y,w,h]);
+ const f=()=>uSel(i);g.addEventListener('click',f);g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();f()}})});
+[[0,8],[1,7],[2,6],[3,5]].forEach(([a,b])=>{const A=ug[a],B=ug[b];us.insertBefore(el('path',{d:`M${A[1]+A[3]} ${A[2]+12} L${B[1]} ${B[2]+12}`,class:'st-muted','stroke-dasharray':'5 4','stroke-width':1.5,fill:'none'}),us.firstChild)});
+us.appendChild(el('text',{x:330,y:262,'text-anchor':'middle','font-size':11,class:'s-muted'},'64² → 32² → 16² → 8² → 16² → 32² → 64²   · dashed = skip connections'));
+function uSel(i){ug.forEach(([g],k)=>g.querySelector('rect').setAttribute('stroke-width',k===i?4:2));const b=UB[i];$('#uInfo').innerHTML=`<p><b>${b[0]} · ${b[1]}</b>: ${b[2]}</p>`}uSel(4);
+cards('#pipeCards',[{t:'Text encoder · frozen',d:'CLIP ViT-L/14, 123.1M parameters, 12 transformer blocks. Prompt padded or truncated to 77 tokens, giving 77 × 768. SDXL uses two CLIP encoders; some newer models use T5 for better prompt adherence.',c:'blue'},{t:'UNet · train here',d:'859.5M parameters in SD 1.5 (2.6B in SDXL). Takes a noisy latent, a timestep and the text and predicts noise. Roughly a tenth of an 8B LLM, and the only part you usually touch.',c:'ok'},{t:'VAE · frozen',d:'AutoencoderKL, 83.7M. Compresses pixels to latents and decodes them back.',c:'pencil'},{t:'Scheduler · no weights',d:'Pure math: the training noise schedule and the inference trajectory.',c:'mid'}]);
+
+/* pipeline stepper */
+const pl=$('#plSvg');const PL=[['Prompt','"a corgi…"',10,'muted'],['CLIP','77 × 768 = c',140,'blue'],['z_T','4 × 64 × 64 noise',270,'pencil'],['UNet × 25','+ scheduler',400,'ok'],['VAE decoder','3 × 512 × 512',530,'mid']];
+const plG=PL.map(([t,s,x,c],i)=>{const g=el('g',{class:'fade'});g.appendChild(el('rect',{x,y:50,width:120,height:64,rx:10,class:'s-surface',style:`stroke:var(--${c})`,'stroke-width':2}));g.appendChild(el('text',{x:x+60,y:78,'text-anchor':'middle','font-size':13,'font-weight':700,class:'s-ink'},t));g.appendChild(el('text',{x:x+60,y:98,'text-anchor':'middle','font-size':10,class:'s-muted'},s));pl.appendChild(g);if(i<4)pl.appendChild(el('path',{d:`M${x+122} 82 h6`,class:'st-muted','stroke-width':2}));return g});
+pl.appendChild(el('path',{d:'M460 116 q0 34 -30 34 q-30 0 -30 -34',fill:'none',class:'st-ok','stroke-width':1.5,'stroke-dasharray':'4 3'}));pl.appendChild(el('text',{x:430,y:164,'text-anchor':'middle','font-size':10,class:'s-ok'},'loop'));
+$('#plStep').insertAdjacentHTML('beforeend',stepHTML());
+stepper('#plStep',['The prompt is tokenized by CLIP\'s tokenizer into 77 tokens (padded or truncated).','The CLIP text encoder turns them into a 77 × 768 conditioning tensor, c. One forward pass.','A random latent z_T is drawn from Gaussian noise. The generator seed fixes it: same seed and prompt give the same image.','For 20 to 25 DPM++ iterations, the UNet predicts the noise (with cross-attention to c) and the scheduler steps the latent toward z_0.','The VAE decoder turns z_0 into a 3 × 512 × 512 tensor. Clip to [0, 1], scale to [0, 255], save the PNG.'],i=>plG.forEach((g,k)=>g.classList.toggle('off',k>i)));
+
+/* cross-attention */
+const TOK=['a','corgi','wearing','sunglasses'];
+const REG=[[0,0,'background',[.35,.25,.2,.2]],[1,1,'ear / fur',[.05,.8,.1,.05]],[2,1,'eyes',[.03,.12,.1,.75]],[2,2,'eyes',[.03,.15,.12,.7]],[3,2,'snout',[.05,.75,.12,.08]]];
+let xaSel=[2,1];
+function xa(){const s=$('#xa');s.innerHTML='';const n=5,c=38;for(let y=0;y<n;y++)for(let x=0;x<n;x++){const r=el('rect',{x:5+x*c,y:5+y*c,width:c-3,height:c-3,rx:4,class:x===xaSel[0]&&y===xaSel[1]?'s-pencil':'s-bluesoft',style:'cursor:pointer'});r.addEventListener('click',()=>{xaSel=[x,y];xa()});s.appendChild(r)}
+ const hit=REG.find(r=>r[1]===xaSel[1]&&r[0]===xaSel[0]);let w,lab;if(hit){w=hit[3];lab=hit[2]}else if(xaSel[1]>=1&&xaSel[1]<=3&&xaSel[0]>=1&&xaSel[0]<=3){w=[.05,.82,.08,.05];lab='body'}else{w=[.4,.25,.2,.15];lab='background'}
+ bars('#xaBars',TOK.map((t,i)=>({l:t,v:w[i],txt:Math.round(w[i]*100)+'%',c:i===w.indexOf(Math.max(...w))?'pencil':'blue'})),1);
+ $('#xaTxt').textContent=`Cell (${xaSel[0]}, ${xaSel[1]}) is becoming ${lab}. It pulls mostly from "${TOK[w.indexOf(Math.max(...w))]}". Illustrative weights.`}
+xa();
+
+bars('#schBars',[{l:'DDPM',v:1000,txt:'1,000',c:'bad'},{l:'DDIM',v:50,txt:'~50',c:'pencil'},{l:'Euler Ancestral',v:35,txt:'30–40',c:'mid'},{l:'DPM++ / Euler',v:25,txt:'20–30',c:'blue'},{l:'UniPC',v:12,txt:'10–15',c:'ok'}].map(d=>({...d,v:Math.log10(d.v)})),3);
+
+/* CFG */
+let neg=0;
+function cfg(){const s=+$('#g').value;$('#gV').textContent=s;const sv=$('#cfg');sv.innerHTML='';const O=[60,180];const U=neg?[150,-30]:[120,-60],C=[170,-110];
+ const F=[U[0]+s*(C[0]-U[0]),U[1]+s*(C[1]-U[1])];const k=Math.min(1,300/Math.max(F[0],1),160/Math.max(-F[1],1),160/Math.max(-C[1],1));
+ const arrow=(v,c,l,dy)=>{const x=O[0]+v[0]*k,y=O[1]+v[1]*k;sv.appendChild(el('line',{x1:O[0],y1:O[1],x2:x,y2:y,class:'st-'+c,'stroke-width':3}));sv.appendChild(el('circle',{cx:x,cy:y,r:4,class:'s-'+c}));sv.appendChild(el('text',{x:Math.min(390,x+6),y:y+(dy||0),'font-size':11,class:'s-'+c,'text-anchor':x>330?'end':'start'},l))};
+ arrow(U,'muted',neg?'ε_neg ("blurry, watermark")':'ε_uncond ("")',14);arrow(C,'blue','ε_cond (your prompt)',-6);arrow(F,'pencil','ε_final',-6);
+ sv.appendChild(el('line',{x1:O[0]+U[0]*k,y1:O[1]+U[1]*k,x2:O[0]+F[0]*k,y2:O[1]+F[1]*k,class:'st-ink','stroke-dasharray':'3 4'}));
+ $('#cfgTxt').textContent=s===0?'Scale 0: pure unconditional prediction. The prompt is ignored.':s===1?'Scale 1: exactly the conditional prediction, with no extra guidance.':s<6?'Low scale (3 to 5): looser, more creative, more varied images.':s<=9?'Around 7.5, the usual default: strong adherence that still looks natural.':'High scale (10+): very literal, at the cost of diversity and naturalness, with oversaturation creeping in.'}
+$('#g').addEventListener('input',cfg);seg('[data-neg]',b=>{neg=+b.dataset.neg;cfg()});cfg();
+
+bars('#paBars',[{l:'UNet',v:859.5,txt:'859.5M',c:'ok'},{l:'Text encoder (CLIP)',v:123.1,txt:'123.1M',c:'blue'},{l:'VAE',v:83.7,txt:'83.7M',c:'pencil'},{l:'LoRA r=8 on attention',v:0.8,txt:'0.8M',c:'bad'}],860);
+
+quiz('#qz','#qs',[
+ {q:'What does the diffusion network learn to predict?',o:['The next pixel','The noise added at timestep t','The prompt'],a:1,why:'Given x_t and t, it predicts ε; the scheduler then removes a scaled fraction.'},
+ {q:'Training loss for a diffusion UNet is...',o:['Cross-entropy on tokens','MSE between predicted and actual noise','A DPO preference loss'],a:1,why:'Same-shaped target and prediction: plain mean squared error.'},
+ {q:'Why do up blocks have wider inputs (e.g. 2,560) than expected?',o:['A bug','Skip connections concatenate down-block features','Text embeddings'],a:1,why:'Each up block also receives its mirror down block\'s output.'},
+ {q:'How much smaller is SD\'s 64 × 64 × 4 latent than the 512 × 512 × 3 image?',o:['8×','48×','4×'],a:1,why:'786,432 ÷ 16,384 = 48.'},
+ {q:'Where do image LoRAs usually attach?',o:['VAE decoder','to_q, to_k, to_v, to_out.0 in the UNet\'s attention','The scheduler'],a:1,why:'These cover both self- and cross-attention, where text meets image.'}
+]);
+
+})();
+</script>
+</body>
+</html>

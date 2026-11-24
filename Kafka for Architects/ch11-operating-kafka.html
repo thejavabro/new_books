@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Operating Kafka</title>
+<meta name="description" content="Day two: adding and removing brokers, watching the right metrics, trading throughput for latency or safety for uptime, and planning for the loss of a whole data center.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<script>try{var t=JSON.parse(localStorage.getItem('kfa:theme'));if(t)document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
+<style>
+/* Shared base for the Accelerate companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+button.tag{cursor:pointer}
+button.tag:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{font-family:var(--mono);font-size:.84rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:0;overflow-x:auto;white-space:pre}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--pencil)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+.field{border:1px dashed var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:6px;background:var(--surface)}
+.field .eyebrow{color:var(--pencil)}
+.missing{border:2px solid var(--bad);background:var(--bad-soft);color:var(--bad);border-radius:10px;padding:12px 16px}
+
+/* page */
+
+.brk{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.brk>div{border:1.5px solid var(--line);border-radius:8px;padding:8px;background:var(--surface);display:flex;flex-direction:column;gap:4px;min-height:150px}
+.brk>div.new{border-color:var(--ok)}
+.brk>div.off{opacity:.35;border-style:dashed}
+.brk h4{margin:0;font-family:var(--mono);font-size:.78rem}
+.brk .load{height:8px;border-radius:4px;background:var(--paper);border:1px solid var(--line);overflow:hidden}
+.brk .load i{display:block;height:100%;background:var(--blue);transition:width .6s}
+.brk .pp{display:flex;flex-wrap:wrap;gap:3px}
+.brk .pp span{font-family:var(--mono);font-size:.68rem;padding:1px 4px;border-radius:3px;background:var(--blue-soft);border:1px solid var(--blue)}
+.brk .pp span.mv{background:var(--ok-soft);border-color:var(--ok)}
+@media (max-width:520px){.brk{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.dash{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+@media (max-width:640px){.dash{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.tile{border:1.5px solid var(--line);border-radius:8px;padding:10px;background:var(--surface);display:flex;flex-direction:column;gap:2px;transition:border-color .3s,background .3s}
+.tile span{font-size:.75rem;color:var(--muted)}
+.tile b{font-family:var(--mono);font-size:1.1rem}
+.tile.alert{border-color:var(--bad);background:var(--bad-soft)}
+.tile.alert b{color:var(--bad)}
+.tile.warn{border-color:var(--mid);background:var(--mid-soft)}
+.calc{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:640px){.calc{grid-template-columns:1fr}}
+.verdict{padding:10px 14px;border-radius:8px;font-weight:600}
+.verdict.ok{background:var(--ok-soft);color:var(--ok)} .verdict.bad{background:var(--bad-soft);color:var(--bad)} .verdict.mid{background:var(--mid-soft);color:var(--mid)}
+.gauge2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.dr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media (max-width:560px){.dr{grid-template-columns:1fr}}
+.dr>div{border:1px solid var(--line);border-radius:10px;padding:12px;background:var(--surface);text-align:center}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Kafka for Architects · visual companion</a><span class="tag">Part III · Chapter 11 of 12</span><button class="tag themebtn" id="themeBtn" type="button" aria-label="Toggle light or dark theme">Theme</button></div>
+  <h1>Operating Kafka</h1>
+  <p class="lede">Day two: adding and removing brokers, watching the right metrics, trading throughput for latency or safety for uptime, and planning for the loss of a whole data center.</p>
+  <nav class="toc" aria-label="Sections"><a href="#scale">Adding brokers</a><a href="#monitor">Monitoring</a><a href="#tuning">Tuning clinic</a><a href="#safety">Safety vs uptime</a><a href="#dr">Disaster recovery</a><a href="#recap">Recap and quiz</a></nav>
+</header>
+
+<section id="scale" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Growing and shrinking the cluster</h2></div>
+  <p>Upgrades bring bug fixes, features and performance, and Kafka's components (brokers, Connect, Schema Registry, client libraries) depend on each other, so plan versions together. Adding capacity is easy to start: give a new broker a unique ID and start it. But it receives <b>no existing partitions</b>. Only new topics land on it until you move partitions with the reassignment tool (or a balancer such as Cruise Control).</p>
+  <div class="sheet">
+    <div class="row"><button class="btn" id="bAdd">Add broker 4</button><button class="btn primary" id="bRe">Run partition reassignment</button><button class="btn" id="bRm">Decommission broker 2</button><button class="btn" id="bReset">Reset</button></div>
+    <div class="brk" id="brk"></div>
+    <p class="small" id="bTxt" aria-live="polite"></p>
+  </div>
+  <p>Removing a broker safely: move its partition replicas and leadership elsewhere first (so no partition becomes under-replicated), shut it down cleanly, then unregister it from the cluster metadata. Reassignment copies data over the network, so throttle it to protect production traffic.</p>
+  <div class="cardgrid" id="upCards"></div>
+</section>
+
+<section id="monitor" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Monitoring: what to watch</h2></div>
+  <p>Metrics fall into four technical kinds (errors, saturation, resource utilization, performance) plus business metrics such as orders per minute. They come from three layers: the <b>host</b> (CPU, disk, network, file handles), the <b>JVM</b> (heap, GC pauses) and <b>Kafka</b> itself (via JMX): under-replicated partitions, offline partitions, active controller count, request latency, ISR shrinks, and on the client side consumer lag, produce errors and retries. Inject an incident and diagnose from the dashboard.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Incident"><button data-i="ok" aria-pressed="true">Normal day</button><button data-i="broker" aria-pressed="false">A broker dies</button><button data-i="slow" aria-pressed="false">Slow consumer</button><button data-i="disk" aria-pressed="false">Disk filling</button><button data-i="gc" aria-pressed="false">GC storm</button><button data-i="dlt" aria-pressed="false">Bad deploy</button></div>
+    <div class="dash" id="dash"></div>
+    <div class="detail" id="dInfo" aria-live="polite"></div>
+  </div>
+  <div class="callout"><b class="h">Who owns client monitoring?</b><span>Developers tend to assume operations will watch it; operators treat clients as generic JVM apps and miss Kafka-specific signals such as lag, rebalances and retries. Make ownership explicit: platform teams watch brokers, application teams watch their clients and business metrics, and both share dashboards.</span></div>
+  <div class="svgbox fit"><svg id="stackSvg" viewBox="0 0 640 140" role="img" aria-label="JMX exporter, Prometheus, Grafana and Alertmanager"></svg></div>
+</section>
+
+<section id="tuning" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Tuning clinic: throughput versus latency</h2></div>
+  <p>Defaults favour low latency. Throughput comes from <b>more parallelism</b> (partitions, consumers) and <b>bigger batches</b> (linger, batch size, compression). Latency comes from sending immediately and skipping extra work. Batching raises throughput but can delay individual messages. Turn the knobs.</p>
+  <div class="sheet">
+    <div class="calc">
+      <label class="rng"><span>linger.ms: <b id="kLv"></b></span><input type="range" id="kL" min="0" max="100" value="0"></label>
+      <label class="rng"><span>batch.size: <b id="kBv"></b> KB</span><input type="range" id="kB" min="16" max="1024" step="16" value="16"></label>
+      <label class="rng"><span>Partitions: <b id="kPv"></b></span><input type="range" id="kP" min="1" max="48" value="6"></label>
+    </div>
+    <div class="row"><span class="small">compression</span><div class="seg" role="group" aria-label="Compression"><button data-c="none" aria-pressed="true">none</button><button data-c="lz4" aria-pressed="false">lz4</button><button data-c="zstd" aria-pressed="false">zstd</button></div><span class="small">acks</span><div class="seg" role="group" aria-label="acks"><button data-a="1" aria-pressed="false">1</button><button data-a="all" aria-pressed="true">all</button></div></div>
+    <div class="bars" id="kBars"></div>
+    <p class="small">A toy model for intuition only; real numbers depend on hardware, message size and network. Measure.</p>
+  </div>
+  <div class="tbl"><table class="t"><thead><tr><th>Setting</th><th>For latency</th><th>For throughput</th></tr></thead><tbody>
+    <tr><td><code>batch.size</code></td><td>smaller</td><td>larger</td></tr>
+    <tr><td><code>linger.ms</code></td><td>0, send immediately</td><td>wait (5 to 100 ms) for fuller batches</td></tr>
+    <tr><td><code>acks</code></td><td>1 (or 0) for faster responses</td><td>all is safest; costs a replication round trip</td></tr>
+    <tr><td><code>compression.type</code></td><td>none, saves CPU</td><td>lz4 / zstd, saves network and disk</td></tr>
+    <tr><td><code>buffer.memory</code></td><td>enough to never block</td><td>large enough for many big batches</td></tr>
+    <tr><td><code>fetch.min.bytes</code> / <code>fetch.max.wait.ms</code></td><td>low: return data at once</td><td>higher: fewer, fuller fetches</td></tr>
+    <tr><td>partitions and consumers</td><td>more parallel pipelines</td><td>more parallel pipelines</td></tr>
+  </tbody></table></div>
+</section>
+
+<section id="safety" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Balancing data safety and uptime</h2></div>
+  <p>When too few in-sync replicas remain, Kafka takes the partition offline rather than risk losing data. Correct for most systems; not for all. Some use cases (metrics, telemetry) prefer to keep running even at the cost of some loss.</p>
+  <div class="sheet">
+    <div class="calc">
+      <label class="rng"><span>Replication factor: <b id="sRv"></b></span><input type="range" id="sR" min="1" max="5" value="3"></label>
+      <label class="rng"><span>min.insync.replicas: <b id="sMv"></b></span><input type="range" id="sM" min="1" max="5" value="2"></label>
+      <label class="rng"><span>Brokers lost (holding replicas): <b id="sDv"></b></span><input type="range" id="sD" min="0" max="5" value="1"></label>
+    </div>
+    <div class="row"><label class="row"><input type="checkbox" id="sU"> <code>unclean.leader.election.enable</code></label></div>
+    <div class="verdict" id="sVer" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="dr" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Disaster recovery: RTO and RPO</h2></div>
+  <p>Kafka has no built-in backup; replication is its fault-tolerance strategy. Data mobility between clusters relies on replication tools (MirrorMaker 2, Confluent Replicator or Cluster Linking, and similar). Two metrics frame the design: <b>RTO</b>, how long you are down, and <b>RPO</b>, how much data you may lose. Set <code>broker.rack</code> so replicas of a partition land in different racks or data centers.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Architecture"><button data-d="stretch" aria-pressed="true">Stretched cluster (3 DCs)</button><button data-d="ap" aria-pressed="false">Active-passive</button><button data-d="aa" aria-pressed="false">Active-active</button></div>
+    <div class="svgbox fit"><svg id="drSvg" viewBox="0 0 640 200" role="img" aria-label="Disaster recovery topology"></svg></div>
+    <button class="btn" id="drFail">Data center 1 burns down</button>
+    <div class="dr"><div><span class="small">RTO (downtime)</span><div class="big" id="rto"></div></div><div><span class="small">RPO (data loss)</span><div class="big" id="rpo"></div></div></div>
+    <p id="drTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Recap and quick check</h2></div>
+  <div class="recap">
+    <div><b>New brokers start empty</b><span>Reassign partitions, throttled, to use them.</span></div>
+    <div><b>Watch the right signals</b><span>Under-replicated and offline partitions, controller count, lag, latency, GC, disk.</span></div>
+    <div><b>Tune on purpose</b><span>Batch and compress for throughput; send now for latency.</span></div>
+    <div><b>Safety or uptime</b><span>min ISR and unclean election decide which you sacrifice.</span></div>
+    <div><b>DR</b><span>Stretched: RTO 0, RPO 0 but needs 3 close sites. Async replication: RPO > 0.</span></div>
+  </div>
+  <div class="sheet"><div class="row between"><h3>Quick check</h3><span class="score" id="qScore"></span></div><div class="quiz" id="quiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Kafka for Architects: Event-driven architecture, logs, microservices, real-time event processing</i> by Katya Gorshkova (Manning, 2026). Explanations, examples, code snippets and drawings are original summaries, not copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch10-organizing-a-project.html"><span>Previous · Chapter 10</span><b>Organizing a Kafka Project</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch12-whats-next.html"><span>Next · Chapter 12</span><b>What's Next for Kafka</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('kfa:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('acc:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: cycles auto -> light -> dark */
+(function(){const r=document.documentElement;let t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+ const b=document.getElementById('themeBtn');if(!b)return;
+ function lab(){b.textContent='Theme: '+(r.getAttribute('data-theme')||'auto')}lab();
+ b.addEventListener('click',()=>{const c=r.getAttribute('data-theme');const n=c==null?'light':c==='light'?'dark':null;
+  if(n)r.setAttribute('data-theme',n);else r.removeAttribute('data-theme');store.set('theme',n);lab()});})();
+
+
+function bx(s,x,y,w,h,t,col,fill,fs){s.appendChild(el('rect',{x,y,width:w,height:h,rx:7,fill:fill||'var(--surface)',stroke:col||'var(--blue)','stroke-width':1.6}));t.split('\n').forEach((l,i,a)=>s.appendChild(el('text',{x:x+w/2,y:y+h/2+4+(i-(a.length-1)/2)*14,'text-anchor':'middle','font-size':fs||12,'font-weight':600,fill:'var(--ink)'},l)))}
+function ar(s,x1,y1,x2,y2,col,fl){const L=el('line',{x1,y1,x2,y2,stroke:col||'var(--muted)','stroke-width':2});if(fl)L.setAttribute('class','flow');s.appendChild(L);const a=Math.atan2(y2-y1,x2-x1);s.appendChild(el('polygon',{points:`${x2},${y2} ${x2-9*Math.cos(a-.4)},${y2-9*Math.sin(a-.4)} ${x2-9*Math.cos(a+.4)},${y2-9*Math.sin(a+.4)}`,fill:col||'var(--muted)'}))}
+/* brokers */
+let B,moved;function breset(){B={1:[],2:[],3:[],4:null};moved=new Set();for(let p=0;p<12;p++){B[1+p%3].push('p'+p);B[1+(p+1)%3].push('r'+p)}dB('Three brokers, 12 partitions with 2 replicas each (p = leader replica, r = follower).')}
+function dB(t){const tot=Object.values(B).filter(Boolean).reduce((a,b)=>a+b.length,0);const live=Object.values(B).filter(Boolean).length;
+  $('#brk').innerHTML=[1,2,3,4].map(b=>{const l=B[b];if(!l)return `<div class="off"><h4>broker ${b}</h4><span class="small">not running</span></div>`;return `<div class="${b===4?'new':''}"><h4>broker ${b}</h4><div class="load"><i style="width:${Math.min(100,l.length/(tot/live)*50)}%"></i></div><div class="pp">${l.map(x=>`<span class="${moved.has(b+x)?'mv':''}">${x}</span>`).join('')}</div></div>`}).join('');$('#bTxt').textContent=t}
+$('#bAdd').onclick=()=>{if(!B[4]){B[4]=[];dB('Broker 4 joined the cluster and is healthy, and it holds nothing. Existing partitions stay where they were.')}};
+$('#bRe').onclick=()=>{const live=[1,2,3,4].filter(b=>B[b]);const all=live.flatMap(b=>B[b]);const tgt=Math.ceil(all.length/live.length);let n=0;
+  live.forEach(b=>{while(B[b].length>tgt){const x=B[b].pop();const to=live.filter(o=>o!==b&&B[o].length<tgt&&!B[o].some(y=>y.slice(1)===x.slice(1)))[0];if(!to){B[b].push(x);break}B[to].push(x);moved.add(to+x);n++}});
+  dB(n?`Reassignment moved ${n} replicas (green) so every live broker carries a fair share. The copies travel over the network, which is why you throttle it.`:'Already balanced.')};
+$('#bRm').onclick=()=>{if(!B[2]){return}const live=[1,3,4].filter(b=>B[b]);const xs=B[2];B[2]=null;xs.forEach((x,i)=>{const to=live.filter(o=>!B[o].some(y=>y.slice(1)===x.slice(1))).sort((a,b)=>B[a].length-B[b].length)[0]||live[i%live.length];B[to].push(x);moved.add(to+x)});
+  dB('Before shutting broker 2 down, its replicas were reassigned to the others (green), so no partition dropped below its replication factor. Then it is stopped and unregistered.')};
+$('#bReset').onclick=breset;breset();
+cards('#upCards',[{t:'Bidirectional compatibility',d:'Old clients work with new brokers and new clients with old brokers. Convenient, and also the reason client libraries get left years behind, missing fixes. Upgrade clients on a schedule too.',c:'d1'},{t:'Rolling upgrades',d:'Upgrade one broker at a time, wait for under-replicated partitions to return to zero, then continue. Feature versions are bumped only after every node runs the new release.',c:'d2'},{t:'Ecosystem dependencies',d:'Connect plugins, Schema Registry, Streams apps and operators each have supported version ranges. Check the matrix before upgrading brokers.',c:'d3'}]);
+
+/* dashboard */
+const M=[['Under-replicated partitions','urp'],['Offline partitions','off'],['Active controllers','ctl'],['Produce latency p99','lat'],['Consumer lag (c360)','lag'],['Disk used','disk'],['GC pause (max)','gc'],['Dead-letter topic rate','dlt']];
+const BASE={urp:'0',off:'0',ctl:'1',lat:'12 ms',lag:'120',disk:'48%',gc:'40 ms',dlt:'0/min'};
+const INC={ok:[{},'All quiet. The two numbers that should always be zero are zero, and exactly one controller is active.'],
+ broker:[{urp:['96','alert'],lat:['85 ms','warn']},'Under-replicated partitions jumped while offline partitions stayed 0: a broker is gone but every partition still has a leader. Restore the broker before another failure makes partitions go offline.'],
+ slow:[{lag:['1.4 M','alert']},'Only consumer lag grows; brokers are healthy. The problem is the consumer: slow downstream calls, too few instances, or rebalance storms. Scale out up to the partition count or fix the processing.'],
+ disk:[{disk:['91%','alert'],lat:['40 ms','warn']},'Disk nearly full. A full log directory takes the broker offline. Check retention settings, a runaway producer, or add capacity / tiered storage.'],
+ gc:[{gc:['4.2 s','alert'],urp:['14','warn'],lat:['900 ms','alert']},'Long GC pauses make the broker miss heartbeats and replica fetches, so followers drop out of the ISR and latency spikes. Check heap sizing and GC settings.'],
+ dlt:[{dlt:['850/min','alert']},'Messages pouring into the dead-letter topic right after a deploy: likely a schema or serialization change. A Prometheus alert rule on this rate should page the owning team.']};
+function dD(k){const ch=INC[k][0];$('#dash').innerHTML=M.map(([n,id])=>{const c=ch[id];return `<div class="tile ${c?c[1]:''}"><span>${n}</span><b>${c?c[0]:BASE[id]}</b></div>`}).join('');$('#dInfo').innerHTML=`<span class="eyebrow">Diagnosis</span><p>${INC[k][1]}</p>`}
+seg('[data-i]',b=>dD(b.dataset.i));dD('ok');
+(function(){const s=$('#stackSvg');bx(s,10,45,130,50,'Brokers, clients\n(JMX exporter)','var(--blue)',null,11);bx(s,180,45,120,50,'Prometheus\n(scrape, rules)','var(--d3)',null,11);bx(s,340,10,130,44,'Grafana','var(--d2)');bx(s,340,86,130,44,'Alertmanager','var(--bad)');bx(s,510,86,120,44,'On-call team','var(--d4)',null,11);ar(s,140,70,178,70,'var(--muted)',true);ar(s,300,60,338,35,'var(--muted)',true);ar(s,300,80,338,105,'var(--muted)',true);ar(s,470,108,508,108,'var(--bad)',true)})();
+
+/* tuning */
+let comp='none',acks='all';
+function dK(){const L=+$('#kL').value,Bk=+$('#kB').value,P=+$('#kP').value;$('#kLv').textContent=L;$('#kBv').textContent=Bk;$('#kPv').textContent=P;
+  const fill=Math.min(Bk,4+L*3);const eff=fill/(fill+8);const cf=comp==='none'?1:comp==='lz4'?1.8:2.4;const af=acks==='all'?0.8:1;
+  const tp=Math.min(1000,P*12*eff*cf*af*2.2);const lat=3+Math.min(L,fill/3)+(comp==='zstd'?2:comp==='lz4'?.7:0)+(acks==='all'?4:0);
+  bars('#kBars',[{l:'Throughput',v:tp,c:'d2',txt:Math.round(tp)+' MB/s'},{l:'p50 latency',v:lat,c:'pencil',txt:lat.toFixed(1)+' ms'}].map((d,i)=>({...d,v:i?d.v/1.2:d.v/10})),100)}
+['#kL','#kB','#kP'].forEach(i=>$(i).addEventListener('input',dK));seg('[data-c]',b=>{comp=b.dataset.c;dK()});seg('[data-a]',b=>{acks=b.dataset.a;dK()});dK();
+
+/* safety */
+function dS(){const r=+$('#sR').value,m=+$('#sM').value,d=Math.min(+$('#sD').value,r),u=$('#sU').checked;$('#sRv').textContent=r;$('#sMv').textContent=m;$('#sDv').textContent=d;const left=r-d;const v=$('#sVer');
+  if(m>r){v.className='verdict bad';v.textContent='min.insync.replicas larger than RF: acks=all writes always fail.';return}
+  if(left>=m){v.className='verdict ok';v.textContent=`${left} replica(s) left, min ISR ${m}: reads and writes continue with full durability guarantees.`}
+  else if(left>0){v.className='verdict mid';v.textContent=`${left} replica(s) left, below min ISR ${m}: the partition still serves reads, but acks=all writes are refused. Safety kept, write availability lost. Lowering min ISR would trade the other way.`}
+  else if(u){v.className='verdict mid';v.textContent='All in-sync replicas gone. With unclean election, the first out-of-sync replica to return becomes leader: the partition is back quickly, but records it never copied are lost for good.'}
+  else{v.className='verdict bad';v.textContent='All replicas gone: the partition is offline until an in-sync replica returns. Nothing acknowledged is lost, but nothing works either.'}}
+['#sR','#sM','#sD'].forEach(i=>$(i).addEventListener('input',dS));$('#sU').addEventListener('change',dS);dS();
+
+/* DR */
+let dm='stretch',burnt=false;
+const DRI={stretch:['0','0','One cluster across three nearby data centers, replicas spread with broker.rack, controllers one per site. Losing a site loses a minority: leaders move, acks=all data was already in another site. Needs low-latency links between sites, since every write crosses them.'],
+ ap:['minutes','> 0','Active cluster replicates asynchronously to a passive one. After the disaster, clients are switched over, which takes time, and recent records not yet replicated are lost. Consumer offsets must be translated too.'],
+ aa:['0','> 0','Two clusters both accept traffic and replicate to each other. If clients can be redirected automatically there is no failover downtime, but asynchronous replication means recent writes can be lost or conflict between sites.']};
+function dDR(){const s=$('#drSvg');s.innerHTML='';const x=[20,235,450];
+  if(dm==='stretch'){s.appendChild(el('rect',{x:10,y:10,width:620,height:150,rx:12,fill:'none',stroke:'var(--blue)','stroke-dasharray':'6 4'}));s.appendChild(el('text',{x:320,y:28,'text-anchor':'middle','font-size':11,class:'s-muted t-mono'},'one stretched cluster'));
+    x.forEach((xx,i)=>{const dead=burnt&&i===0;bx(s,xx,40,170,100,`DC ${i+1}\nbrokers + 1 controller\nreplica ${i+1} of each partition`,dead?'var(--bad)':'var(--blue)',dead?'var(--bad-soft)':null,11)})}
+  else{const dead=burnt;bx(s,20,50,220,90,'DC 1: cluster A\n'+(dm==='ap'?'active':'active'),dead?'var(--bad)':'var(--blue)',dead?'var(--bad-soft)':null);bx(s,400,50,220,90,'DC 2: cluster B\n'+(dm==='ap'?(burnt?'promoted to active':'passive (standby)'):'active'),'var(--d2)',burnt&&dm==='ap'?'var(--ok-soft)':null);
+    ar(s,240,85,398,85,'var(--d3)',!burnt);if(dm==='aa')ar(s,398,110,242,110,'var(--d3)',!burnt);s.appendChild(el('text',{x:320,y:70,'text-anchor':'middle','font-size':11,class:'s-muted'},'async replication'))}
+  const d=DRI[dm];$('#rto').textContent=burnt?d[0]:'–';$('#rpo').textContent=burnt?d[1]:'–';$('#drTxt').textContent=d[2];$('#drFail').textContent=burnt?'Rebuild data center 1':'Data center 1 burns down'}
+seg('[data-d]',b=>{dm=b.dataset.d;burnt=false;dDR()});$('#drFail').onclick=()=>{burnt=!burnt;dDR()};dDR();
+
+quiz('#quiz','#qScore',[
+ {q:'You add a fifth broker. What does it hold right away?',o:['A fair share of partitions','Nothing until reassignment'],a:1,why:'Existing partitions stay put; use the reassignment tool or a balancer.'},
+ {q:'Under-replicated partitions > 0 but offline partitions = 0 usually means...',o:['A broker or replica is lagging or down','The controller is gone'],a:0,why:'Every partition still has a leader, but some followers are missing.'},
+ {q:'To favour throughput, you would...',o:['Raise linger.ms and enable compression','Set linger.ms=0 and disable compression'],a:0,why:'Bigger, compressed batches move more data per request.'},
+ {q:'unclean.leader.election.enable=true trades...',o:['Safety for availability','Availability for safety'],a:0,why:'An out-of-sync replica may lead, losing records it never had.'},
+ {q:'Which DR setup can reach RTO 0 and RPO 0?',o:['Stretched cluster over three DCs','Active-passive with async replication'],a:0,why:'Synchronous in-cluster replication across sites loses no acknowledged data.'}]);
+
+})();
+</script>
+</body>
+</html>

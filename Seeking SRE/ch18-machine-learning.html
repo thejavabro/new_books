@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Seeking SRE 18: Machine Learning for SRE</title>
+<meta name="description" content="Could machines do some of the noticing, sorting and forecasting that SREs do today? A gentle tour of neural networks and the operational problems they might help with.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Seeking SRE companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = systems and measurement, orange pencil = people and conversation, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* additions for Seeking SRE */
+.themebtn{cursor:pointer}
+.authors{font-size:.95rem;color:var(--muted)}
+.authors b{color:var(--ink);font-weight:600}
+.chhead{display:flex;flex-direction:column;gap:6px;border-left:4px solid var(--pencil);padding:6px 0 6px 14px}
+.chhead .eyebrow{color:var(--pencil)}
+.chhead h2{font-size:clamp(1.6rem,4vw,2.3rem)}
+.missing{border:2px dashed var(--bad);background:var(--bad-soft);border-radius:10px;padding:16px 18px;display:flex;flex-direction:column;gap:8px}
+.missing b.h{font-family:var(--display);color:var(--bad);font-size:1.05rem}
+.tl{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}
+.tl button{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:9px 10px;text-align:left;display:flex;flex-direction:column;gap:2px}
+.tl button b{font-family:var(--mono);color:var(--blue);font-size:.85rem}
+.tl button span{font-size:.85rem;color:var(--muted)}
+.tl button[aria-pressed="true"]{background:var(--blue-soft);border-color:var(--blue)}
+.quote{font-family:var(--display);font-size:1.15rem;border-left:4px solid var(--blue);padding:4px 0 4px 14px;max-width:60ch}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.kv>div{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--paper);display:flex;flex-direction:column;gap:2px}
+.kv b{font-family:var(--mono);font-size:1.2rem}
+.kv span{font-size:.85rem;color:var(--muted)}
+code,.code{font-family:var(--mono);font-size:.86rem}
+pre.code{background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;margin:0;line-height:1.5;max-width:100%}
+.log{font-family:var(--mono);font-size:.82rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:5em;max-height:14em;overflow:auto;white-space:pre-wrap}
+.pill{display:inline-block;font-family:var(--mono);font-size:.72rem;padding:2px 7px;border-radius:999px;border:1px solid currentColor}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media (max-width:600px){.grid2{grid-template-columns:1fr}}
+
+/* page */
+
+.neuron{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:center}
+@media (max-width:640px){.neuron{grid-template-columns:1fr}}
+.out{font-family:var(--mono);font-size:1.6rem;color:var(--blue)}
+.dtypes{display:flex;flex-wrap:wrap;gap:6px}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Seeking SRE · visual companion</a><span class="tag">Part II · Chapter 18</span><button class="tag themebtn" id="themeBtn" type="button">Theme: auto</button></div>
+  <h1>Machine Learning for SRE</h1>
+  <p class="lede">Could machines do some of the noticing, sorting and forecasting that SREs do today? A gentle tour of neural networks and the operational problems they might help with.</p>
+  <p class="authors"><b>Contributors:</b> Ricardo Amaro (ch. 18)</p>
+  <nav class="toc" aria-label="Sections"><a href="#why">Why ML?</a><a href="#neuron">A neuron</a><a href="#train">Training</a><a href="#data">Data</a><a href="#ts">Time series</a><a href="#stories">Success stories</a><a href="#check">Quick check</a></nav>
+</header>
+
+<div class="chhead"><span class="eyebrow">Chapter 18</span><h2>Introduction to Machine Learning for SRE</h2><span class="small">Ricardo Amaro (Acquia), from a DrupalCon talk: an ongoing investigation into letting machines do more of the operational work.</span></div>
+
+<section id="why" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Because it makes sense, and now we can</h2></div>
+  <p>Amaro runs thousands of instances moving petabytes of data, with logs and metrics to match. Alerts, in some amount, will get out of hand if nobody checks them. Machine learning promises to augment human understanding of complex interactions and large datasets, preventing toil and freeing people for creative work. The problems he would like it to solve:</p>
+  <div class="cardgrid" id="probCards"></div>
+  <div class="callout blue"><b class="h">Why now?</b><span>Deployments get faster and humans can react only so fast. Two things changed: there is now enough data from big-data efforts, and cheap GPUs to train on it. And deep learning turned out to be surprisingly simple at its core. Historically, AI progress came from search algorithms in games (minimax for tic-tac-toe and chess); Go was too large to search, which is where learned evaluation took over.</span></div>
+</section>
+
+<section id="neuron" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>A neuron is just a function</h2></div>
+  <p>An artificial neuron multiplies each input by a weight, sums them with a bias, and passes the result through an activation function such as a sigmoid, which squashes it between 0 and 1. A network is many of these in layers. Here, one neuron scores whether a host looks unhealthy from two normalized signals.</p>
+  <div class="sheet neuron">
+    <div class="stack">
+      <label class="rng"><span>Input: error rate (0..1): <b id="x1V"></b></span><input type="range" id="x1" min="0" max="1" step="0.01" value="0.3"></label>
+      <label class="rng"><span>Input: latency, normalized (0..1): <b id="x2V"></b></span><input type="range" id="x2" min="0" max="1" step="0.01" value="0.5"></label>
+      <label class="rng"><span>Weight on error rate: <b id="w1V"></b></span><input type="range" id="w1" min="-6" max="6" step="0.1" value="4"></label>
+      <label class="rng"><span>Weight on latency: <b id="w2V"></b></span><input type="range" id="w2" min="-6" max="6" step="0.1" value="2"></label>
+      <label class="rng"><span>Bias: <b id="bV"></b></span><input type="range" id="b" min="-6" max="6" step="0.1" value="-3"></label>
+    </div>
+    <div class="stack"><div class="svgbox fit"><svg id="nSvg" viewBox="0 0 320 200" role="img" aria-label="Two inputs feeding a neuron with a sigmoid output"></svg></div><span class="small">output = sigmoid(w₁x₁ + w₂x₂ + b)</span><span class="out" id="nOut"></span></div>
+  </div>
+</section>
+
+<section id="train" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Learning is just reducing the loss</h2></div>
+  <p>The chapter's first TensorFlow example trains a single neuron: input 1.0, starting weight 0.8, desired output 0. A <b>loss</b> function measures how wrong the output is (here, squared error), and <b>gradient descent</b> nudges the weight downhill a little each step. Choose a learning rate and train.</p>
+  <div class="sheet">
+    <div class="grid2"><label class="rng"><span>Learning rate: <b id="lrV"></b></span><input type="range" id="lr" min="0.005" max="1.1" step="0.005" value="0.025"></label><div class="row"><button class="btn primary" id="trRun">Train 100 steps</button><button class="btn" id="trReset">Reset</button></div></div>
+    <div class="svgbox"><svg id="trSvg" viewBox="0 0 640 220" role="img" aria-label="Neuron output over training steps"></svg></div>
+    <p id="trTxt" aria-live="polite"></p>
+  </div>
+  <pre class="code">// a tiny version of the same idea, in plain JavaScript
+let w = 0.8; const x = 1.0, target = 0.0, lr = 0.025;
+for (let step = 0; step &lt; 100; step++) {
+  const y = w * x;                 // forward pass
+  const grad = 2 * (y - target) * x; // d(loss)/dw for loss = (y - target)^2
+  w -= lr * grad;                  // move downhill
+}</pre>
+  <p class="small">TensorFlow builds a graph of operations first and only computes when a session runs it; TensorBoard then plots the loss and the graph. Keras wraps TensorFlow with a simpler API. Other libraries Amaro tried: Caffe, scikit-learn, Theano, Torch.</p>
+</section>
+
+<section id="data" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>What data can SREs feed it?</h2></div>
+  <p>More data gives better results. Think about what you already have and how much of it.</p>
+  <div class="dtypes" id="dtypes"></div>
+  <div class="detail" id="dTip" aria-live="polite"></div>
+</section>
+
+<section id="ts" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Forecasting and anomalies in a time series</h2></div>
+  <p>The most useful ML for SRE, in Amaro's view, is on <b>time series</b>: a signal measured at regular steps, like requests per hour. Two wishes: forecast load a few hours ahead, and detect anomalies to trigger automation. Future values are estimated from past values of the same series, so the choice of time step matters. This demo uses a simple seasonal forecaster (not a neural network) to show the idea: learn the daily pattern, predict, and flag points far from the prediction.</p>
+  <div class="sheet">
+    <div class="grid2">
+      <label class="rng"><span>Anomaly threshold (× typical error): <b id="thV"></b></span><input type="range" id="th" min="1.5" max="6" step="0.5" value="3"></label>
+      <div class="row"><button class="btn" id="tsSpike">Inject an incident</button><button class="btn" id="tsShift">Traffic doubles (like a launch)</button><button class="btn" id="tsReset">Reset</button></div>
+    </div>
+    <div class="svgbox"><svg id="tsSvg" viewBox="0 0 640 260" role="img" aria-label="Requests per hour with forecast band and flagged anomalies"></svg></div>
+    <p id="tsTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="stories" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Where it already pays off</h2></div>
+  <p>Areas where AI is having an impact in IT operations: log analysis, capacity planning, infrastructure scaling, cost management, performance tuning, energy efficiency and security. The headline example: DeepMind trained an ensemble of neural networks on historical data-center sensor readings (temperatures, power, pump speeds, setpoints) to predict future power usage effectiveness, and used it to steer Google's cooling, cutting cooling energy by up to <b>40%</b>. Simpler methods count too: naive Bayes classifiers for routing tickets or spotting spam.</p>
+  <div class="bars" id="dmBars"></div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Chapter 18</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Seeking SRE: Conversations About Running Production Systems at Scale</i>, curated and edited by David N. Blank-Edelman (O'Reilly, 2018); this page covers chapter 18 by Ricardo Amaro (ch. 18). Explanations, examples, code snippets and drawings are original summaries, not text from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch16-17-data-reliability.html"><span>Previous · Chapters 16–17</span><b>Database Reliability and Data Durability</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch19-20-docs-learning.html"><span>Next · Chapters 19–20</span><b>Better Docs and Active Learning</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('ssre:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('ssre:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle: cycles auto -> light -> dark */
+(function(){const b=document.getElementById('themeBtn');if(!b)return;const R=document.documentElement;
+  const names={auto:'Theme: auto',light:'Theme: light',dark:'Theme: dark'};
+  function apply(t){if(t==='auto')R.removeAttribute('data-theme');else R.setAttribute('data-theme',t);b.textContent=names[t];}
+  let t=store.get('theme','auto');apply(t);
+  b.addEventListener('click',()=>{t=t==='auto'?'light':t==='light'?'dark':'auto';store.set('theme',t);apply(t)});})();
+/* timeline: [{k,t,d}] buttons + detail panel */
+function timeline(sel,tipSel,items){const r=$(sel),tip=$(tipSel);
+  r.innerHTML=items.map((y,i)=>`<button data-i="${i}" aria-pressed="${i===0}"><b>${y.k}</b><span>${y.t}</span></button>`).join('');
+  function show(i){const y=items[i];tip.innerHTML=`<span class="eyebrow">${y.k}</span><h3 class="blue">${y.t}</h3>${y.d}`}
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{press(r,b);show(+b.dataset.i)}));show(0)}
+/* simple svg line chart. series:[{pts:[[x,y]],c,dash,w,label}], opt {x0,x1,y0,y1,W,H,pad,xl,yl,xt,yt} */
+function lineChart(svg,series,o){svg=typeof svg==='string'?$(svg):svg;svg.innerHTML='';const W=o.W||640,H=o.H||260,P=o.pad||[20,20,36,48];
+  const X=v=>P[3]+(v-o.x0)/(o.x1-o.x0)*(W-P[1]-P[3]),Y=v=>H-P[2]-(v-o.y0)/(o.y1-o.y0)*(H-P[0]-P[2]);
+  svg.appendChild(el('line',{x1:P[3],y1:H-P[2],x2:W-P[1],y2:H-P[2],stroke:'var(--line)'}));
+  svg.appendChild(el('line',{x1:P[3],y1:P[0],x2:P[3],y2:H-P[2],stroke:'var(--line)'}));
+  (o.yt||[]).forEach(v=>{svg.appendChild(el('line',{x1:P[3],y1:Y(v),x2:W-P[1],y2:Y(v),stroke:'var(--grid)'}));svg.appendChild(el('text',{x:P[3]-6,y:Y(v)+4,'text-anchor':'end','font-size':11,fill:'var(--muted)'},o.yf?o.yf(v):v))});
+  (o.xt||[]).forEach(v=>svg.appendChild(el('text',{x:X(v),y:H-P[2]+16,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},o.xf?o.xf(v):v)));
+  if(o.xl)svg.appendChild(el('text',{x:(W+P[3])/2,y:H-4,'text-anchor':'middle','font-size':12,fill:'var(--muted)'},o.xl));
+  if(o.yl)svg.appendChild(el('text',{x:12,y:(H)/2,'text-anchor':'middle','font-size':12,fill:'var(--muted)',transform:`rotate(-90 12 ${H/2})`},o.yl));
+  series.forEach(s=>{if(s.area){const d='M'+X(s.pts[0][0])+','+Y(o.y0)+s.pts.map(p=>'L'+X(p[0])+','+Y(p[1])).join('')+'L'+X(s.pts[s.pts.length-1][0])+','+Y(o.y0)+'Z';svg.appendChild(el('path',{d,fill:`var(--${s.c})`,opacity:.15}))}
+    const d=s.pts.map((p,i)=>(i?'L':'M')+X(p[0]).toFixed(1)+','+Y(p[1]).toFixed(1)).join('');
+    const p=el('path',{d,fill:'none',stroke:`var(--${s.c||'blue'})`,'stroke-width':s.w||2.2,'stroke-linejoin':'round'});if(s.dash)p.setAttribute('stroke-dasharray',s.dash);svg.appendChild(p);
+    if(s.label){const q=s.pts[s.pts.length-1];svg.appendChild(el('text',{x:X(q[0])-4,y:Y(q[1])-6,'text-anchor':'end','font-size':12,'font-weight':700,fill:`var(--${s.c||'blue'})`},s.label))}});
+  return{X,Y,svg};}
+function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+function fmt(n,d){return Number(n).toLocaleString('en-US',{maximumFractionDigits:d==null?0:d,minimumFractionDigits:d==null?0:d})}
+
+
+cards('#probCards',[{t:'Noise reduction',d:'Automatically filter a noisy alert stream down to what matters.',c:'blue'},{t:'Anomaly detection',d:'Find outliers, such as a malfunctioning cluster, without hand-tuned thresholds.',c:'bad'},{t:'Situations, not alerts',d:'Group related alerts into one "situation" and automate the workflow around it.',c:'pencil'},{t:'Ticket categorization',d:'Route and classify tickets from patterns of behavior.',c:'mid'},{t:'Forecasting',d:'Short-term for service levels, long-term for capacity planning.',c:'ok'},{t:'Text analysis',d:'Existing techniques: spam filtering, sentiment analysis, information extraction.',c:'d5'}]);
+
+const sig=v=>1/(1+Math.exp(-v));
+function nr(){const x1=+$('#x1').value,x2=+$('#x2').value,w1=+$('#w1').value,w2=+$('#w2').value,b=+$('#b').value;[['x1V',x1],['x2V',x2],['w1V',w1],['w2V',w2],['bV',b]].forEach(([k,v])=>$('#'+k).textContent=v.toFixed(2));
+ const z=w1*x1+w2*x2+b,o=sig(z);const s=$('#nSvg');s.innerHTML='';
+ [[40,60,x1,w1,'errors'],[40,140,x2,w2,'latency']].forEach(([x,y,v,w,l])=>{s.appendChild(el('line',{x1:x+20,y1:y,x2:170,y2:100,stroke:w>=0?'var(--blue)':'var(--bad)','stroke-width':1+Math.abs(w)*1.2,opacity:.75}));s.appendChild(el('circle',{cx:x,cy:y,r:20,fill:'var(--paper)',stroke:'var(--line)'}));s.appendChild(el('text',{x,y:y+4,'text-anchor':'middle','font-size':11,fill:'var(--ink)'},v.toFixed(2)));s.appendChild(el('text',{x,y:y+34,'text-anchor':'middle','font-size':10,fill:'var(--muted)'},l))});
+ s.appendChild(el('circle',{cx:195,cy:100,r:28,fill:`color-mix(in srgb, var(--bad) ${Math.round(o*100)}%, var(--ok))`,stroke:'var(--ink)'}));s.appendChild(el('text',{x:195,y:104,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'#fff'},'σ'));
+ s.appendChild(el('line',{x1:223,y1:100,x2:270,y2:100,stroke:'var(--ink)','stroke-width':2}));s.appendChild(el('text',{x:290,y:104,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--ink)'},o.toFixed(2)));
+ $('#nOut').textContent=`z = ${z.toFixed(2)} → ${o.toFixed(3)} ${o>0.5?'(unhealthy)':'(healthy)'}`}
+['#x1','#x2','#w1','#w2','#b'].forEach(s=>$(s).addEventListener('input',nr));nr();
+
+let trW=[];function tr(run){const lr=+$('#lr').value;$('#lrV').textContent=lr.toFixed(3);let w=0.8;trW=[[0,w]];if(run){for(let i=1;i<=100;i++){w-=lr*2*w;trW.push([i,clamp(w,-1.5,1.5)])}}
+ lineChart('#trSvg',[{pts:trW,c:'blue',w:2.5,label:run?'output':''}],{H:220,x0:0,x1:100,y0:-1.2,y1:1.2,xt:[0,25,50,75,100],yt:[-1,0,0.8,1],xl:'training step',yl:'output'});
+ const last=trW[trW.length-1][1];$('#trTxt').textContent=!run?'Output starts at 0.8; target is 0.':lr>1?'Learning rate too high: each step overshoots further and training diverges.':lr>0.5?'Too high: the output oscillates around 0 before (maybe) settling.':lr<0.01?`Too low: after 100 steps the output is still ${last.toFixed(3)}.`:`Converged smoothly: after 100 steps the output is ${last.toExponential(1)}.`}
+$('#trRun').addEventListener('click',()=>tr(true));$('#trReset').addEventListener('click',()=>tr(false));$('#lr').addEventListener('input',()=>tr(trW.length>1));tr(false);
+
+const DT=[['Machine data','Log messages, metrics, configuration and state from servers and applications.'],['Wire data','Network traffic between systems: who talks to whom, how much, how fast.'],['Agent data','Bytecode instrumentation and call-stack sampling, often from code diagnostics tools used by dev and QA.'],['Synthetic data','Synthetic transactions and service checks.'],['Human sentiment','Service-desk tickets and social media, capturing how users perceive the service.']];
+$('#dtypes').innerHTML=DT.map((d,i)=>`<button class="chip" data-i="${i}">${d[0]}</button>`).join('');
+$$('#dtypes .chip').forEach(c=>c.addEventListener('click',()=>{$$('#dtypes .chip').forEach(x=>x.classList.remove('sel'));c.classList.add('sel');const d=DT[+c.dataset.i];$('#dTip').innerHTML=`<h3 class="blue">${d[0]}</h3><p>${d[1]}</p>`}));$('#dtypes .chip').click();
+
+/* time series */
+let series=[],seed=7;const rnd=()=>{seed=(seed*16807)%2147483647;return seed/2147483647};
+function gen(){seed=7;series=[];for(let h=0;h<24*7;h++){const d=Math.sin((h%24-6)/24*2*Math.PI);series.push(1000+600*Math.max(-.4,d)+(rnd()-.5)*90)}}
+function ts(){const th=+$('#th').value;$('#thV').textContent=th;const P=24,pred=[],flags=[];let errs=[];
+ for(let i=0;i<series.length;i++){if(i<P){pred.push(null);continue}const back=[];for(let k=1;k<=3&&i-k*P>=0;k++)back.push(series[i-k*P]);const lvl=series.slice(Math.max(0,i-6),i).reduce((a,b)=>a+b,0)/Math.min(6,i);const bs=series.slice(Math.max(0,i-P-6),i-P);const lvlBack=bs.length?bs.reduce((a,b)=>a+b,0)/bs.length:lvl;
+  const p=back.reduce((a,b)=>a+b,0)/back.length*(0.5+0.5*lvl/lvlBack);pred.push(p);const e=series[i]-p;const typ=errs.length?Math.sqrt(errs.slice(-48).reduce((a,b)=>a+b*b,0)/Math.min(48,errs.length)):60;if(Math.abs(e)>th*typ&&i>P*2)flags.push(i);else errs.push(e)}
+ const mx=Math.max(...series)*1.1;const c=lineChart('#tsSvg',[{pts:series.map((v,i)=>[i,v]),c:'blue',w:1.6,label:'actual'},{pts:pred.map((v,i)=>[i,v]).filter(p=>p[1]!=null),c:'ok',dash:'5 4',w:1.6,label:'forecast'}],{H:260,x0:0,x1:series.length-1,y0:0,y1:mx,xt:[0,24,48,72,96,120,144,167],xf:v=>'day '+(v/24+1|0),yt:[0,1000,2000,3000].filter(v=>v<mx),yl:'requests / hour'});
+ flags.forEach(i=>c.svg.appendChild(el('circle',{cx:c.X(i),cy:c.Y(series[i]),r:5,fill:'none',stroke:'var(--bad)','stroke-width':2.5})));
+ $('#tsTxt').innerHTML=`${flags.length} point(s) flagged. `+(flags.length>8?'Too sensitive, or the world changed: a lasting shift needs the model to adapt, not a page every hour.':flags.length?'Each could trigger responsive automation or a page with context attached.':'Nothing unusual: no page, no human needed.')}
+gen();$('#th').addEventListener('input',ts);
+$('#tsSpike').addEventListener('click',()=>{const i=120+Math.floor(rnd()*20);series[i]*=0.35;series[i+1]*=0.5;ts()});
+$('#tsShift').addEventListener('click',()=>{for(let i=140;i<series.length;i++)series[i]*=2;ts()});
+$('#tsReset').addEventListener('click',()=>{gen();ts()});ts();
+
+bars('#dmBars',[{l:'Cooling energy, before',v:100,c:'muted',txt:'100%'},{l:'With ML control (best case)',v:60,c:'ok',txt:'60%'}],100);
+
+quiz('#qQuiz','#qScore',[
+ {q:'What does a sigmoid activation do?',o:['Sorts inputs','Squashes a sum into the range 0 to 1','Adds more neurons'],a:1,why:'It turns a weighted sum into something like a probability.'},
+ {q:'What happens with too high a learning rate?',o:['Training is slow but steady','Steps overshoot and training can diverge','Nothing different'],a:1,why:'Each update jumps past the minimum.'},
+ {q:'Which SRE data counts as "human sentiment"?',o:['CPU metrics','Service-desk tickets and social posts','Packet captures'],a:1,why:'It captures how users perceive the service.'},
+ {q:'Forecasting a time series usually relies on…',o:['Past values of the same series','Random guesses','Only today\'s value'],a:0,why:'Choose a sensible time step, too.'},
+ {q:'What did DeepMind\'s model control in Google data centers?',o:['Load balancing','Cooling','Disk scheduling'],a:1,why:'Up to 40% less energy spent on cooling.'}]);
+
+})();
+</script>
+</body>
+</html>

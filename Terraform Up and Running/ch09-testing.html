@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>How to Test Terraform Code</title>
+<meta name="description" content="Infrastructure code without tests is broken, you just do not know where yet. There is no localhost for a load balancer, so tests deploy real resources, check them and tear them down.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Terraform: Up & Running companion. Blueprint grid paper; blue ink = infrastructure and code,
+   orange pencil = people and process, green = healthy / good outcome, red = broken / bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code and terminal */
+pre.code,pre.term{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;padding:14px 16px;border-radius:8px;overflow-x:auto;max-width:100%;white-space:pre}
+pre.code{background:var(--paper);border:1px solid var(--line);color:var(--ink)}
+pre.term{background:#0d1726;color:#d6e2f0;border:1px solid #23354d}
+pre.term .p{color:#7fb2f0} pre.term .g{color:#7fd497} pre.term .r{color:#f2877c} pre.term .y{color:#e8c060} pre.term .m{color:#8ea3bb}
+.code .k{color:var(--d5);font-weight:600} .code .s{color:var(--d2)} .code .c{color:var(--muted);font-style:italic} .code .n{color:var(--d3)} .code .hl{background:var(--mid-soft);border-radius:3px}
+code{font-family:var(--mono);font-size:.88em;background:var(--blue-soft);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+.themebtn{cursor:pointer}
+.missing{border:2px dashed var(--bad);background:var(--bad-soft);border-radius:10px;padding:14px 16px}
+
+/* page */
+
+.tk{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
+.tk div{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--surface);display:flex;flex-direction:column;gap:4px}
+.tk b{font-family:var(--mono);color:var(--blue);font-size:.8rem}
+.stg{display:flex;flex-direction:column;gap:6px}
+.stg label{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--paper);font-size:.92rem;cursor:pointer}
+.stg label.skip{opacity:.5;text-decoration:line-through}
+.stg input{accent-color:var(--blue)}
+.stg .t{font-family:var(--mono);font-size:.8rem;color:var(--muted)}
+.mtx{display:grid;grid-template-columns:minmax(110px,1.4fr) repeat(6,minmax(34px,1fr));font-size:.82rem;border-top:1px solid var(--line)}
+.mtx>*{padding:6px 4px;border-bottom:1px solid var(--line);display:flex;align-items:center}
+.mtx .h{font-family:var(--mono);font-size:.66rem;color:var(--muted);text-transform:uppercase;justify-content:center;text-align:center;line-height:1.2}
+.mtx .d{justify-content:center;gap:2px}
+.mtx .d i{width:5px;height:12px;border-radius:2px;background:var(--line)}
+.mtx .d i.on{background:var(--blue)}
+.mtx .sel{background:var(--blue-soft)}
+@media (max-width:520px){.mtx .d i{width:3px}}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Terraform: Up &amp; Running · visual companion</a><span class="tag">Chapter 9 of 10</span><button class="tag themebtn" id="themeBtn" type="button">Theme</button></div>
+  <h1>How to Test Terraform Code</h1>
+  <p class="lede">Infrastructure code without tests is broken, you just do not know where yet. There is no localhost for a load balancer, so tests deploy real resources, check them and tear them down.</p>
+  <nav class="toc" aria-label="Sections"><a href="#manual">Manual tests</a><a href="#unit">Unit tests</a><a href="#di">Dependency injection</a><a href="#parallel">Parallel + namespaces</a><a href="#stages">Integration + stages</a><a href="#pyramid">Test pyramid</a><a href="#other">Other approaches</a><a href="#check">Quick check</a></nav>
+</header>
+
+<section id="manual" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Manual testing: there is no localhost</h2></div>
+  <p>DevOps runs on fear: of downtime, of data loss, of breaches. Automated tests are how you turn fear into confidence. With a Ruby web server you'd test on <code>localhost</code> with <code>curl</code>. With Terraform you can't deploy an ASG or ALB to your laptop, which leads to the chapter's first takeaway.</p>
+  <div class="tk" id="tks"></div>
+  <p>The equivalent of localhost is a <b>sandbox</b> environment, ideally a whole AWS account per developer so nobody steps on anybody else. You deploy an example with <code>terraform apply</code> and poke it with <code>curl</code>. Sandboxes cost money, so they need cleaning. Drag the days to see clutter build up, then switch on a nightly nuke.</p>
+  <div class="sheet">
+    <label class="rng"><span>Days since the sandbox account was created: <b id="dayV"></b></span><input type="range" id="day" min="1" max="30" value="10"></label>
+    <label class="row"><input type="checkbox" id="nuke"> Run <code>cloud-nuke</code> nightly to delete anything older than 48 hours</label>
+    <div class="svgbox"><svg id="sbSvg" viewBox="0 0 640 170" role="img" aria-label="Forgotten resources accumulating in a sandbox account"></svg></div>
+    <p class="small" id="sbTxt"></p>
+  </div>
+</section>
+
+<section id="unit" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Unit tests deploy real infrastructure</h2></div>
+  <p>In Terraform, the closest thing to a "unit" is a single reusable module, such as <code>alb</code>. But a module is mostly calls to AWS, so you can't test it without AWS: there is no pure unit test (takeaway #3). Instead, a unit test deploys the module's example into a real account, checks it, and tears it down. The book uses <b>Terratest</b>, a Go library. Step through one test.</p>
+  <div class="sheet">
+    <div class="two">
+<pre class="code" id="ttCode">func TestAlbExample(t *testing.T) {
+  opts := &amp;terraform.Options{
+    TerraformDir: <span class="s">"../examples/alb"</span>,
+  }
+  <span data-l="1">defer terraform.Destroy(t, opts)</span>
+  <span data-l="2">terraform.InitAndApply(t, opts)</span>
+  <span data-l="3">url := "http://" +
+    terraform.OutputRequired(t, opts, "alb_dns_name")</span>
+  <span data-l="4">http_helper.HttpGetWithRetry(t, url, nil,
+    404, "404: page not found", 10, 10*time.Second)</span>
+}</pre>
+      <div class="svgbox fit"><svg id="ttSvg" viewBox="0 0 300 250" role="img" aria-label="Test lifecycle"></svg></div>
+    </div>
+    <div class="stepper" id="ttStep"></div>
+  </div>
+  <p class="small">Run it with <code>go test -v -timeout 30m</code>: Go's default 10-minute timeout is too short for real infrastructure. Pin the Terratest version too; it's pre-1.0, and the book's examples target v0.39.0.</p>
+</section>
+
+<section id="di" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Dependency injection</h2></div>
+  <p><code>hello-world-app</code> reads the database address from the MySQL module's remote state. That's an external dependency: a unit test would need a real database first. The fix is the same as in app code, <b>dependency injection</b>. Expose an optional <code>mysql_config</code> input; when set, use it instead of the remote state.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Wiring"><button data-di="0" aria-pressed="true">Hardcoded dependency</button><button data-di="1" aria-pressed="false">Injected (test)</button></div>
+    <div class="svgbox"><svg id="diSvg" viewBox="0 0 640 170" role="img" aria-label="App module reading database config from remote state or an injected variable"></svg></div>
+    <p id="diTxt" aria-live="polite"></p>
+  </div>
+<pre class="code"><span class="k">variable</span> <span class="s">"mysql_config"</span> {
+  type    = object({ address = string, port = number })
+  default = null
+}
+<span class="k">data</span> <span class="s">"terraform_remote_state"</span> <span class="s">"db"</span> {
+  count = var.mysql_config == null ? 1 : 0     <span class="c"># only if not injected</span>
+}
+<span class="k">locals</span> {
+  mysql_config = var.mysql_config == null ? data.terraform_remote_state.db[0].outputs : var.mysql_config
+}</pre>
+</section>
+
+<section id="parallel" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Running tests in parallel</h2></div>
+  <p>A suite of 5-minute tests run one after another takes hours. Add <code>t.Parallel()</code> and Go runs them at the same time. But two copies of the same test now try to create resources with identical names. Takeaway #4: <b>namespace everything</b>. Make every name configurable and give each test a unique ID. Also copy the example folder per test (<code>test_structure.CopyTerraformFolderToTemp</code>) so they don't share a <code>.terraform</code> folder or state.</p>
+  <div class="sheet">
+    <div class="row"><label class="row"><input type="checkbox" id="par" checked> t.Parallel()</label><label class="row"><input type="checkbox" id="ns"> Unique names via <code>random.UniqueId()</code></label></div>
+    <div class="svgbox"><svg id="parSvg" viewBox="0 0 640 190" role="img" aria-label="Tests running in sequence or parallel with possible name collisions"></svg></div>
+    <p id="parTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="stages" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Integration tests and test stages</h2></div>
+  <p>An integration test checks that several modules work together: deploy <code>mysql</code>, deploy <code>hello-world-app</code> pointed at it, check the response contains "Hello, World", tear down. It takes 10 to 15 minutes. While iterating on just the app, redeploying the database every run is pure overhead. <b>Test stages</b> fix this: each stage can be skipped with a <code>SKIP_&lt;stage&gt;</code> environment variable, and stages save state to disk so later runs can pick up. Choose which to skip.</p>
+  <div class="sheet">
+    <div class="stg" id="stg"></div>
+    <div class="row between"><b id="stgT"></b><span class="small" id="stgCmd"></span></div>
+  </div>
+  <div class="callout blue"><b class="h">Retries for flaky infrastructure</b><span>Real clouds have transient failures: an instance that won't launch, an eventual-consistency error, a TLS hiccup talking to S3. Terratest's <code>terraform.Options</code> accepts <code>RetryableTerraformErrors</code>, a map of known error patterns, plus <code>MaxRetries</code> and <code>TimeBetweenRetries</code>, so known-transient errors trigger a retry instead of a red build.</span></div>
+</section>
+
+<section id="pyramid" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>End-to-end tests and the test pyramid</h2></div>
+  <p>The higher up the pyramid, the slower, costlier and more brittle the tests get, so you want many unit tests, fewer integration tests and only a handful of end-to-end tests. Takeaway #5: <b>smaller modules are easier and faster to test</b>. Tap a layer.</p>
+  <div class="sheet">
+    <div class="two">
+      <div class="svgbox fit"><svg id="pySvg" viewBox="0 0 320 240" role="img" aria-label="Test pyramid"></svg></div>
+      <div class="detail" id="pyTxt" aria-live="polite"></div>
+    </div>
+  </div>
+</section>
+
+<section id="other" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Static analysis, plan testing, server testing</h2></div>
+  <p>Apply-and-destroy tests are the gold standard, but three cheaper families catch many problems first. Select a column to compare it with the others, following the book's summary table (more bars is better).</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Approach" id="mxSeg"></div>
+    <div class="tbl"><div class="mtx" id="mtx"></div></div>
+    <div class="detail" id="mxTxt" aria-live="polite"></div>
+  </div>
+  <div class="callout ok"><b class="h">Use a mix</b><span>Each type has strengths and blind spots, so combine them, weighted toward the bottom of the pyramid. Start with whatever gives the best return, even if that's only static analysis, and build up. Infrastructure code without automated tests is broken; it just hasn't shown you yet.</span></div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="quiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Terraform: Up &amp; Running</i>, third edition, by Yevgeniy Brikman (O'Reilly, 2022). Explanations, diagrams and code snippets are original summaries and illustrations written for these pages, not copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch08-production-grade.html"><span>Previous · Chapter 8</span><b>Production-Grade Terraform Code</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch10-team.html"><span>Next · Chapter 10</span><b>How to Use Terraform as a Team</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('tfur:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('tfur:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle: cycles auto -> light -> dark; remembered per viewer */
+(function(){const r=document.documentElement;const t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+  const b=document.getElementById('themeBtn');if(!b)return;const lab=()=>{const v=r.getAttribute('data-theme');b.textContent='Theme: '+(v||'auto')};lab();
+  b.addEventListener('click',()=>{const v=r.getAttribute('data-theme');const n=v==null?'light':v==='light'?'dark':null;if(n)r.setAttribute('data-theme',n);else r.removeAttribute('data-theme');store.set('theme',n);lab()})})();
+/* terminal typer: lines [{t:'html',d:ms}] into a pre, returns a run() */
+function typer(pre,lines){let timer=null;return function run(){clearTimeout(timer);pre.innerHTML='';let i=0;(function nx(){if(i>=lines.length)return;const L=lines[i++];pre.innerHTML+=(pre.innerHTML?'\n':'')+L.t;timer=setTimeout(nx,L.d==null?260:L.d)})()}}
+
+
+$('#tks').innerHTML=[['#1','You can\'t use localhost. Test by deploying to a real environment.'],['#2','Regularly clean up your sandbox environments.'],['#3','You cannot do pure unit testing for Terraform code.'],['#4','You must namespace all of your resources.'],['#5','Smaller modules are easier and faster to test.']].map(t=>`<div><b>takeaway ${t[0]}</b><span>${t[1]}</span></div>`).join('');
+
+/* sandbox */
+function sb(){const d=+$('#day').value,nk=$('#nuke').checked;$('#dayV').textContent=d;const s=$('#sbSvg');s.innerHTML='';
+  const per=3;const items=[];for(let k=1;k<=d;k++)for(let j=0;j<per;j++){const age=d-k;if(nk&&age>=2)continue;items.push(age)}
+  items.slice(-60).forEach((age,i)=>{const x=10+(i%20)*31,y=10+Math.floor(i/20)*50;const old=age>=2;s.appendChild(el('rect',{x,y,width:26,height:40,rx:4,fill:old?'var(--bad-soft)':'var(--ok-soft)',stroke:old?'var(--bad)':'var(--ok)'}))});
+  const cost=items.length*0.6*24;$('#sbTxt').textContent=nk?`${items.length} resources alive, all from the last two days. Forgotten experiments disappear automatically.`:`${items.length} resources running, most forgotten. Roughly $${Math.round(cost)} a day if each were a small instance. Tools: cloud-nuke, aws-nuke, Janitor Monkey.`}
+$('#day').addEventListener('input',sb);$('#nuke').addEventListener('change',sb);sb();
+
+/* terratest lifecycle */
+(function(){const s=$('#ttSvg');const ph=['init + apply','read outputs','HTTP checks (retry)','destroy'];const G=ph.map((t,i)=>{const g=el('g');g.appendChild(el('rect',{x:40,y:14+i*58,width:220,height:44,rx:8,fill:'var(--paper)',stroke:'var(--blue)','stroke-width':1.5}));g.appendChild(el('text',{x:150,y:41+i*58,'text-anchor':'middle','font-size':13,'font-weight':600,fill:'var(--ink)'},t));s.appendChild(g);if(i<3)s.appendChild(el('line',{x1:150,y1:58+i*58,x2:150,y2:72+i*58,stroke:'var(--muted)','stroke-width':2}));return g});
+  const lines=$$('#ttCode [data-l]');
+  $('#ttStep').innerHTML=stepHTML();
+  stepper('#ttStep',['defer schedules Destroy first, so cleanup runs at the end even if a later step fails.','InitAndApply runs terraform init and apply on the example folder in a real AWS account.','OutputRequired reads the ALB\'s DNS name from the example\'s outputs.','HttpGetWithRetry calls the ALB until it returns the default 404 response, retrying while it warms up.','The function returns, the deferred Destroy runs, and nothing is left behind. Four to five minutes in total.'],i=>{
+    const map=[[0,1],[1,2],[2,3],[3,4],[4,1]];const L=map[i][1];lines.forEach(x=>x.classList.toggle('hl',+x.dataset.l===L));
+    const box=[3,0,1,2,3][i];G.forEach((g,k)=>{const r=g.querySelector('rect');r.setAttribute('fill',k===box?(k===3?'var(--pencil-soft)':'var(--blue-soft)'):'var(--paper)');r.setAttribute('stroke',k===box&&k===3?'var(--pencil)':'var(--blue)')})})})();
+
+/* DI */
+function di(k){const s=$('#diSvg');s.innerHTML='';const bx=(x,y,w,h,t,c,dash)=>{s.appendChild(el('rect',{x,y,width:w,height:h,rx:10,fill:'var(--surface)',stroke:`var(--${c})`,'stroke-width':1.6,'stroke-dasharray':dash?'6 4':''}));t.split('\n').forEach((l,i,a)=>s.appendChild(el('text',{x:x+w/2,y:y+h/2+5+(i-(a.length-1)/2)*15,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)))};
+  bx(400,50,220,70,'hello-world-app','d3');
+  if(k){bx(20,50,220,70,'test passes\nmysql_config = {address="mock", port=3306}','ok');bx(20,135,220,30,'real MySQL: not needed','muted',true);const l=el('line',{x1:240,y1:85,x2:400,y2:85,stroke:'var(--ok)','stroke-width':2,class:'flow'});s.appendChild(l);
+    $('#diTxt').textContent='The unit test passes a fake config. The app deploys in minutes with no database. The integration test can still use the real thing.'}
+  else{bx(20,20,220,50,'terraform_remote_state','d2');bx(20,100,220,50,'MySQL must already be deployed','bad');s.appendChild(el('line',{x1:240,y1:45,x2:400,y2:75,stroke:'var(--muted)','stroke-width':2,class:'flow'}));s.appendChild(el('line',{x1:130,y1:70,x2:130,y2:100,stroke:'var(--bad)','stroke-width':2}));
+    $('#diTxt').textContent='The app always reads a real state file, so testing it means deploying a database first. Slow, costly, and no longer a unit test.'}}
+seg('[data-di]',b=>di(+b.dataset.di));di(0);
+
+/* parallel */
+function par(){const p=$('#par').checked,n=$('#ns').checked;const s=$('#parSvg');s.innerHTML='';const T=['TestAlbExample','TestHelloWorldApp','TestMySQL'];
+  T.forEach((t,i)=>{const y=20+i*52;const x=p?150:150+i*160;const w=150;const clash=p&&!n&&i<2;
+    s.appendChild(el('text',{x:10,y:y+24,'font-size':12,fill:'var(--ink)','class':'t-mono'},t));
+    s.appendChild(el('rect',{x,y,width:w,height:36,rx:6,fill:clash?'var(--bad-soft)':'var(--blue-soft)',stroke:clash?'var(--bad)':'var(--blue)'}));
+    s.appendChild(el('text',{x:x+w/2,y:y+23,'text-anchor':'middle','font-size':11,fill:'var(--ink)','class':'t-mono'},clash?'alb "terraform-asg-example"':(n?'alb "test-'+['x7Kq2','Lm93a','Pz01c'][i]+'"':'alb "terraform-asg-example"')))});
+  s.appendChild(el('text',{x:630,y:180,'text-anchor':'end','font-size':12,fill:'var(--muted)'},p?'wall clock ≈ one test':'wall clock ≈ three tests'));
+  $('#parTxt').innerHTML=p&&!n?'<b class="badc">Collision.</b> Both tests create an ALB and security group with the same hardcoded name, so one of them fails with "already exists".':p?'<b class="okc">Fast and safe.</b> Each test passes a unique name prefix, so they run side by side without colliding.':'Safe but slow: tests run one after another.'}
+$('#par').addEventListener('change',par);$('#ns').addEventListener('change',par);par();
+
+/* stages */
+const STG=[['deploy_db','terraform apply on mysql',6],['deploy_app','terraform apply on hello-world-app',4],['validate_app','HTTP check for "Hello, World"',1],['teardown_app','terraform destroy on hello-world-app',3],['teardown_db','terraform destroy on mysql',5]];const skip=new Set();
+function stg(){$('#stg').innerHTML=STG.map((s,i)=>`<label class="${skip.has(i)?'skip':''}"><input type="checkbox" data-i="${i}" ${skip.has(i)?'':'checked'}><span><code>${s[0]}</code> ${s[1]}</span><span class="t">~${s[2]} min</span></label>`).join('');
+  $$('#stg input').forEach(x=>x.addEventListener('change',()=>{const i=+x.dataset.i;x.checked?skip.delete(i):skip.add(i);stg()}));
+  const t=STG.reduce((a,s,i)=>a+(skip.has(i)?0:s[2]),0);$('#stgT').textContent=`This run: about ${t} minutes`;
+  $('#stgCmd').textContent=skip.size?[...skip].sort().map(i=>'SKIP_'+STG[i][0]+'=true').join(' ')+' go test -run TestHelloWorldAppStage':'go test -run TestHelloWorldAppStage (CI runs everything)'}
+skip.add(3);skip.add(4);stg();
+
+/* pyramid */
+const PY=[['End-to-end','Deploy everything and test from the user\'s side. Deploying a complex architecture from scratch is too slow and too flaky to do often, so the usual strategy is a persistent, production-like test environment: each change is applied incrementally to it, then validated. Few of these.','bad'],['Integration','Several modules deployed together, like mysql plus hello-world-app. Around 10 to 15 minutes. A moderate number.','mid'],['Unit','One module at a time, still against real infrastructure. Around 4 to 5 minutes. As many as you can: this is the fastest, most reliable feedback loop.','ok']];
+(function(){const s=$('#pySvg');const G=PY.map((p,i)=>{const y=10+i*76,top=160-(3-i)*50+50,w0=60+i*90,w1=w0+90;const pts=`${160-w0/2},${y} ${160+w0/2},${y} ${160+w1/2},${y+70} ${160-w1/2},${y+70}`;
+  const g=el('g',{class:'gnode',tabindex:0,role:'button'});g.appendChild(el('polygon',{points:pts,fill:`var(--${p[2]}-soft)`,stroke:`var(--${p[2]})`,'stroke-width':1.6}));g.appendChild(el('text',{x:160,y:y+42,'text-anchor':'middle','font-size':13.5,'font-weight':700,fill:'var(--ink)'},p[0]));
+  const f=()=>{G.forEach(x=>x.querySelector('polygon').setAttribute('stroke-width',1.6));g.querySelector('polygon').setAttribute('stroke-width',3.5);$('#pyTxt').style.borderLeftColor=`var(--${p[2]})`;$('#pyTxt').innerHTML=`<span class="eyebrow">Layer</span><h3>${p[0]} tests</h3><p>${p[1]}</p>`};
+  g.addEventListener('click',f);g.addEventListener('keydown',e=>{if(e.key==='Enter')f()});s.appendChild(g);g._f=f;return g});
+  s.appendChild(el('text',{x:310,y:20,'text-anchor':'end','font-size':10.5,fill:'var(--muted)'},'slower, costlier'));s.appendChild(el('text',{x:310,y:236,'text-anchor':'end','font-size':10.5,fill:'var(--muted)'},'more of them'));G[2]._f()})();
+
+/* matrix (Table 9-4) */
+const MXH=['Static analysis','Plan testing','Server testing','Unit','Integration','End-to-end'];
+const MXS=['Static','Plan','Server','Unit','Integ.','E2E'];
+const MXR=[['Fast to run',[5,4,3,2,1,0]],['Cheap to run',[5,4,3,2,1,0]],['Stable and reliable',[5,4,3,2,1,0]],['Easy to use',[5,4,3,2,1,0]],['Check syntax',[5,5,5,5,5,5]],['Check policies',[2,4,4,5,5,5]],['Check servers work',[0,0,5,5,5,5]],['Check other infra works',[0,0,2,4,5,5]],['Check it all works together',[0,0,0,1,3,5]]];
+const MXD=['Parse the code without running it. terraform validate (syntax), tfsec (security), tflint (pluggable linter), Terrascan (compliance in Rego).','Run terraform plan and check the plan output, without applying. Terratest can read plan JSON; OPA, HashiCorp Sentinel, Checkov and terraform-compliance enforce policies.','Check that servers are configured properly: InSpec, Serverspec, Goss. Run against real or test servers.','Deploy one module for real, validate, destroy. Terratest.','Deploy several modules together and check they cooperate.','Deploy or update a full environment and test it from the outside.'];
+$('#mxSeg').innerHTML=MXH.map((h,i)=>`<button data-i="${i}" aria-pressed="${i===1}">${h}</button>`).join('');
+function mx(sel){$('#mtx').innerHTML='<span class="h"></span>'+MXS.map((h,i)=>`<span class="h ${i===sel?'sel':''}">${h}</span>`).join('')+MXR.map(r=>`<span>${r[0]}</span>`+r[1].map((v,i)=>`<span class="d ${i===sel?'sel':''}" aria-label="${v} of 5">${[0,1,2,3,4].map(k=>`<i class="${k<v?'on':''}"></i>`).join('')}</span>`).join('')).join('');
+  $('#mxTxt').innerHTML=`<span class="eyebrow">Selected</span><h3 class="blue">${MXH[sel]}</h3><p>${MXD[sel]}</p>`}
+seg('#mxSeg button',b=>mx(+b.dataset.i));mx(1);
+
+quiz('#quiz','#qScore',[
+ {q:'What replaces localhost when manually testing Terraform?',o:['Docker on your laptop','A sandbox cloud account'],a:1,why:'You have to deploy real infrastructure; ideally each developer gets an isolated account.'},
+ {q:'Why put terraform.Destroy in a defer?',o:['It runs faster','It runs even if the test fails'],a:1,why:'Cleanup must happen whatever goes wrong in the middle.'},
+ {q:'Two parallel tests fail with "already exists". What fixes it?',o:['Namespacing resource names','Longer timeouts'],a:0,why:'Takeaway #4: make names configurable and unique per test.'},
+ {q:'What lets you skip redeploying the database while iterating on the app?',o:['Test stages','Retries'],a:0,why:'Each stage can be skipped with a SKIP_ environment variable.'},
+ {q:'Which is cheapest and fastest but can\'t tell you if servers work?',o:['Static analysis','End-to-end'],a:0,why:'It never deploys anything, so it can only reason about the code.'}]);
+
+})();
+</script>
+</body>
+</html>

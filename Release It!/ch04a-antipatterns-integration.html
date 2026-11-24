@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Stability Antipatterns I: Points of Contact</title>
+<meta name="description" content="Most outages are not exotic. They follow a handful of patterns that show up again and again. The first half of the antipatterns: the places where systems touch each other, and the ways that contact turns deadly.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Release It! companion. Layout: an operations logbook on blueprint grid paper.
+   Blue ink = structure and healthy flow, orange pencil = load and stress, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+.callout.missing{border-color:var(--bad);background:var(--bad-soft)}
+.callout.missing b.h{color:var(--bad)}
+em.miss{font-style:normal;font-family:var(--mono);font-size:.72rem;color:var(--bad);border:1px solid var(--bad);border-radius:4px;padding:0 5px;margin-left:4px;white-space:nowrap}
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;max-height:220px;overflow:auto;display:flex;flex-direction:column;gap:2px}
+.log .e{color:var(--bad)} .log .w{color:var(--mid)} .log .g{color:var(--ok)}
+
+/* page */
+
+.fails{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.fails button{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:10px;text-align:left;font-size:.9rem}
+.fails button[aria-pressed="true"]{border-color:var(--pencil);background:var(--pencil-soft)}
+.thr{display:grid;grid-template-columns:repeat(10,minmax(0,1fr));gap:4px}
+.thr i{aspect-ratio:1;border-radius:50%;background:var(--ok-soft);border:1.5px solid var(--ok);transition:background .2s}
+.thr i.b{background:var(--bad);border-color:var(--bad)}
+.thr i.w{background:var(--blue);border-color:var(--blue)}
+.lyr{display:flex;flex-direction:column;gap:8px}
+.lyr div{border:1.5px solid var(--line);border-radius:8px;padding:10px 14px;display:flex;justify-content:space-between;gap:10px;align-items:center;background:var(--surface);transition:background .3s,border-color .3s;font-size:.95rem}
+.lyr div.sick{background:var(--bad-soft);border-color:var(--bad)}
+.lyr div.slow{background:var(--mid-soft);border-color:var(--mid)}
+.lyr span.st{font-family:var(--mono);font-size:.78rem}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Release It! · visual companion</a><span class="tag">Part I · Create Stability · Chapter 4a of 17</span></div>
+  <h1>Stability Antipatterns I: Points of Contact</h1>
+  <p class="lede">Most outages are not exotic. They follow a handful of patterns that show up again and again. The first half of the antipatterns: the places where systems touch each other, and the ways that contact turns deadly.</p>
+  <nav class="toc" aria-label="Sections"><a href="#frontier">Why it's hard</a><a href="#integration">Integration points</a><a href="#fiveam">5 a.m. problem</a><a href="#http">HTTP and vendors</a><a href="#chain">Chain reactions</a><a href="#cascade">Cascading failures</a><a href="#users">Users</a><a href="#blocked">Blocked threads</a><a href="#selfdenial">Self-denial</a><a href="#check">Quick check</a></nav>
+  <div class="callout missing"><b class="h">Missing from the source PDF</b><span>Section "Chain Reactions" (PDF page 90 shows a browser "This site can't be reached / ERR_TIMED_OUT" error page instead of content). A short note stands in for it.</span></div>
+</header>
+
+<section id="frontier" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Life on the technology frontier</h2></div>
+  <p>We build software vastly faster than in 1968, yet the "software crisis" never ended, because the challenges grew faster: millions of users, applications made of hundreds of continuously redeployed services, everything integrated with everything. Even five nines leaves thousands of unhappy users a day at that scale.</p>
+  <p>Borrowing again from James R. Chiles, big systems live at the "technology frontier", where two forces meet. <b>High interactive complexity</b>: so many hidden linkages that operators' mental models are wrong, and their instinctive fixes can make things worse. <b>Tight coupling</b>: a failure in one part shifts load and delay onto its neighbors, making their failure more likely, and so on to collapse. Every antipattern on this page and the <a href="ch04b-antipatterns-scale.html">next</a> creates, accelerates or multiplies cracks. Faults will happen; what matters is what happens after.</p>
+  <div class="cardgrid" id="ap"></div>
+</section>
+
+<section id="integration" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Integration points: the number-one killer</h2></div>
+  <p>Almost every project is an integration project. Context diagrams look like a <b>butterfly</b> (one system, many feeds in and out, about 2N connections) or a <b>spiderweb</b> (many services, up to N² connections). One retailer's site needed a dedicated integration project manager and a database just to list its feeds, and every synchronous feed caused at least one outage. Every socket, process, pipe or remote call can and will hang.</p>
+  <h3>Fast failures and slow failures at the socket</h3>
+  <p>TCP opens a connection with a three-way handshake. If nobody listens on the port, a reset comes back in milliseconds: a <b>fast failure</b>, easy to handle. The trouble is the <b>slow failures</b>. Pick a scenario.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Scenario"><button data-t="ok" aria-pressed="true">Healthy</button><button data-t="rst" aria-pressed="false">Nobody listening</button><button data-t="q" aria-pressed="false">Listen queue full</button><button data-t="slow" aria-pressed="false">Accepted, never answers</button></div>
+    <div class="svgbox"><svg id="tSvg" viewBox="0 0 640 230" role="img" aria-label="TCP packets between caller and server"></svg></div>
+    <p id="tTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout"><b class="h">A slow response is worse than no response</b><span>A blocked thread can't serve other work. Default connect timeouts are often minutes and default reads can block forever. When every thread is blocked, the server is, for all practical purposes, down.</span></div>
+</section>
+
+<section id="fiveam" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>The 5 a.m. problem: a firewall that forgets</h2></div>
+  <p>A site of about thirty app servers hung at almost exactly 5 a.m. every day, just as East Coast traffic arrived. Thread dumps showed every thread inside the database driver's socket calls; packet captures showed requests leaving and nothing coming back. The database itself was idle and healthy. Step through the chain.</p>
+  <div class="sheet stepper" id="stF">
+    <div class="svgbox"><svg id="fSvg" viewBox="0 0 640 200" role="img" aria-label="App server, firewall connection table, database"></svg></div>
+    <div id="stFc"></div>
+  </div>
+  <div class="callout blue"><b class="h">Drill through two layers of abstraction</b><span>The fix came from a DBA: the database's dead-connection detection pings each client periodically. It was meant to spot crashed clients; here, the ping simply kept the firewall's "last packet" time fresh. Not every problem can be solved at the layer where it shows up. Packet capture (tcpdump, Wireshark) is how you see what is really on the wire, with permission.</span></div>
+</section>
+
+<section id="http" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>HTTP protocols and vendor libraries</h2></div>
+  <p>JSON over HTTP rides on sockets, so it inherits every problem above, then adds its own. Tap each way a provider can hurt you.</p>
+  <div class="sheet">
+    <div class="fails" id="hf"></div>
+    <div class="detail" id="hfTxt" aria-live="polite"></div>
+  </div>
+  <p>Use a client library with fine-grained control of <b>connect and read timeouts</b>, and treat responses as plain data (maps and lists) until you've checked them, instead of mapping them straight into domain objects. Vendor client libraries deserve extra suspicion: they are ordinary code, often closed, and full of blocking. A classic trap is a library that calls your callback while holding its own lock; if your code takes another lock in a different order, you get a deadlock you cannot see.</p>
+  <pre class="code">// the hidden deadlock in a vendor callback
+thread 1: vendor.lock(A) -&gt; yourCallback() -&gt; lock(B)
+thread 2: yourCode.lock(B) -&gt; vendor.send()  -&gt; lock(A)
+// each holds what the other needs, forever</pre>
+</section>
+
+<section id="chain" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Chain reactions</h2></div>
+  <div class="callout missing"><b class="h">This section is missing from the PDF</b><span>The "Chain Reactions" section was replaced by a browser timeout error page in the source file. This short stand-in is built from how the rest of the book refers to chain reactions, not from the missing text.</span></div>
+  <p>A chain reaction happens <i>within</i> one horizontally scaled layer. Several identical servers share the load behind a load balancer. If one fails, its share moves to the survivors, so each works harder. If the failure is load-related (a leak, a race that shows up under concurrency), the extra load makes the next server more likely to fail, and so on down the line. Remove servers and watch.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn" id="kill">Kill one server</button><button class="btn" id="heal">Reset</button><span class="small">Each server tips over above 100% load.</span></div>
+    <div class="bars" id="cr"></div>
+    <p id="crTxt" class="small" aria-live="polite"></p>
+  </div>
+  <p>Elsewhere the book links this antipattern to <b>blocked threads</b> (which turn a remote failure into a chain reaction) and to <b>Bulkheads</b> as the defense: partition the layer so a chain reaction in one part can't take every caller down.</p>
+</section>
+
+<section id="cascade" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Cascading failures: cracks jump the gap</h2></div>
+  <p>A cascading failure is a crack in one layer that triggers a crack in the layer that calls it. Problems cascade <i>upward</i>. The gap is usually jumped by a resource pool drained by calls that never return, or by integration points without timeouts. It can also go the other way: a caller that retries every error hammers a sick provider harder and harder. Services with high fan-in spread trouble widely. Integration points are the number-one source of cracks; cascading failures are the number-one accelerator. Make the database sick and choose how callers behave.</p>
+  <div class="sheet">
+    <div class="row"><div class="seg" role="group" aria-label="Caller behavior"><button data-c="naive" aria-pressed="true">No timeouts</button><button data-c="retry" aria-pressed="false">Retry every error</button><button data-c="safe" aria-pressed="false">Timeouts + circuit breaker</button></div></div>
+    <div class="lyr" id="lyr"></div>
+    <p id="lyrTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="users" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Users: the seagull on the hood</h2></div>
+  <p>Users are the reason systems exist, and they have a knack for doing the worst thing at the worst time. Capacity is the throughput you can sustain with acceptable performance; beyond it are hard limits: heap memory, sockets (about 64,000 ports per IP address), even closed sockets lingering in TIME_WAIT. Every in-memory <b>session</b> lives on for its timeout after the user's last click, holding everything put in it.</p>
+  <div class="sheet">
+    <label class="rng"><span>New sessions per minute: <b id="sV"></b></span><input type="range" id="s" min="100" max="20000" step="100" value="2000"></label>
+    <label class="rng"><span>Session timeout: <b id="toV"></b> min</span><input type="range" id="to" min="5" max="60" step="5" value="30"></label>
+    <label class="rng"><span>Data kept per session: <b id="kbV"></b> KB</span><input type="range" id="kb" min="5" max="500" step="5" value="50"></label>
+    <div class="row between"><b id="mem"></b><span class="small">heap for sessions: 4 GB</span></div>
+    <div class="gauge" style="height:14px;border-radius:7px;background:var(--paper);border:1px solid var(--line);overflow:hidden"><i id="memBar" style="display:block;height:100%;transition:width .4s,background .4s"></i></div>
+    <p class="small" id="memTxt"></p>
+  </div>
+  <div class="cardgrid" id="uc"></div>
+</section>
+
+<section id="blocked" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Blocked threads: running but doing nothing</h2></div>
+  <p>Managed runtimes rarely crash; instead the process runs happily while every request thread waits for something that will never happen. To the business, "hung" and "crashed" are the same: no revenue. That's why internal monitors need a partner: an <b>external</b> synthetic client that runs real transactions, plus business metrics like "successful logins". Blocked threads gather around resource pools, caches, object registries and calls to other systems, and hangs get more likely with concurrency that developers never test. Try a synchronized cache that calls a slow back end while holding its lock.</p>
+  <div class="sheet">
+    <div class="row"><div class="seg" role="group" aria-label="Cache design"><button data-b="lock" aria-pressed="true">Lock held during fetch</button><button data-b="free" aria-pressed="false">Fetch outside the lock, with timeout</button></div><button class="btn primary" id="bGo">Back end slows down</button></div>
+    <div class="thr" id="thr" aria-label="40 request threads"></div>
+    <p id="bTxt" class="small" aria-live="polite"></p>
+  </div>
+  <div class="callout ok"><b class="h">Defenses</b><span>Use proven concurrency libraries rather than home-made pools and queues. You can't prove the absence of deadlocks, but you can make sure none lasts forever: always use the version of a call that takes a timeout. Be wary of third-party code you cannot see.</span></div>
+</section>
+
+<section id="selfdenial" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Self-denial attacks: your own flash mob</h2></div>
+  <p>Sometimes the system, or the organization around it, attacks itself. A marketing email to "a select few" reaches millions within minutes on deal-hunting sites. One retailer announced the exact minute console preorders opened, with a deep link that bypassed its content delivery network; the site was gone in sixty seconds. A single rogue server can do it too, by hammering a shared lock manager. Choose the right protection for each situation.</p>
+  <div class="sheet"><div class="row between"><h3>Match the defense</h3><span class="score" id="sdScore"></span></div><div class="quiz" id="sdQuiz"></div></div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">10</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Release It! Design and Deploy Production-Ready Software</i>, second edition, by Michael T. Nygard (Pragmatic Bookshelf, 2018). Explanations, examples, code snippets and drawings are original summaries; nothing here is copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch03-stabilize-your-system.html"><span>Previous · Chapter 3</span><b>Stabilize Your System</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch04b-antipatterns-scale.html"><span>Next · Chapter 4b</span><b>Stability Antipatterns II: Scale and Slowness</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('rel:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('rel:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>{if(data[i])f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%'})))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+
+cards('#ap',[{t:'Integration points',c:'pencil',d:'Every remote call is a crack waiting to happen.'},{t:'Chain reactions',c:'pencil',d:'One server\'s failure overloads its peers.'},{t:'Cascading failures',c:'pencil',d:'Failure jumps from provider to caller.'},{t:'Users',c:'pencil',d:'Sessions, expensive users, bots and mobs.'},{t:'Blocked threads',c:'pencil',d:'The proximate cause of most hangs.'},{t:'Self-denial attacks',c:'pencil',d:'Your own marketing as a DDoS.'},{t:'Scaling effects, unbalanced capacities, dogpile, force multiplier, slow responses',c:'d5',d:'All on the next page, Stability Antipatterns II.'}]);
+
+const T={ok:[['SYN','r'],['SYN/ACK','l'],['ACK','r'],['request','r'],['response','l']],rst:[['SYN','r'],['RST','l']],q:[['SYN','r'],['(waiting in listen queue)','x'],['... minutes ...','x']],slow:[['SYN','r'],['SYN/ACK','l'],['ACK','r'],['request','r'],['... no reply, read blocks ...','x']]};
+const TT={ok:'Three packets build the "connection", then data flows. The connection itself is only state in memory at both ends.',rst:'Fast failure: a reset arrives in under ten milliseconds on the same switch. The caller gets an exception and moves on.',q:'The server is swamped and its listen queue fills. The caller\'s thread sits in the kernel until the connection is accepted or times out, which can take minutes.',slow:'Connected and sent, but the server never answers. Without a socket read timeout, the read blocks forever. This is the worst case.'};
+function drawT(k){const s=$('#tSvg');s.innerHTML='';[[90,'caller'],[550,'server']].forEach(([x,t])=>{s.appendChild(el('line',{x1:x,y1:30,x2:x,y2:220,stroke:'var(--muted)','stroke-width':2}));s.appendChild(el('text',{x,y:20,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--ink)'},t))});
+  T[k].forEach(([t,d],i)=>{const y=50+i*36;if(d==='x'){s.appendChild(el('text',{x:320,y:y+4,'text-anchor':'middle','font-size':12,fill:'var(--bad)','font-style':'italic'},t));return}
+    const a=d==='r'?[90,550]:[550,90];const bad=t==='RST';s.appendChild(el('line',{x1:a[0],y1:y,x2:a[1]+(d==='r'?-8:8),y2:y+14,stroke:bad?'var(--mid)':'var(--blue)','stroke-width':2,class:'flow'}));
+    s.appendChild(el('polygon',{points:d==='r'?`${a[1]},${y+15} ${a[1]-10},${y+8} ${a[1]-9},${y+19}`:`${a[1]},${y+15} ${a[1]+10},${y+8} ${a[1]+9},${y+19}`,fill:bad?'var(--mid)':'var(--blue)'}));
+    s.appendChild(el('text',{x:320,y:y-1,'text-anchor':'middle','font-size':11.5,fill:'var(--ink)',class:'t-mono'},t))});
+  $('#tTxt').textContent=TT[k]}
+seg('[data-t]',b=>drawT(b.dataset.t));drawT('ok');
+
+$('#stFc').innerHTML=stepHTML();
+const FS=['Overnight, traffic is tiny. The pool hands out connections last-in, first-out, so the same one connection is reused and 39 sit idle.','The firewall between app and database tracks every connection with a "last packet" time. After an hour idle, it silently drops the 39 from its table.','It sends no reset (security policy suppresses those), so neither end knows. Both still believe the connections are alive.','5 a.m.: traffic ramps up and threads grab the idle connections. Their packets vanish into the firewall. TCP retransmits for 20 to 30 minutes on a write; a read can wait forever.','Eventually even the one good connection is held by a thread stuck elsewhere. Total site hang, on all thirty servers.'];
+stepper('#stF',FS,i=>{const s=$('#fSvg');s.innerHTML='';
+  s.appendChild(el('rect',{x:20,y:30,width:150,height:140,rx:8,fill:'var(--surface)',stroke:'var(--blue)','stroke-width':2}));s.appendChild(el('text',{x:95,y:50,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--ink)'},'App server pool'));
+  s.appendChild(el('rect',{x:245,y:30,width:150,height:140,rx:8,fill:'var(--surface)',stroke:'var(--pencil)','stroke-width':2}));s.appendChild(el('text',{x:320,y:50,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--ink)'},'Firewall table'));
+  s.appendChild(el('rect',{x:470,y:30,width:150,height:140,rx:8,fill:'var(--surface)',stroke:'var(--blue)','stroke-width':2}));s.appendChild(el('text',{x:545,y:50,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--ink)'},'Database'));
+  for(let k=0;k<5;k++){const y=70+k*20;const good=k===0;const dropped=!good&&i>=1;const stuck=!good&&i>=3||good&&i>=4;
+    s.appendChild(el('circle',{cx:50,cy:y,r:6,fill:stuck?'var(--bad)':good?'var(--ok)':'var(--muted)'}));s.appendChild(el('text',{x:62,y:y+4,'font-size':10.5,fill:'var(--muted)',class:'t-mono'},good?'conn 1 (busy)':'conn '+(k+1)+(k===4?' ...40':'')));
+    s.appendChild(el('text',{x:320,y:y+4,'text-anchor':'middle','font-size':10.5,fill:dropped?'var(--bad)':'var(--ink)',class:'t-mono','text-decoration':dropped?'line-through':''},good?'conn 1 · fresh':`conn ${k+1} · ${dropped?'dropped':'idle 0:4'+k}`));
+    s.appendChild(el('circle',{cx:590,cy:y,r:6,fill:'var(--ok)'}));
+    if(i>=3&&!good)s.appendChild(el('line',{x1:170,y1:y,x2:245,y2:y,stroke:'var(--bad)','stroke-width':1.5,'stroke-dasharray':'4 3',class:'flow'}))}
+  s.appendChild(el('text',{x:320,y:192,'text-anchor':'middle','font-size':11,fill:i>=3?'var(--bad)':'var(--muted)'},['02:00 · quiet','03:10 · idle timeout passes','04:00 · nobody was told','05:00 · packets dropped silently','05:05 · site hung'][i]))});
+
+const HF=[['Accepts, never responds','The TCP connection succeeds, then nothing. Only a read timeout saves you.'],['Never reads the request','A large request body fills the provider\'s TCP window, then your buffers; even sending blocks.'],['Weird status code','"418 I\'m a teapot" or "451". Can your client handle a code it doesn\'t know?'],['Wrong content type','An HTML error page where JSON was promised, or an ISP-injected page after a failed DNS lookup.'],['Lies about its format','Says JSON, sends plain text, binaries or music files.']];
+$('#hf').innerHTML=HF.map((h,i)=>`<button data-i="${i}" aria-pressed="${i===0}">${h[0]}</button>`).join('');
+seg('#hf button',b=>{const h=HF[+b.dataset.i];$('#hfTxt').innerHTML=`<h3 class="pencil">${h[0]}</h3><p>${h[1]}</p>`});$('#hfTxt').innerHTML=`<h3 class="pencil">${HF[0][0]}</h3><p>${HF[0][1]}</p>`;
+
+let alive=4;const total=80;
+function drawCR(){const per=alive?total*1.0/alive:0;const data=[];for(let k=0;k<4;k++){const up=k<alive;data.push({l:'server '+(k+1),v:up?Math.min(per/40*100,100):0,c:up?(per>40?'bad':per>30?'mid':'ok'):'line',txt:up?Math.round(per/40*100)+'%':'down'})}
+  bars('#cr',data,100);$('#crTxt').textContent=alive===4?'Four servers at 50% each: comfortable.':alive===0?'The whole layer is gone.':`${alive} left, each now at ${Math.round(per/40*100)}% of capacity. `+(per>40?'Over the edge: the next failure is only a matter of time.':'Survivable, but closer to the edge.')}
+$('#kill').addEventListener('click',()=>{if(alive>0)alive--;drawCR();if(alive>0&&total/alive>40)setTimeout(()=>{alive=Math.max(0,alive-1);drawCR()},900)});$('#heal').addEventListener('click',()=>{alive=4;drawCR()});drawCR();
+
+const LY={naive:[['Users','sick','pages time out'],['Web tier','sick','all threads waiting'],['Order service','sick','pool drained, calls never return'],['Database','sick','failed switch, dropping packets']],
+retry:[['Users','sick','errors'],['Web tier','slow','CPU at 100% logging failures'],['Order service','sick','retrying every error, harder and harder'],['Database','sick','now hammered by retries too']],
+safe:[['Users','','see "order history unavailable", can still shop'],['Web tier','','healthy'],['Order service','slow','breaker open: fails fast with a fallback'],['Database','sick','failed switch, left alone to recover']]};
+const LT={naive:'The database crack climbs every layer: blocked threads in each caller drain its pool until users see nothing.',retry:'An "aggressive" caller assumed errors were transient. As the provider struggled, the caller pounded it harder, using all its CPU to call and log failures.',safe:'Timeouts let callers come back; a circuit breaker stops calling the sick database at all. The crack stays at the bottom.'};
+function drawL(k){$('#lyr').innerHTML=LY[k].map(r=>`<div class="${r[1]}"><b>${r[0]}</b><span class="st">${r[2]}</span></div>`).join('');$('#lyrTxt').textContent=LT[k]}
+seg('[data-c]',b=>drawL(b.dataset.c));drawL('naive');
+
+function mem(){const s=+$('#s').value,t=+$('#to').value,kb=+$('#kb').value;$('#sV').textContent=s.toLocaleString();$('#toV').textContent=t;$('#kbV').textContent=kb;
+  const live=s*t,gb=live*kb/1048576;const pct=gb/4*100;$('#mem').textContent=`${live.toLocaleString()} live sessions ≈ ${gb.toFixed(2)} GB`;$('#memBar').style.width=Math.min(100,pct)+'%';$('#memBar').style.background=pct>100?'var(--bad)':pct>70?'var(--mid)':'var(--ok)';
+  $('#memTxt').textContent=pct>100?'Out of memory. When memory is gone, even the logger may not be able to record the error. Keep less in the session (re-run a search rather than storing results), use weak or soft references for caches, or move sessions off-heap to something like Memcached or Redis.':pct>70?'Getting tight. A traffic spike or a bot that ignores cookies will push you over.':'Comfortable, for now.'}
+['s','to','kb'].forEach(k=>$('#'+k).addEventListener('input',mem));mem();
+cards('#uc',[{t:'Expensive users',c:'mid',d:'Buyers use four or five pages of checkout plus card checks, tax, inventory and shipping calls. You want more of them, so test for them: run load tests at 2, 3 or even 5 times your normal conversion rate.'},{t:'Unwanted users',c:'bad',d:'A misconfigured proxy replayed one customer\'s request faster and faster, without the session cookie, creating a new session each time. Requesting a deep link without cookies is an easy way to flood any session-based app.'},{t:'Screen scrapers and bots',c:'bad',d:'Price-checking robots act like a battalion of clipboard holders in a store aisle. robots.txt only stops the polite ones; blocking by address or user agent, and legal letters, handle the rest.'},{t:'Malicious users and botnets',c:'bad',d:'Attacks mostly target the application, especially sessions. Keep frameworks patched, know your network, and baseline traffic before tuning DDoS protection.'},{t:'Test like a crowd',c:'ok',d:'Scripted tests are too polite. Use fuzzing, property-based tests or simulations with random behavior, and hammer hot deep links.'}]);
+
+let bm='lock';$('#thr').innerHTML=Array(40).fill('<i></i>').join('');
+seg('[data-b]',b=>{bm=b.dataset.b;$$('#thr i').forEach(x=>x.className='');$('#bTxt').textContent=''});
+$('#bGo').addEventListener('click',()=>{const T=$$('#thr i');T.forEach(x=>x.className='');let k=0;const iv=setInterval(()=>{if(k>=40){clearInterval(iv);$('#bTxt').innerHTML=bm==='lock'?'<b class="badc">All 40 threads blocked.</b> One thread holds the cache lock while it waits on the slow back end; every other request needs the same lock to read. The process is running, the server is hung.':'<b class="okc">Still serving.</b> Cache hits never wait. Misses fetch outside the lock and give up after the timeout, returning an error or stale value. A few threads are briefly busy, none forever.';return}
+  T[k].className=bm==='lock'?'b':(k%7===0?'w':'');k++},45)});
+
+quiz('#sdQuiz','#sdScore',[
+ {q:'Marketing plans a coupon email to 10,000 "select" customers',a:0,o:['Talk to marketing; static landing page; send in waves','Shared-nothing servers'],why:'There is no limited distribution. Know it\'s coming, avoid deep links, spread the send.'},
+ {q:'Every server must take one distributed lock to update a hot item',a:1,o:['Bigger email servers','Shared-nothing, or a fallback such as optimistic locking'],why:'A single shared lock manager serializes the whole farm.'},
+ {q:'A big product launch is announced for next Tuesday at 9:00',a:0,o:['Pre-scale capacity before the event','Wait for autoscaling to react'],why:'New machines take minutes to start. Scale up before the surge.'}]);
+quiz('#qQuiz','#qScore',[
+ {q:'A "connection refused" error is one of the more dangerous integration failures.',a:1,why:'It is a fast failure. Slow failures, like a dropped ACK or a silent server, are the dangerous ones.'},
+ {q:'A firewall can silently drop idle connections that both endpoints still think are open.',a:0,why:'That was the 5 a.m. problem.'},
+ {q:'Cascading failures usually travel up through layers via drained resource pools.',a:0,why:'Calls that never return drain the caller\'s pools.'},
+ {q:'A process that is running is a process that is serving users.',a:1,why:'Blocked threads leave a running process doing nothing. Monitor from outside with synthetic transactions.'},
+ {q:'Retrying every error is always the safe choice.',a:1,why:'Blind retries hammer a struggling provider and spread the failure.'}],['True','False']);
+
+})();
+</script>
+</body>
+</html>

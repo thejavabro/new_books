@@ -1,0 +1,534 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LLM Inference</title>
+<meta name="description" content="Most of an LLM&#x27;s lifetime cost is inference. Generating text is memory-bound, so the winning tricks shrink, share or skip the bytes moved per token.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Accelerate companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* AI Engineering Interviews additions */
+.drill{display:flex;flex-direction:column;gap:12px}
+.dq{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--pencil);border-radius:0 10px 10px 0;padding:14px 16px;display:flex;flex-direction:column;gap:10px;align-items:flex-start}
+.dqh{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.dqh b{font-family:var(--display);font-weight:600;font-size:1.02rem;flex:1 1 240px}
+.dn{font-family:var(--mono);font-size:.75rem;color:var(--pencil)}
+.da{font-size:.95rem;display:flex;flex-direction:column;gap:8px;max-width:70ch}
+.da ul{margin:0;padding-left:1.2em}
+pre.code{font-family:var(--mono);font-size:.82rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;margin:0;white-space:pre}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.themebtn{cursor:pointer}
+.tok{display:inline-block;font-family:var(--mono);font-size:.85rem;padding:2px 6px;margin:2px;border-radius:5px;border:1px solid var(--line);background:var(--paper)}
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.kv>div{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--surface);display:flex;flex-direction:column;gap:2px}
+.kv b{font-family:var(--mono);font-size:1.15rem;color:var(--blue)}
+.kv span{font-size:.85rem;color:var(--muted)}
+.missing{border-left:4px solid var(--bad);background:var(--bad-soft);padding:12px 16px;border-radius:0 8px 8px 0}
+.two>*,.three>*{min-width:0} .sheet select{max-width:100%;text-overflow:ellipsis}
+
+/* page */
+
+.ctl2{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">AI Engineering Interviews · visual companion</a><span class="tag">Part II · Chapter 13 of 14</span><button class="tag themebtn" id="themeBtn" type="button">Theme</button></div>
+  <h1>LLM Inference</h1>
+  <p class="lede">Most of an LLM's lifetime cost is inference. Generating text is memory-bound, so the winning tricks shrink, share or skip the bytes moved per token.</p>
+  <nav class="toc" aria-label="Sections"><a href="#phases">Prefill & decode</a><a href="#roofline">Roofline</a><a href="#kv">KV cache</a><a href="#decoding">Decoding</a><a href="#quant">Quantization</a><a href="#spec">Speculative decoding</a><a href="#serving">Serving</a><a href="#drill">Interview drill</a><a href="#check">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="phases" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Two phases, two bottlenecks</h2></div>
+  <p><b>Prefill</b> processes the whole prompt in parallel, fills the KV cache and produces the first token: big matrix multiplies, <b>compute-bound</b>. <b>Decode</b> then generates one token at a time; each step reads all the weights and the growing KV cache to do a tiny amount of math: <b>memory-bandwidth-bound</b>. Users feel prefill as <b>TTFT</b> (time to first token) and decode as <b>TPOT</b> (time per output token). Throughput, and goodput (useful tokens only), measure system capacity.</p>
+  <div class="sheet">
+    <div class="ctl2">
+      <label class="rng"><span>Prompt tokens: <b id="ptV"></b></span><input type="range" id="pt" min="100" max="32000" step="100" value="2000"></label>
+      <label class="rng"><span>Output tokens: <b id="otV"></b></span><input type="range" id="ot" min="10" max="2000" step="10" value="300"></label>
+    </div>
+    <div class="svgbox"><svg id="tlSvg" viewBox="0 0 640 120" role="img" aria-label="Timeline of prefill then decode"></svg></div>
+    <div class="kv" id="tlKV"></div>
+    <p class="small">Rough single-request numbers for an 8B model in BF16 on one H100-class GPU.</p>
+  </div>
+  <div class="callout blue"><b class="h">Triage rule</b><span>High TTFT, fine TPOT → prefill or queueing: shorten prompts, prefix caching, chunked prefill, better scheduling. High TPOT → decode: quantize weights, shrink the KV cache, speculative decoding, tensor parallelism, smaller batch per GPU.</span></div>
+</section>
+
+<section id="roofline" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Arithmetic intensity and the roofline</h2></div>
+  <p><b>Arithmetic intensity</b> = FLOPs ÷ bytes moved. A GPU with peak P FLOP/s and bandwidth B bytes/s is memory-bound below the ridge point P/B (about 300 FLOPs/byte on an H100). Decode with batch size 1 does about 2 FLOPs per 2-byte weight, an intensity near 1. Batching reuses each loaded weight across many requests, sliding you up the roof.</p>
+  <div class="sheet">
+    <label class="rng"><span>Tokens processed per weight load (batch × positions): <b id="bsV"></b></span><input type="range" id="bs" min="0" max="12" value="0"></label>
+    <div class="svgbox"><svg id="rfSvg" viewBox="0 0 640 240" role="img" aria-label="Roofline plot"></svg></div>
+    <p class="small" id="rfTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="kv" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>The KV cache, and how to shrink it</h2></div>
+  <p>Without a cache, every decode step would recompute keys and values for the whole prefix. The <b>KV cache</b> stores them: size = 2 × layers × KV heads × head dim × tokens × bytes, per sequence. At long context and high batch it can exceed the weights. Architecture fixes: <b>GQA</b> (groups of query heads share one KV head), <b>MQA</b> (all share one), <b>MLA</b> (compress K and V into a latent). Runtime fixes: <b>PagedAttention</b> (allocate in blocks, like OS pages, no fragmentation), prefix caching, quantized KV, eviction.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Attention type"><button data-kh="32" aria-pressed="false">MHA (32 KV heads)</button><button data-kh="8" aria-pressed="true">GQA (8)</button><button data-kh="1" aria-pressed="false">MQA (1)</button></div>
+    <div class="ctl2">
+      <label class="rng"><span>Context per sequence: <b id="kcV"></b></span><input type="range" id="kc" min="0" max="7" value="3"></label>
+      <label class="rng"><span>Concurrent sequences: <b id="kbV"></b></span><input type="range" id="kb" min="1" max="128" value="16"></label>
+    </div>
+    <div class="bars" id="kvBars"></div>
+    <p class="small" id="kvTxt" aria-live="polite"></p>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>Contiguous vs paged allocation</h3><div class="seg" role="group" aria-label="Allocator"><button data-pg="c" aria-pressed="true">Pre-allocate max length</button><button data-pg="p" aria-pressed="false">PagedAttention</button></div></div>
+    <div class="svgbox"><svg id="pgSvg" viewBox="0 0 640 130" role="img" aria-label="Memory blocks"></svg></div>
+    <p class="small" id="pgTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="decoding" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Decoding strategies</h2></div>
+  <p>Decoding serves four goals: correctness, diversity, controllability and speed. <b>Greedy</b> takes the top token (deterministic, can loop). <b>Beam search</b> keeps the best B partial sequences (good for translation, bland for chat). Sampling methods reshape and truncate: <b>temperature</b>, <b>top-k</b> (keep k tokens), <b>top-p</b> (keep the smallest set reaching mass p), <b>min-p</b> (keep tokens with at least a fraction of the top token's probability). Plus repetition penalties and constrained decoding for schemas.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Strategy" id="dsBtns"></div>
+    <label class="rng"><span id="dsLab">Parameter</span><input type="range" id="dsR" min="1" max="100" value="50"></label>
+    <div class="bars" id="dsBars"></div>
+    <p class="small" id="dsTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="quant" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Compression: quantization, pruning, distillation</h2></div>
+  <p>Weights in 16-bit take 2 bytes per parameter: a 70B model needs 140 GB, more than one 80 GB GPU. <b>Quantization</b> maps values onto a small grid (INT8, INT4, FP8) with a scale per tensor, channel or group. Outliers stretch the grid and waste resolution, so good methods protect them: <b>GPTQ</b> (layer-wise error-compensating rounding using second-order information), <b>AWQ</b> (scale up channels with large activations before quantizing), <b>SmoothQuant</b> (move activation outliers into weights so both can be INT8). Try it on a toy weight row.</p>
+  <div class="sheet">
+    <div class="ctl2">
+      <label class="rng"><span>Bits: <b id="qbV"></b></span><input type="range" id="qb" min="2" max="8" value="4"></label>
+      <label class="rng"><span>Outlier size: <b id="qoV"></b></span><input type="range" id="qo" min="1" max="20" value="8"></label>
+    </div>
+    <div class="seg" role="group" aria-label="Scale granularity"><button data-qg="t" aria-pressed="true">One scale per row</button><button data-qg="g" aria-pressed="false">Per group of 8</button></div>
+    <div class="svgbox"><svg id="qSvg" viewBox="0 0 640 200" role="img" aria-label="Original and quantized weights"></svg></div>
+    <p class="small" id="qTxt" aria-live="polite"></p>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>Does it fit?</h3><span class="small">weights only, one 80 GB GPU</span></div>
+    <label class="rng"><span>Model size: <b id="fsV"></b></span><input type="range" id="fs" min="1" max="405" value="70"></label>
+    <div class="bars" id="fitBars"></div>
+  </div>
+  <div class="cardgrid" id="compCards"></div>
+</section>
+
+<section id="spec" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Speculative decoding</h2></div>
+  <p>Decode is memory-bound, so checking several tokens costs about the same as generating one. A small <b>draft</b> model proposes k tokens; the big <b>target</b> model scores all of them in one forward pass; tokens are accepted left to right with a rule that keeps the output distribution <b>exactly</b> the target's; at the first rejection a corrected token is sampled. Expected tokens per target pass = (1 − αᵏ⁺¹)/(1 − α), where α is the acceptance rate.</p>
+  <div class="sheet">
+    <div class="ctl2">
+      <label class="rng"><span>Acceptance rate α: <b id="saV"></b></span><input type="range" id="sa" min="10" max="95" value="70"></label>
+      <label class="rng"><span>Draft length k: <b id="skV"></b></span><input type="range" id="sk" min="1" max="10" value="4"></label>
+      <label class="rng"><span>Draft cost vs target: <b id="scV"></b></span><input type="range" id="sc" min="1" max="30" value="5"></label>
+    </div>
+    <div class="row"><button class="btn primary" id="spRun">Simulate one step</button><span class="mono small" id="spLine"></span></div>
+    <div class="kv" id="spKV"></div>
+    <p class="small" id="spTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="serving" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Serving: batching, disaggregation, routing</h2></div>
+  <p><b>Static batching</b> waits for the slowest request in the batch; short requests sit idle and new ones queue. <b>Continuous batching</b> schedules at the iteration level: finished sequences leave and new ones join every step. <b>Chunked prefill</b> splits long prompts so they do not stall everyone's decode. <b>Prefill/decode disaggregation</b> runs the two phases on separate GPU pools sized for each bottleneck, moving the KV cache between them; it pays off at scale with strict latency targets.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Batching"><button data-cb="s" aria-pressed="true">Static batching</button><button data-cb="c" aria-pressed="false">Continuous batching</button></div>
+    <div class="svgbox"><svg id="cbSvg" viewBox="0 0 640 190" role="img" aria-label="GPU slots over time"></svg></div>
+    <p class="small" id="cbTxt" aria-live="polite"></p>
+  </div>
+  <div class="tbl"><table class="t"><thead><tr><th>Framework</th><th>Strengths</th></tr></thead><tbody>
+    <tr><td>vLLM</td><td>PagedAttention, continuous batching, broad model support; the common default</td></tr>
+    <tr><td>SGLang</td><td>RadixAttention prefix reuse, fast structured output, agent workloads</td></tr>
+    <tr><td>TensorRT-LLM</td><td>Peak NVIDIA performance with compiled kernels, FP8</td></tr>
+    <tr><td>TGI</td><td>Production server from Hugging Face</td></tr>
+    <tr><td>llama.cpp / Ollama</td><td>CPU, Apple silicon and laptops; GGUF quantized models</td></tr>
+  </tbody></table></div>
+</section>
+
+<section id="drill" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Interview drill</h2></div>
+  <div id="qa"></div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">10</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b class="blue">Prefill vs decode</b><span>Compute-bound TTFT vs memory-bound TPOT.</span></div>
+    <div><b>Roofline</b><span>Batching raises arithmetic intensity; decode at batch 1 wastes the GPU.</span></div>
+    <div><b class="pencil">KV cache</b><span>GQA/MQA/MLA, paging, prefix reuse, quantized KV.</span></div>
+    <div><b>Quantize</b><span>W4A16 for memory-bound decode; W8A8/FP8 for compute-bound throughput.</span></div>
+    <div><b>Speculate</b><span>Draft k, verify in one pass, same output distribution.</span></div>
+    <div><b class="okc">Serve</b><span>Continuous batching, chunked prefill, disaggregation, routing and cascades.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>AI Engineering Interviews: Over 350 AI Interview Questions and Answers</i> by Mina Ghashami and Ali Torkamani (O'Reilly, 2026). Explanations, model answers, code snippets and drawings are original summaries written for this companion; nothing is copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch12-reasoning-models.html"><span>Previous · Chapter 12</span><b>Reasoning Models</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch14-long-context.html"><span>Next · Chapter 14</span><b>Long Context Modeling</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('aie:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('aie:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle */
+(function(){const b=document.getElementById('themeBtn');if(!b)return;const r=document.documentElement;
+  const saved=store.get('theme',null);if(saved)r.setAttribute('data-theme',saved);
+  function cur(){return r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light')}
+  function lab(){b.textContent=cur()==='dark'?'Light theme':'Dark theme'}lab();
+  b.addEventListener('click',()=>{const n=cur()==='dark'?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n);lab()})})();
+/* interview drill: [{q,a,k}] -> question cards with reveal; k = difficulty tag */
+function drill(sel,list){const r=$(sel);r.classList.add('drill');
+  r.innerHTML=list.map((d,i)=>`<div class="dq"><div class="dqh"><span class="dn">Q${i+1}</span><b>${d.q}</b>${d.k?`<span class="chip">${d.k}</span>`:''}</div><button class="btn" aria-expanded="false">Show a model answer</button><div class="da" hidden>${d.a}</div></div>`).join('');
+  r.querySelectorAll('.dq').forEach(q=>{const b=q.querySelector('button'),a=q.querySelector('.da');b.addEventListener('click',()=>{const o=a.hidden;a.hidden=!o;b.setAttribute('aria-expanded',o);b.textContent=o?'Hide answer':'Show a model answer'})})}
+
+
+function tl(){const P=+$('#pt').value,O=+$('#ot').value;$('#ptV').textContent=P.toLocaleString();$('#otV').textContent=O;
+  const ttft=.03+P*2*8e9/(989e12*.5),tpot=(16e9+P*131072)/(3.35e12*.75);const dec=O*tpot,tot=ttft+dec;const s=$('#tlSvg');s.innerHTML='';const W=580;
+  const pw=Math.max(6,ttft/tot*W);s.appendChild(el('rect',{x:30,y:30,width:pw,height:40,rx:6,fill:'var(--pencil)'}));s.appendChild(el('rect',{x:30+pw,y:30,width:W-pw,height:40,rx:6,fill:'var(--blue)'}));
+  const n=Math.min(40,O);for(let i=1;i<n;i++)s.appendChild(el('line',{x1:30+pw+(W-pw)*i/n,y1:30,x2:30+pw+(W-pw)*i/n,y2:70,stroke:'var(--surface)','stroke-width':1}));
+  s.appendChild(el('text',{x:30,y:22,'font-size':11.5,'font-weight':700,fill:'var(--pencil)'},'prefill (parallel)'));s.appendChild(el('text',{x:610,y:22,'text-anchor':'end','font-size':11.5,'font-weight':700,fill:'var(--blue)'},'decode, one token per step →'));
+  s.appendChild(el('text',{x:30+pw,y:92,'text-anchor':'middle','font-size':11,fill:'var(--ink)'},'▲ first token'));
+  $('#tlKV').innerHTML=`<div><b>${(ttft*1000).toFixed(0)} ms</b><span>TTFT</span></div><div><b>${(tpot*1000).toFixed(1)} ms</b><span>TPOT (${(1/tpot).toFixed(0)} tok/s)</span></div><div><b>${tot.toFixed(1)} s</b><span>end to end</span></div>`}
+['#pt','#ot'].forEach(x=>$(x).addEventListener('input',tl));tl();
+
+function rf(){const b=Math.pow(2,+$('#bs').value);$('#bsV').textContent=b;const I=b;const s=$('#rfSvg');s.innerHTML='';const X=v=>50+Math.log2(v)/12*560,Y=v=>210-Math.log10(v/1e12)/3*190;
+  const peak=989e12,bw=3.35e12,ridge=peak/bw;
+  s.appendChild(el('line',{x1:50,y1:210,x2:620,y2:210,stroke:'var(--line)'}));
+  let d='';for(let i=0;i<=120;i++){const v=Math.pow(2,i/10);d+=(i?'L':'M')+X(v)+','+Y(Math.min(peak,bw*v))}s.appendChild(el('path',{d,fill:'none',stroke:'var(--ink)','stroke-width':2.5}));
+  s.appendChild(el('line',{x1:X(ridge),y1:20,x2:X(ridge),y2:210,stroke:'var(--muted)','stroke-dasharray':'4 4'}));s.appendChild(el('text',{x:X(ridge)+4,y:30,'font-size':11,fill:'var(--muted)'},'ridge ≈ '+Math.round(ridge)));
+  s.appendChild(el('text',{x:X(4),y:Y(bw*4)-10,'font-size':11,fill:'var(--blue)'},'memory-bound'));s.appendChild(el('text',{x:X(1024),y:Y(peak)-8,'font-size':11,fill:'var(--pencil)'},'compute-bound'));
+  const perf=Math.min(peak,bw*I);s.appendChild(el('circle',{cx:X(I),cy:Y(perf),r:8,fill:I<ridge?'var(--blue)':'var(--pencil)'}));
+  for(let k=0;k<=12;k+=2)s.appendChild(el('text',{x:X(Math.pow(2,k)),y:226,'text-anchor':'middle','font-size':10.5,class:'t-mono',fill:'var(--muted)'},Math.pow(2,k)));
+  $('#rfTxt').innerHTML=`Intensity ≈ ${I} FLOPs/byte → attainable ${(perf/1e12).toFixed(0)} TFLOP/s, <b>${(perf/peak*100).toFixed(perf/peak<.01?1:0)}%</b> of peak. ${I<ridge?'Memory-bound: the cores wait on bandwidth. Bigger batches (or fewer bytes, via quantization) help.':'Compute-bound: this is where prefill lives. More batching no longer helps; fewer FLOPs (or FP8) does.'}`}
+$('#bs').addEventListener('input',rf);rf();
+
+let KH=8;function kv(){const ctx=Math.pow(2,+$('#kc').value)*1024,B=+$('#kb').value;$('#kcV').textContent=(ctx/1024)+'K';$('#kbV').textContent=B;
+  const L=32,hd=128;const per=2*L*KH*hd*ctx*2;const tot=per*B;const GB=x=>(x/1e9).toFixed(1);
+  bars('#kvBars',[{l:'Weights (8B, BF16)',v:16,txt:'16.0 GB'},{l:'KV cache',v:tot/1e9,c:'pencil',txt:GB(tot)+' GB'}],Math.max(80,tot/1e9+16));
+  $('#kvTxt').innerHTML=`Per token: ${(2*L*KH*hd*2/1024).toFixed(0)} KB. Per sequence: ${GB(per)} GB. ${tot/1e9+16>80?'<b class="badc">Exceeds one 80 GB GPU</b>: lower batch, shorter context, fewer KV heads or quantize the cache.':'Fits on one 80 GB GPU.'} ${KH===32?'MHA: 4× the cache of GQA-8.':KH===1?'MQA: smallest cache, some quality loss; GQA is the usual compromise.':'GQA is the default in Llama-class models.'}`}
+seg('[data-kh]',b=>{KH=+b.dataset.kh;kv()});['#kc','#kb'].forEach(x=>$(x).addEventListener('input',kv));kv();
+function pg(m){const s=$('#pgSvg');s.innerHTML='';const lens=[5,2,7,3],max=8,cw=18;
+  if(m==='c'){let x=10;lens.forEach((l,i)=>{for(let k=0;k<max;k++){s.appendChild(el('rect',{x:x+k*cw,y:40,width:cw-2,height:40,rx:3,fill:k<l?['var(--d1)','var(--d2)','var(--d3)','var(--d4)'][i]:'var(--bad-soft)',stroke:k<l?'none':'var(--bad)'}))}x+=max*cw+8});
+    $('#pgTxt').innerHTML='Each request reserves room for the maximum length up front. Red slots are reserved but unused: <b>'+Math.round((1-17/32)*100)+'%</b> waste, so fewer requests fit.'}
+  else{const order=[0,1,2,0,3,2,0,2,1,3,2,0,2,3,2,0,2];order.forEach((r,k)=>s.appendChild(el('rect',{x:10+k*cw*1.6,y:40,width:cw*1.6-3,height:40,rx:3,fill:['var(--d1)','var(--d2)','var(--d3)','var(--d4)'][r]})));
+    $('#pgTxt').innerHTML='KV memory is split into fixed-size blocks handed out on demand and tracked by a block table per sequence. Blocks need not be contiguous; waste is at most one partial block per sequence, and shared prefixes can point to the same blocks.'}}
+seg('[data-pg]',b=>pg(b.dataset.pg));pg('c');
+
+const TOK=[['Paris',.52],['the',.16],['a',.1],['France',.08],['located',.06],['beautiful',.04],['banana',.025],['42',.015]];
+const DS={Greedy:{l:'',f:(p)=>[0]},'Top-k':{l:'k = ',f:(p,v)=>{const k=Math.max(1,Math.round(v/100*8));return [...Array(k).keys()]},v:v=>Math.max(1,Math.round(v/100*8))},'Top-p':{l:'p = ',f:(p,v)=>{let c=0,o=[];for(let i=0;i<p.length;i++){if(c<v/100||!o.length){o.push(i);c+=p[i][1]}}return o},v:v=>(v/100).toFixed(2)},'Min-p':{l:'min-p = ',f:(p,v)=>p.map((t,i)=>t[1]>=p[0][1]*v/200?i:-1).filter(i=>i>=0),v:v=>(v/200).toFixed(2)}};
+let dsK='Top-p';$('#dsBtns').innerHTML=Object.keys(DS).map(k=>`<button aria-pressed="${k===dsK}">${k}</button>`).join('');
+function ds(){const v=+$('#dsR').value;const D=DS[dsK];$('#dsR').disabled=dsK==='Greedy';$('#dsLab').innerHTML=dsK==='Greedy'?'No parameter':`${D.l}<b>${D.v(v)}</b>`;const keep=new Set(D.f(TOK,v));const z=TOK.reduce((a,t,i)=>a+(keep.has(i)?t[1]:0),0);
+  bars('#dsBars',TOK.map((t,i)=>({l:t[0],v:keep.has(i)?t[1]/z*100:0,c:keep.has(i)?'blue':'line',txt:keep.has(i)?(t[1]/z*100).toFixed(0)+'%':'cut'})),100);
+  $('#dsTxt').innerHTML=`Prompt: "The capital of France is …". Kept ${keep.size} of ${TOK.length} tokens. ${dsK==='Top-k'?'A fixed k keeps junk when the model is confident and cuts good options when it is unsure.':dsK==='Top-p'?'Top-p adapts the set size to the model\'s confidence.':dsK==='Min-p'?'Min-p scales the cutoff with the top token\'s probability: strict when confident, permissive when not; robust at high temperature.':'Always "Paris": deterministic and right here, but repetitive in open-ended text.'}`}
+$$('#dsBtns button').forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);dsK=b.textContent;ds()}));$('#dsR').addEventListener('input',ds);ds();
+
+const W0=[.12,-.31,.05,.22,-.08,.17,-.26,.09,.03,-.14,.28,-.05,.19,-.22,.11,-.02];let QG='t';
+function qz(){const bits=+$('#qb').value,out=+$('#qo').value;$('#qbV').textContent=bits;$('#qoV').textContent=out+'×';const w=W0.slice();w[5]=.17*out;
+  const lv=Math.pow(2,bits-1)-1;const q=w.map((v,i)=>{const grp=QG==='g'?w.slice(Math.floor(i/8)*8,Math.floor(i/8)*8+8):w;const sc=Math.max(...grp.map(Math.abs))/lv;return Math.round(v/sc)*sc});
+  const err=w.reduce((a,v,i)=>i===5?a:a+Math.abs(v-q[i]),0)/15;const s=$('#qSvg');s.innerHTML='';const mx=Math.max(...w.map(Math.abs));const Y=v=>100-v/mx*85;
+  s.appendChild(el('line',{x1:20,y1:100,x2:620,y2:100,stroke:'var(--line)'}));
+  w.forEach((v,i)=>{const x=30+i*37;s.appendChild(el('rect',{x,y:Math.min(Y(v),100),width:14,height:Math.abs(Y(v)-100)||1,fill:'var(--blue)',opacity:.85}));s.appendChild(el('rect',{x:x+15,y:Math.min(Y(q[i]),100),width:14,height:Math.abs(Y(q[i])-100)||1.5,fill:q[i]===0&&v!==0?'var(--bad)':'var(--pencil)'}))});
+  if(QG==='g')s.appendChild(el('line',{x1:325,y1:10,x2:325,y2:190,stroke:'var(--muted)','stroke-dasharray':'4 4'}));
+  s.appendChild(el('text',{x:20,y:196,'font-size':11,fill:'var(--muted)'},'blue = original · orange = INT'+bits+' · red = rounded to zero'));
+  const zeros=q.filter((v,i)=>v===0&&W0[i]!==0).length;$('#qTxt').innerHTML=`Mean error on normal weights: <b>${err.toFixed(3)}</b>; ${zeros} weights collapsed to zero. ${QG==='t'?'One outlier sets the scale for the whole row, so small weights lose their resolution.':'Per-group scales confine the outlier\'s damage to its own group. INT4 methods use groups of 64 to 128.'}`}
+['#qb','#qo'].forEach(x=>$(x).addEventListener('input',qz));seg('[data-qg]',b=>{QG=b.dataset.qg;qz()});qz();
+function fit(){const N=+$('#fs').value;$('#fsV').textContent=N+'B';bars('#fitBars',[['FP16 / BF16',2],['INT8 / FP8',1],['INT4',.5]].map(([l,b])=>({l,v:N*b,c:N*b<=72?'ok':'bad',txt:(N*b).toFixed(0)+' GB'+(N*b<=72?' ✓':' ✗')})),Math.max(160,N*2))}
+$('#fs').addEventListener('input',fit);fit();
+cards('#compCards',[{t:'W4A16 vs W8A8',c:'d1',d:'W4A16 (4-bit weights, 16-bit activations) cuts bytes moved: best for memory-bound, small-batch decode. W8A8 or FP8 uses fast INT8/FP8 tensor cores: best for compute-bound, high-throughput serving.'},{t:'PTQ vs QAT',c:'d2',d:'Post-training quantization needs only calibration data and minutes; quantization-aware training simulates quantization during training and holds quality at very low bits, at training cost.'},{t:'Pruning',c:'d3',d:'Unstructured (zero individual weights) needs sparse kernels to speed up; structured (remove heads, channels, layers) speeds up anywhere but hurts more and usually needs retraining. 2:4 sparsity is a hardware-supported middle ground.'},{t:'FP8',c:'d4',d:'8-bit floating point (E4M3/E5M2) on Hopper-class GPUs: near-BF16 quality with per-tensor scaling, and roughly twice the throughput.'}]);
+
+function sp(){const a=+$('#sa').value/100,k=+$('#sk').value,c=+$('#sc').value/100;$('#saV').textContent=a.toFixed(2);$('#skV').textContent=k;$('#scV').textContent=Math.round(c*100)+'%';
+  const E=(1-Math.pow(a,k+1))/(1-a),cost=1+k*c,sp=E/cost;
+  $('#spKV').innerHTML=`<div><b>${E.toFixed(2)}</b><span>tokens per target pass</span></div><div><b>${cost.toFixed(2)}</b><span>relative cost per step</span></div><div><b class="${sp<1?'badc':'okc'}">${sp.toFixed(2)}×</b><span>speedup</span></div>`;
+  $('#spTxt').innerHTML=sp<1?'Slower than plain decoding: the draft is too slow or too often wrong. Speculation also helps less at large batch sizes, where decode is no longer memory-bound.':`Best k here: ${[...Array(10).keys()].map(i=>i+1).reduce((b,kk)=>((1-Math.pow(a,kk+1))/(1-a))/(1+kk*c)>((1-Math.pow(a,b+1))/(1-a))/(1+b*c)?kk:b,1)}. Higher α (a draft that matches the target well, like code or repetitive text) means longer drafts pay off.`}
+['#sa','#sk','#sc'].forEach(x=>$(x).addEventListener('input',sp));
+$('#spRun').addEventListener('click',()=>{const a=+$('#sa').value/100,k=+$('#sk').value;let o='';let i=0;for(;i<k;i++){if(Math.random()<a)o+='✓ ';else{o+='✗ → corrected';break}}if(i===k)o+='+ bonus token';$('#spLine').textContent='draft: '+o});sp();
+
+function cb(m){const s=$('#cbSvg');s.innerHTML='';const R=[[0,6],[0,2],[0,9],[0,3],[3,5],[3,2],[6,4],[7,3]];const C=['var(--d1)','var(--d2)','var(--d3)','var(--d4)','var(--d5)','var(--pencil)','var(--ok)','var(--mid)'];const cw=34;
+  for(let t=0;t<=17;t++)s.appendChild(el('text',{x:60+t*cw,y:182,'text-anchor':'middle','font-size':9.5,class:'t-mono',fill:'var(--muted)'},t));
+  for(let sl=0;sl<4;sl++)s.appendChild(el('text',{x:10,y:30+sl*38,'font-size':11,fill:'var(--muted)'},'slot '+(sl+1)));
+  let end=0;
+  if(m==='s'){[[0,1,2,3],[4,5,6,7]].forEach((bt,bi)=>{const st=bi===0?0:9;bt.forEach((r,sl)=>{const L=R[r][1];for(let k=0;k<9;k++){const x=50+(st+k)*cw;s.appendChild(el('rect',{x,y:15+sl*38,width:cw-3,height:26,rx:4,fill:k<L?C[r]:'var(--paper)',stroke:k<L?'none':'var(--line)','stroke-dasharray':'3 3'}))}})});end=18;
+    $('#cbTxt').innerHTML='The batch runs until its longest request (9 steps) finishes. Dashed cells are idle slots; requests 5 to 8 wait in the queue until step 9. Done at step 18.'}
+  else{const free=[0,0,0,0];R.forEach((r,ri)=>{let sl=free.indexOf(Math.min(...free));const st=Math.max(free[sl],r[0]);for(let k=0;k<r[1];k++)s.appendChild(el('rect',{x:50+(st+k)*cw,y:15+sl*38,width:cw-3,height:26,rx:4,fill:C[ri]}));free[sl]=st+r[1]});end=Math.max(...free);
+    $('#cbTxt').innerHTML=`Requests join a slot the moment one frees up (iteration-level scheduling). Same 8 requests finish by step ${end}, with far fewer idle slots and much lower queueing delay.`}}
+seg('[data-cb]',b=>cb(b.dataset.cb));cb('s');
+
+drill('#qa',[
+ {q:'Why is decode memory-bound?',a:'<p>Each step generates one token per sequence, so every weight is loaded from HBM and used for roughly one multiply-add per sequence. A 7B model in FP16 moves 14 GB per step; at 3.35 TB/s that is at least ~4 ms per token, while the arithmetic would take microseconds. The GPU waits on memory. Batching, quantization and speculation raise useful work per byte.</p>'},
+ {q:'What is the single biggest lever for speeding up decode?',a:'<p>Reduce bytes moved per generated token: quantize weights (INT4/INT8/FP8), shrink the KV cache (GQA, KV quantization), and amortize loads over more tokens with batching or speculative decoding. For a single user, weight quantization plus speculative decoding usually gives the largest win.</p>'},
+ {q:'How big does the KV cache get?',a:'<p>2 (K and V) × layers × KV heads × head dim × bytes per token. Llama-2-7B with MHA: 2×32×32×128×2 B = 512 KB per token, so 4K tokens is 2 GB per sequence and 32 sequences is 64 GB, more than the 13 GB of weights. GQA with 8 KV heads cuts that by 4×.</p>'},
+ {q:'How can we deploy a 70B model on a single 80 GB A100?',a:'<p>FP16 weights are 140 GB, so quantize to 4-bit (GPTQ or AWQ, W4A16): about 35 to 40 GB of weights, leaving room for KV cache (quantize it to 8-bit too) and activations. Use an engine with paged KV and continuous batching, keep context and batch modest, and verify quality on your evaluation set.</p>'},
+ {q:'Your model is deployed and 1,000 users hit it. Which system-level optimizations matter most?',a:'<p>Continuous batching (keep the GPU busy), PagedAttention-style KV management (fit more concurrent sequences), and prefix caching for shared system prompts. Then chunked prefill so long prompts do not stall decode, autoscaling and replicas, and request routing or cascades to smaller models for easy queries.</p>'},
+ {q:'70B on 2×A100, TTFT 3 s, TPOT 40 ms. What do you do?',a:'<p>TPOT is fine (25 tok/s), so look at prefill and queueing. Check prompt lengths and enable prefix caching for shared system prompts, tool schemas and few-shot examples; use chunked prefill and fair scheduling; check queue depth and add replicas if saturated; trim retrieved context; consider FP8 or a better attention kernel. Measure TTFT broken into queue time and prefill time first.</p>'},
+ {q:'Can you reduce hallucinations at decode time without changing the model?',a:'<p>Partly: lower temperature or greedy for factual tasks; constrained decoding to valid schemas or allowed entities; contrastive approaches like DoLa (contrast later and earlier layers); self-consistency with abstention when samples disagree; and retrieval grounding with citation checks. These reduce but do not eliminate hallucination.</p>'},
+ {q:'What other acceleration approaches exist beyond a separate draft model?',a:'<p>Self-speculative methods: Medusa adds extra decoding heads to predict several future tokens; EAGLE drafts from the target\'s own hidden features; lookahead decoding uses Jacobi iteration; prompt-lookup copies n-grams from the context (great for edits and RAG); and layer-skipping drafts with early exits of the same model.</p>'},
+ {q:'Key considerations for deploying on phones or laptops?',a:'<p>Memory (weights plus KV must fit in a few GB, so 1 to 8B models at 4-bit), memory bandwidth sets tokens per second, thermal and battery limits, NPU/GPU kernel support (llama.cpp, MLX, Core ML, ONNX/ExecuTorch), small context to keep KV small, and privacy and offline benefits. Often combined with cloud fallback for hard queries.</p>'}]);
+
+quiz('#qQuiz','#qScore',[
+ {q:'TTFT is dominated by…',o:['Prefill','Decode','Tokenization'],a:0,why:'The first token comes out of the prefill pass.'},
+ {q:'Batch-1 decode on an H100 is…',o:['Memory-bound','Compute-bound','Network-bound'],a:0,why:'Intensity ≈ 1, far below the ridge.'},
+ {q:'GQA reduces…',o:['KV cache size','Number of query heads','Vocabulary'],a:0,why:'Query heads share fewer KV heads.'},
+ {q:'Speculative decoding changes the output distribution…',o:['Not at all (exact)','Slightly','Toward the draft model'],a:0,why:'The acceptance rule preserves the target distribution.'},
+ {q:'Best fit for memory-bound single-user decode:',o:['W4A16','W8A8','No quantization'],a:0,why:'Fewer bytes moved per token.'}]);
+
+})();
+</script>
+</body>
+</html>

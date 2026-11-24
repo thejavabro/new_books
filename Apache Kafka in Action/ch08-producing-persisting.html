@@ -1,0 +1,509 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Producing and Persisting Messages</title>
+<meta name="description" content="Follow one record from send() through serializer, partitioner and batch, onto the leader&#x27;s disk as a segment file, and out to the followers until it is committed.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Apache Kafka in Action companion (adapted from the Accelerate companion). Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* theme toggle */
+.themebtn{position:absolute;top:6px;right:max(10px,env(safe-area-inset-right,0px));z-index:5;font-family:var(--mono);font-size:.72rem;padding:5px 10px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--muted)}
+.themebtn:hover{border-color:var(--blue);color:var(--blue)}
+/* code */
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+pre.code code{border:0;padding:0;background:none}
+.missing{border-left:4px solid var(--bad);background:var(--bad-soft);padding:12px 16px;border-radius:0 8px 8px 0}
+
+/* page */
+
+.tree{font-family:var(--mono);font-size:.8rem;display:flex;flex-direction:column;gap:2px}
+.tree button{border:0;background:none;text-align:left;padding:3px 6px;border-radius:4px;overflow-wrap:anywhere;font-family:var(--mono);font-size:.8rem}
+.tree button:hover{background:var(--blue-soft)}
+.tree button[aria-pressed="true"]{background:var(--blue);color:var(--surface)}
+.tree .ind1{padding-left:22px}.tree .ind2{padding-left:44px}
+.fileview{font-family:var(--mono);font-size:.78rem;background:#0f1722;color:#d7e3f0;border-radius:8px;padding:10px 12px;white-space:pre-wrap;overflow-wrap:anywhere;min-height:3em}
+.reps{display:flex;flex-direction:column;gap:8px}
+.rep{display:grid;grid-template-columns:7.5rem minmax(0,1fr) 5rem;gap:8px;align-items:center;font-size:.85rem}
+.rep .cells{display:flex;gap:3px;position:relative}
+.rep .cells i{flex:1;height:24px;border-radius:3px;border:1px solid var(--line);background:var(--paper)}
+.rep .cells i.f{background:var(--blue)}
+.rep .cells i.c{background:var(--ok)}
+.hwmline{font-family:var(--mono);font-size:.78rem}
+.tl{position:relative;height:120px;border-left:1px solid var(--line);border-bottom:1px solid var(--line);margin:4px 0 18px}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Apache Kafka in Action · visual companion</a><span class="tag">Part III · Chapter 8 of 18</span></div>
+  <h1>Producing and Persisting Messages</h1>
+  <p class="lede">Follow one record from send() through serializer, partitioner and batch, onto the leader's disk as a segment file, and out to the followers until it is committed.</p>
+  <nav class="toc" aria-label="Sections"><a href="#pipeline">Producer pipeline</a><a href="#timeouts">Timeouts</a><a href="#broker">Inside the broker</a><a href="#files">Files on disk</a><a href="#segments">Segments and indexes</a><a href="#epoch">Leader epoch</a><a href="#hwm">ISR and high watermark</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="pipeline" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>What happens after produce()</h2></div>
+  <p>Use the official Java client or a librdkafka-based one; other libraries often miss features and optimisations. Whatever the language, calling <code>produce()</code> (or <code>send()</code>) starts the same pipeline, and the library does most of it for you. Step through one record.</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="pSvg" viewBox="0 0 700 230" role="img" aria-label="Producer pipeline from produce call through serializer, partitioner, buffers, sender, broker and callback"></svg></div>
+    <div class="stepper" id="pStep"></div>
+  </div>
+  <pre class="code"><code>from confluent_kafka import Producer
+p = Producer({"bootstrap.servers": "localhost:9092", "acks": "all",
+              "enable.idempotence": True, "partitioner": "murmur2_random"})
+def report(err, msg):
+    print("failed:" if err else "stored at", err or f"{msg.partition()}/{msg.offset()}")
+p.produce("shop.prices", key="tea", value="4", on_delivery=report)
+p.flush()   # wait for outstanding callbacks</code></pre>
+</section>
+
+<section id="timeouts" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Five timeouts, one deadline</h2></div>
+  <p>The producer has several clocks. <code>max.block.ms</code> (60 s) limits how long <code>produce()</code> blocks when the 32 MiB <code>buffer.memory</code> is full. <code>linger.ms</code> waits to fill batches. <code>request.timeout.ms</code> (30 s) waits for each response, then <code>retry.backoff.ms</code> (100 ms) before the retry. Over all of them sits <code>delivery.timeout.ms</code> (2 min): after that the library gives up and raises an error. Simulate a broker outage:</p>
+  <div class="sheet">
+    <label class="rng"><span>Leader unreachable for: <b id="ouV"></b> s</span><input type="range" id="ou" min="0" max="200" value="70"></label>
+    <div class="svgbox"><svg id="toSvg" viewBox="0 0 680 140" role="img" aria-label="Timeline of request attempts during an outage"></svg></div>
+    <p id="toTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout"><b class="h">When the exception comes, don't just resend</b><span>The cluster is probably in trouble. The library's own retries already preserve order (with idempotence). Handle the failure with a pattern such as a circuit breaker instead of hammering the brokers.</span></div>
+</section>
+
+<section id="broker" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Inside the broker: queues, page cache, purgatory</h2></div>
+  <p>A broker's job on a produce request sounds small: receive, check permissions, append, wait for followers, answer. Doing it fast takes a pipeline of thread pools.</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="bSvg" viewBox="0 0 700 220" role="img" aria-label="Network threads, request queue, IO threads, page cache, purgatory, response queue"></svg></div>
+    <div class="stepper" id="bStep"></div>
+  </div>
+  <div class="cardgrid" id="flushCards"></div>
+</section>
+
+<section id="files" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Walk the data directory</h2></div>
+  <p>Each broker keeps everything under its <code>log.dirs</code>. Click any file to see what it holds (contents shortened and illustrative).</p>
+  <div class="sheet two">
+    <div class="tree" id="tree"></div>
+    <div class="stack"><div class="fileview" id="fv"></div><p class="small" id="fvTxt"></p></div>
+  </div>
+</section>
+
+<section id="segments" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Segments and the sparse index</h2></div>
+  <p>A topic splits into partitions, and each partition splits into <b>segments</b>: a <code>.log</code> file of batches plus an <code>.index</code> (offset to byte position) and a <code>.timeindex</code> (timestamp to offset). Each file is named after the first offset in it. A new segment starts when the active one reaches <code>segment.bytes</code> (1 GiB) or <code>segment.ms</code> (7 days). The index is sparse: one entry per <code>index.interval.bytes</code> (4 KiB) of log. Look up an offset:</p>
+  <div class="sheet">
+    <div class="ctrl two">
+      <label class="rng"><span>index.interval.bytes: <b id="iiV"></b></span><input type="range" id="ii" min="0" max="4" value="2"></label>
+      <label class="rng"><span>Find offset: <b id="foV"></b></span><input type="range" id="fo" min="0" max="149" value="97"></label>
+    </div>
+    <div class="svgbox"><svg id="sSvg" viewBox="0 0 700 200" role="img" aria-label="Two segments with sparse index entries and a lookup"></svg></div>
+    <p id="sTxt" aria-live="polite"></p>
+  </div>
+  <div class="cardgrid" id="segCards"></div>
+</section>
+
+<section id="epoch" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>The leader epoch stops zombie leaders</h2></div>
+  <p>Each partition directory has a <code>leader-epoch-checkpoint</code>. The epoch goes up by one with every leader change and travels with replication traffic. A broker that missed the change still believes it leads, but its stale epoch gives it away.</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="eSvg" viewBox="0 0 680 190" role="img" aria-label="Three brokers with leader epochs during a leader change"></svg></div>
+    <div class="stepper" id="eStep"></div>
+  </div>
+</section>
+
+<section id="hwm" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>LEO, high watermark and in-sync replicas</h2></div>
+  <p>Followers fetch every 500 ms (<code>replica.fetch.wait.max.ms</code>) and report their <b>log end offset</b> (LEO). A follower stays <b>in sync</b> if it caught up to the leader's LEO within <code>replica.lag.time.max.ms</code> (30 s) and keeps sending heartbeats. The <b>high watermark</b> is the smallest LEO among the in-sync replicas: everything below it is committed, and only that is visible to consumers. Drive it:</p>
+  <div class="sheet">
+    <div class="row"><button class="btn primary" id="hP">Produce 2 records</button><button class="btn" id="hF1">Follower A fetches</button><button class="btn" id="hF2">Follower B fetches</button><button class="btn" id="hLag">30 s pass without B catching up</button><button class="btn" id="hR">Reset</button></div>
+    <div class="row"><span class="small">min.insync.replicas:</span><div class="seg" role="group" aria-label="min ISR"><button data-mi="1" aria-pressed="false">1</button><button data-mi="2" aria-pressed="true">2</button><button data-mi="3" aria-pressed="false">3</button></div></div>
+    <div class="reps" id="reps"></div>
+    <p id="hTxt" aria-live="polite"></p>
+  </div>
+  <div class="cardgrid" id="isrCards"></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Recap and quick check</h2></div>
+  <div class="recap">
+    <div><b class="blue">Pipeline</b><span>Serializer, partitioner, per-partition buffers, batches per broker, acks, retries, callback.</span></div>
+    <div><b>Timeouts</b><span>delivery.timeout.ms (2 min) caps all retries.</span></div>
+    <div><b class="pencil">Broker</b><span>Network threads, request queue, I/O threads, page cache, purgatory, response queue.</span></div>
+    <div><b>Files</b><span>Checkpoints, partition dirs, segments named by base offset, sparse indexes, -delete dirs.</span></div>
+    <div><b class="okc">HWM</b><span>Min LEO of ISR; consumers read below it; stalls under min ISR.</span></div>
+    <div><b>Leader epoch</b><span>Increments per leader change; stale epochs are ignored.</span></div>
+  </div>
+  <div class="sheet"><div class="row between"><h3>Quick check</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Apache Kafka in Action: From basics to production</i> by Anatoly Zelenin and Alexander Kropp (Manning, 2025). Explanations, examples, code snippets and drawings are original summaries; the figures are redrawn ideas, not copies.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch07-cluster-management.html"><span>Previous · Chapter 7</span><b>Cluster Management</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch09-consuming.html"><span>Next · Chapter 9</span><b>Consuming Messages</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){if(!group)return;group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('kia:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('kia:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* light/dark toggle: follows the system until the reader picks one */
+(function(){const r=document.documentElement;const t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+  const b=document.createElement('button');b.className='themebtn';b.type='button';
+  function lab(){const d=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');b.textContent=d==='dark'?'Light theme':'Dark theme';b.setAttribute('aria-label','Switch to '+(d==='dark'?'light':'dark')+' theme')}
+  b.addEventListener('click',()=>{const d=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');const n=d==='dark'?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n);lab()});
+  lab();document.body.appendChild(b)})();
+
+
+/* pipeline */
+const PN=[[10,90,'produce()','d1'],[110,90,'serializer','d1'],[210,90,'partitioner','d1'],[320,30,'buffer P0','d3'],[320,90,'buffer P1','d3'],[320,150,'buffer P2','d3'],[440,90,'sender (batches)','d1'],[570,90,'leader broker','ok']];
+$('#pStep').innerHTML=stepHTML();
+function drawP(i){const s=$('#pSvg');s.innerHTML='';const on=[[0],[1],[2],[4],[3,4,5],[6,7],[7],[7],[6],[0]][i];
+  PN.forEach(([x,y,t,c],k)=>{const a=on.includes(k);s.appendChild(el('rect',{x,y,width:k>=6?120:k>=3?100:92,height:40,rx:8,fill:a?'var(--blue-soft)':'var(--surface)',stroke:`var(--${c})`,'stroke-width':a?3:1.4}));s.appendChild(el('text',{x:x+(k>=6?60:k>=3?50:46),y:y+25,'text-anchor':'middle','font-size':11.5,'font-weight':600,fill:'var(--ink)'},t))});
+  const ln=(x1,y1,x2,y2,c,cls)=>s.appendChild(el('line',{x1,y1,x2,y2,stroke:`var(--${c})`,'stroke-width':2,class:cls||''}));
+  ln(102,110,110,110,'muted');ln(202,110,210,110,'muted');ln(302,110,320,50,'muted');ln(302,110,320,110,i>=3?'blue':'muted');ln(302,110,320,170,'muted');ln(420,110,440,110,'muted');ln(560,110,570,110,i>=5?'blue':'muted',i===5?'flow':'');
+  if(i===6||i===9)s.appendChild(el('path',{d:'M630,130 C630,210 60,210 56,130',fill:'none',stroke:i===9?'var(--bad)':'var(--ok)','stroke-width':2,'stroke-dasharray':'5 4',class:'flow'}));
+  if(i===7||i===8)s.appendChild(el('path',{d:'M570,100 C540,40 520,40 500,90',fill:'none',stroke:'var(--pencil)','stroke-width':2,'stroke-dasharray':'4 3'}));
+  const lab=['','key "tea" → bytes','hash(key) % 3 = 1','waits in P1\'s buffer','batches for one broker','one request per broker','ack → callback','no ack in time','retry after backoff','give up → exception'][i];if(lab)s.appendChild(el('text',{x:350,y:220,'text-anchor':'middle','font-size':12,'font-weight':700,fill:i===9?'var(--bad)':'var(--pencil)'},lab))}
+stepper('#pStep',['Your code calls <code>produce()</code> with topic, value and optional key and callback.','The <b>serializer</b> turns key and value into bytes (string, JSON, Avro, Protobuf, or your own). Kafka itself never looks inside.','The <b>partitioner</b> picks the partition: hash of the key, or spread out without one. You can force a partition, but rarely should.','The record waits in that partition\'s buffer. All buffers share <code>buffer.memory</code> (32 MiB); batches are cut at <code>batch.size</code> (16 KiB).','Batches for different partitions led by the same broker are grouped into one request to that broker.','The sender ships the request to the leader as soon as it can (or after <code>linger.ms</code>).','With acks, the broker answers. Success calls your callback with partition and offset.','No answer within <code>request.timeout.ms</code>, or an error comes back...','...so the library waits <code>retry.backoff.ms</code> and resends, keeping order thanks to idempotence.','If <code>delivery.timeout.ms</code> runs out, the library stops retrying and reports the error to your code.'],drawP);
+
+/* timeouts */
+function drawTo(){const o=+$('#ou').value;$('#ouV').textContent=o;const s=$('#toSvg');s.innerHTML='';const X=t=>20+t/130*640;
+  s.appendChild(el('line',{x1:20,y1:100,x2:660,y2:100,stroke:'var(--line)'}));[0,30,60,90,120].forEach(t=>s.appendChild(el('text',{x:X(t),y:118,'text-anchor':'middle','font-size':10,fill:'var(--muted)',class:'t-mono'},t+' s')));
+  s.appendChild(el('rect',{x:X(0),y:20,width:X(Math.min(o,130))-20,height:16,fill:'var(--bad-soft)'}));s.appendChild(el('text',{x:X(0)+4,y:32,'font-size':10.5,fill:'var(--bad)'},'leader unreachable'));
+  s.appendChild(el('line',{x1:X(120),y1:14,x2:X(120),y2:104,stroke:'var(--bad)','stroke-width':2,'stroke-dasharray':'4 3'}));s.appendChild(el('text',{x:X(120),y:134,'text-anchor':'middle','font-size':10,fill:'var(--bad)'},'delivery.timeout.ms'));
+  let t=0,n=0,ok=false;while(t<120){n++;const end=t<o?Math.min(t+30,120):t+.02;s.appendChild(el('rect',{x:X(t),y:52,width:Math.max(3,X(end)-X(t)-1),height:30,rx:3,fill:t<o?'var(--mid-soft)':'var(--ok-soft)',stroke:t<o?'var(--mid)':'var(--ok)'}));if(t>=o){ok=true;break}t=end+.1}
+  $('#toTxt').innerHTML=ok?`<b class="okc">Delivered</b> on attempt ${n}. Each failed attempt waited up to 30 s (request.timeout.ms), then 100 ms backoff.`:`<b class="badc">Exception after 120 s.</b> ${n} attempts timed out; the library stops and your error handling takes over.`}
+$('#ou').addEventListener('input',drawTo);drawTo();
+
+/* broker internals */
+$('#bStep').innerHTML=stepHTML();
+const BN=[[10,30,100,'network threads'],[130,30,100,'request queue'],[250,30,100,'I/O threads'],[370,30,110,'page cache'],[370,130,110,'purgatory'],[250,130,100,'response queue'],[10,130,100,'network threads']];
+function drawB(i){const s=$('#bSvg');s.innerHTML='';const on=[[0],[1],[2],[3],[4],[4],[5],[6]][i];
+  BN.forEach(([x,y,w,t],k)=>{const a=on.includes(k);s.appendChild(el('rect',{x,y,width:w,height:46,rx:8,fill:a?'var(--blue-soft)':'var(--surface)',stroke:k===4?'var(--pencil)':'var(--blue)','stroke-width':a?3:1.3}));s.appendChild(el('text',{x:x+w/2,y:y+28,'text-anchor':'middle','font-size':11.5,'font-weight':600,fill:'var(--ink)'},t))});
+  s.appendChild(el('rect',{x:540,y:20,width:150,height:180,rx:10,fill:'var(--paper)',stroke:'var(--d5)','stroke-dasharray':'5 4'}));s.appendChild(el('text',{x:615,y:45,'text-anchor':'middle','font-size':11.5,'font-weight':700,fill:'var(--d5)'},'followers'));s.appendChild(el('text',{x:615,y:110,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},i===5?'fetch, report LEO':'fetching'));
+  const ar=(x1,y1,x2,y2,a)=>s.appendChild(el('line',{x1,y1,x2,y2,stroke:a?'var(--blue)':'var(--line)','stroke-width':a?2.6:1.3,class:a?'flow':''}));
+  ar(110,53,130,53,i===1);ar(230,53,250,53,i===2);ar(350,53,370,53,i===3);ar(425,76,425,130,i===4);ar(480,153,540,110,i===5);ar(370,153,350,153,i===6);ar(250,153,110,153,i===7)}
+stepper('#bStep',['A <b>network thread</b> reads the produce request from the socket and checks the client is allowed to write.','It lands in the <b>request queue</b>. If I/O threads keep up, it waits there only briefly.','An <b>I/O thread</b> appends the batch to the end of the active segment of that partition.','The write goes to the operating system\'s <b>page cache</b>. Flushing to disk is left to the OS.','The pending response parks in <b>purgatory</b>, a waiting room for requests that can\'t be answered yet.','Followers fetch the new data; once every in-sync replica has reported it, the wait is over (for acks=all).','The response goes to the <b>response queue</b>.','A network thread sends the ack back to the producer.'],drawB);
+cards('#flushCards',[{t:'flush.ms and flush.messages',c:'d3',d:'Force fsync after a time or a message count. Both default to the maximum value (for flush.ms, about 300 million years). The authors advise against lowering them: big performance loss, little gain.'},{t:'So place replicas wisely',c:'bad',d:'Durability relies on copies, so replicas must not share a failure. Three brokers as VMs on one host can all die together. Spread brokers and use rack awareness.'}]);
+
+/* file tree */
+const FT=[[0,'kafka1/','Broker 1\'s data directory (one of log.dirs).',''],
+ [1,'meta.properties','Identity of this directory: broker ID, cluster ID, directory ID and metadata version.','version=1\nnode.id=1\ncluster.id=Zk3…\ndirectory.id=qQ…'],
+ [1,'bootstrap.checkpoint','Used by KRaft when the cluster first starts.',''],
+ [1,'__cluster_metadata-0/','The KRaft metadata log partition.',''],
+ [1,'replication-offset-checkpoint','Per partition: offset up to which messages are replicated (the high watermark). Line 1 is the format version, line 2 the number of entries.','0\n3\nshop.prices 0 8\nshop.prices 2 2\nshop.prices 1 2'],
+ [1,'recovery-point-offset-checkpoint','Per partition: offset up to which data is known to be flushed to disk, so recovery after a crash starts there.','0\n3\nshop.prices 0 5\n…'],
+ [1,'log-start-offset-checkpoint','Per partition: the first offset still in the log. It is not always 0, because cleanup removes old data.','0\n3\nshop.prices 0 0\n…'],
+ [1,'cleaner-offset-checkpoint','How far the log cleaner has compacted each partition (chapter 10).','0\n0'],
+ [1,'shop.prices-0/','One directory per partition replica this broker holds.',''],
+ [2,'00000000000000000000.log','The first segment: record batches back to back. Named after its first offset.','baseOffset: 0 lastOffset: 1 count: 2 … position: 0 CreateTime: 1738455138490 size: 82 crc: 1092464612\nbaseOffset: 2 lastOffset: 2 count: 1 … position: 82 …'],
+ [2,'00000000000000000000.index','Sparse map from offset to byte position in the .log file.','offset: 0 position: 0\noffset: 61 position: 4133\noffset: 119 position: 8204'],
+ [2,'00000000000000000000.timeindex','Map from timestamp to offset, used to start reading at a point in time (for example, reset offsets to the start of today).','timestamp: 1738455138490 offset: 0\n…'],
+ [2,'00000000000000000003.log','A newer segment, rolled because of segment.ms or segment.bytes. Its first offset is 3.',''],
+ [2,'00000000000000000003.snapshot','Producer state snapshot at the segment start, used for idempotent producers.',''],
+ [2,'leader-epoch-checkpoint','Pairs of (leader epoch, start offset) for this partition.','0\n1\n0 0'],
+ [2,'partition.metadata','Format version and the topic ID.','version: 0\ntopic_id: q4RDr2lTR8y1Wy6eYUpl6g'],
+ [1,'old.topic-0.3f1c…-delete/','A deleted topic\'s partition: first renamed, then removed after file.delete.delay.ms (1 minute). In that window, the data could still be rescued.','']];
+$('#tree').innerHTML=FT.map((f,i)=>`<button class="ind${f[0]}" data-f="${i}" aria-pressed="${i===4}">${f[1]}</button>`).join('');
+function showF(i){const f=FT[i];$('#fv').textContent=f[3]||'(directory or binary file)';$('#fvTxt').textContent=f[2]}
+seg('#tree button',b=>showF(+b.dataset.f));showF(4);
+
+/* segments + index */
+const II=[1024,2048,4096,8192,16384];
+function drawS(){const ii=II[+$('#ii').value],fo=+$('#fo').value;$('#iiV').textContent=ii/1024+' KiB'+(ii===4096?' (default)':'');$('#foV').textContent=fo;const s=$('#sSvg');s.innerHTML='';
+  const segs=[[0,100],[100,150]];const recB=70;// bytes per record
+  segs.forEach(([a,b],k)=>{const x=20+k*350,w=320;const act=fo>=a&&fo<b;s.appendChild(el('rect',{x,y:60,width:w,height:40,rx:6,fill:act?'var(--blue-soft)':'var(--paper)',stroke:'var(--blue)','stroke-width':act?2.4:1.2}));
+    s.appendChild(el('text',{x,y:52,'font-size':10.5,fill:'var(--ink)',class:'t-mono'},String(a).padStart(20,'0')+'.log'+(k===1?'  (active)':'')));
+    const per=Math.max(1,Math.round(ii/recB));let idx=[];for(let o=a;o<b;o+=per)idx.push(o);
+    idx.forEach(o=>{const px=x+(o-a)/(b-a)*w;s.appendChild(el('line',{x1:px,y1:104,x2:px,y2:122,stroke:'var(--pencil)','stroke-width':1.5}))});
+    s.appendChild(el('text',{x,y:138,'font-size':10.5,fill:'var(--pencil)',class:'t-mono'},`.index: ${idx.length} entries`));
+    if(act){const near=idx.filter(o=>o<=fo).pop();const px1=x+(near-a)/(b-a)*w,px2=x+(fo-a)/(b-a)*w;s.appendChild(el('rect',{x:px1,y:66,width:Math.max(2,px2-px1),height:28,fill:'var(--mid)',opacity:.45}));s.appendChild(el('circle',{cx:px2,cy:80,r:5,fill:'var(--bad)'}));
+      $('#sTxt').innerHTML=`Pick the segment whose base offset is the largest ≤ ${fo} (<code>${String(a).padStart(20,'0')}</code>). Binary-search its index for the closest entry ≤ ${fo}: offset ${near}. Jump to that byte position and scan forward ${fo-near} record(s) (yellow). A smaller interval means shorter scans but a bigger index; 4 KiB is a good trade-off.`}});
+  s.appendChild(el('text',{x:350,y:180,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},'orange ticks = index entries (about one per index.interval.bytes of log)'))}
+['ii','fo'].forEach(i=>$('#'+i).addEventListener('input',drawS));drawS();
+cards('#segCards',[{t:'Why segments?',c:'d1',d:'A partition can grow to terabytes. Splitting it into files makes cleanup cheap: whole old segments can be dropped (chapter 10).'},{t:'Roll a segment',c:'d2',d:'kafka-configs.sh --alter --topic shop.prices --add-config segment.ms=60000 makes new segments every minute (for experiments only). Broker-wide defaults: log.segment.bytes, log.roll.ms.'},{t:'Batches carry overhead',c:'d3',d:'Each batch has about 60 bytes of metadata (offsets, timestamps, CRC). With tiny messages, batching is what keeps that overhead small. kafka-dump-log.sh --files … --print-data-log shows it all.'}]);
+
+/* leader epoch */
+$('#eStep').innerHTML=stepHTML();
+function drawE(i){const s=$('#eSvg');s.innerHTML='';const st=[[[1,'follower'],[2,'follower'],[3,'leader']],[[1,'follower'],[2,'leader'],[3,'cut off']],[[1,'follower'],[2,'leader'],[3,'thinks: leader']],[[1,'follower'],[2,'leader'],[3,'follower']],[[1,'follower'],[2,'follower'],[3,'leader']]][i];const ep=[[0,0,0],[1,1,0],[1,1,0],[1,1,1],[2,2,2]][i];
+  st.forEach(([b,r],k)=>{const x=30+k*220;const L=r==='leader',Z=r.startsWith('thinks')||r==='cut off';s.appendChild(el('rect',{x,y:40,width:180,height:70,rx:10,fill:L?'var(--ok-soft)':Z?'var(--bad-soft)':'var(--surface)',stroke:L?'var(--ok)':Z?'var(--bad)':'var(--d5)','stroke-width':2}));
+    s.appendChild(el('text',{x:x+90,y:66,'text-anchor':'middle','font-size':12.5,'font-weight':700,fill:'var(--ink)'},'broker '+b+' · '+r));s.appendChild(el('text',{x:x+90,y:92,'text-anchor':'middle','font-size':12,fill:'var(--muted)',class:'t-mono'},'epoch '+ep[k]))});
+  if(i===2){s.appendChild(el('line',{x1:470,y1:125,x2:120,y2:125,stroke:'var(--bad)','stroke-width':2,'stroke-dasharray':'5 4'}));s.appendChild(el('text',{x:300,y:150,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--bad)'},'epoch 0 < 1: ignored'))}}
+stepper('#eStep',['Partition 2 is led by broker 3. Every replica records leader epoch 0.','Broker 3 becomes unreachable. The controller elects broker 2; the epoch becomes 1.','Broker 3 comes back unaware and still acts as leader, sending data tagged with epoch 0. Everyone else knows epoch 1, so its messages are ignored. No split brain.','It soon learns the current leader and epoch and becomes a follower.','The preferred leader check (every 5 minutes, leader.imbalance.check.interval.seconds) or kafka-leader-election.sh hands leadership back to broker 3: epoch 2.'],drawE);
+
+/* HWM sim */
+let H,minI=2;function hReset(){H={L:4,A:4,B:4,inB:true,lagB:false};drawH('Everyone is at offset 4.')}
+function isr(){return 1+1+(H.inB?1:0)}
+function hwm(){const l=[H.L,H.A];if(H.inB)l.push(H.B);return isr()<minI?H.hw:Math.min(...l)}
+function drawH(msg){if(H.hw==null)H.hw=4;const nh=hwm();H.hw=Math.max(H.hw,nh);const hw=H.hw,max=Math.max(16,H.L+2);
+  const row=(n,leo,role,inS)=>`<div class="rep"><span><b>${n}</b><br><span class="small">${role}${inS?'':' · <span class="badc">out of ISR</span>'}</span></span><span class="cells">${[...Array(max)].map((_,k)=>`<i class="${k<leo?(k<hw?'c':'f'):''}"></i>`).join('')}</span><span class="mono small">LEO ${leo}</span></div>`;
+  $('#reps').innerHTML=row('Leader',H.L,'leader',true)+row('Follower A',H.A,'follower',true)+row('Follower B',H.B,'follower',H.inB)+`<div class="hwmline">High watermark = <b>${hw}</b> · consumers can read offsets 0–${hw-1} · ISR size ${isr()} (min ${minI})</div>`;
+  $('#hTxt').innerHTML=(msg||'')+(isr()<minI?' <b class="badc">ISR below min.insync.replicas: the HWM is frozen, so consumers see nothing new and acks=all producers get errors.</b>':'')}
+$('#hP').addEventListener('click',()=>{H.L+=2;drawH('The leader appended 2 records; its LEO moved, but the HWM waits for the in-sync followers (blue = written, green = committed).')});
+$('#hF1').addEventListener('click',()=>{H.A=H.L;drawH('Follower A fetched with its LEO and caught up.')});
+$('#hF2').addEventListener('click',()=>{H.B=H.L;let m='Follower B caught up.';if(!H.inB){H.inB=true;m+=' Having reached the leader\'s LEO, it rejoins the ISR.'}drawH(m)});
+$('#hLag').addEventListener('click',()=>{if(H.B<H.L&&H.inB){H.inB=false;drawH('B lagged for replica.lag.time.max.ms, so the leader dropped it from the ISR. The HWM can jump forward and consumers catch up.')}else drawH(H.inB?'B is not behind; nothing happens.':'B is already out of the ISR.')});
+seg('[data-mi]',b=>{minI=+b.dataset.mi;drawH('')});$('#hR').addEventListener('click',()=>{H=null;hReset()});hReset();
+cards('#isrCards',[{t:'Slow ISR slows everyone',c:'mid',d:'While a lagging replica is still in sync, it holds the HWM back, so consumers wait. After 30 s it is dropped and the HWM leaps.'},{t:'Don\'t set the lag to 2 s',c:'bad',d:'Normal asynchronous jitter would make replicas flap in and out of the ISR, creating controller overhead and risking dropping below min ISR, which blocks producers and consumers.'},{t:'Eligible leader replicas (ELR)',c:'d5',d:'When the ISR is below min ISR, replicas that have caught up to the HWM are still eligible to lead. That guarantees nothing already consumed is lost in a failure.'},{t:'Followers are simple',c:'d2',d:'If a fetch response gets lost, the follower just asks again from the same offset. The leader tracks no delivery state, which keeps it simple.'}]);
+
+quiz('#qQuiz','#qScore',[
+ {q:'Which component chooses the partition?',o:['Serializer','Partitioner','Broker'],a:1,why:'It runs in the producer library, after serialization.'},
+ {q:'After how long does the producer give up by default?',o:['30 s','60 s','2 min'],a:2,why:'delivery.timeout.ms is 120,000 ms.'},
+ {q:'What is 00000000000000000003.log?',o:['The 3rd segment','A segment starting at offset 3'],a:1,why:'Segment files are named after their base offset.'},
+ {q:'Leader LEO 10, in-sync followers at 8 and 9. HWM?',o:['8','9','10'],a:0,why:'The smallest LEO among the ISR.'},
+ {q:'A broker sends data with an outdated leader epoch. Result?',o:['Accepted','Ignored'],a:1,why:'That is exactly how zombie leaders are kept out.'}]);
+
+})();
+</script>
+</body>
+</html>
