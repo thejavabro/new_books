@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Managing Transactions with Sagas</title>
+<meta name="description" content="When each service owns its own database, one business transaction becomes many local ones. A saga strings them together with messages and undoes completed steps with compensating transactions when something fails.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Microservices Patterns companion. Blueprint grid paper: blue = services and structure, orange = messages and data in flight, green = success, red = failure.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+button.theme{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted)}
+button.theme:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-family:var(--mono);font-size:.8rem;line-height:1.5;overflow-x:auto;white-space:pre;max-width:100%}
+.code .k{color:var(--d5)} .code .s{color:var(--d2)} .code .c{color:var(--muted);font-style:italic}
+.pattern{border:1px solid var(--line);border-left:4px solid var(--d2);background:var(--surface);border-radius:0 10px 10px 0;padding:12px 16px;display:flex;flex-direction:column;gap:4px}
+.pattern .eyebrow{color:var(--d2)}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:5em;max-height:14em;overflow:auto;display:flex;flex-direction:column;gap:2px}
+.chip.on{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+button.chip{cursor:pointer}
+
+/* page */
+
+.sim{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px}
+@media (max-width:640px){.sim{grid-template-columns:repeat(3,minmax(0,1fr))}}
+.stp{border:1.5px solid var(--line);border-radius:8px;padding:8px;font-size:.8rem;display:flex;flex-direction:column;gap:2px;background:var(--surface);transition:all .3s;min-width:0;overflow-wrap:anywhere}
+.stp b{font-family:var(--mono);font-size:.72rem}
+.stp.done{border-color:var(--ok);background:var(--ok-soft)}
+.stp.fail{border-color:var(--bad);background:var(--bad-soft)}
+.stp.comp{border-color:var(--mid);background:var(--mid-soft)}
+.stp .k{font-size:.7rem;color:var(--muted);font-family:var(--mono)}
+.tt{display:flex;flex-wrap:wrap;gap:6px}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Microservices Patterns · visual companion</a><span class="tag">Chapter 4 of 13 · Business logic and data</span><button class="theme" type="button">Dark theme</button></div>
+  <h1>Managing Transactions with Sagas</h1>
+  <p class="lede">When each service owns its own database, one business transaction becomes many local ones. A saga strings them together with messages and undoes completed steps with compensating transactions when something fails.</p>
+  <nav class="toc" aria-label="Sections"><a href="#why">Why not 2PC</a><a href="#saga">Saga simulator</a><a href="#coord">Choreography vs orchestration</a><a href="#fsm">State machine</a><a href="#isolation">Lack of isolation</a><a href="#counter">Countermeasures</a><a href="#impl">Order Service design</a><a href="#check">Quick check</a></nav>
+</header>
+
+<section id="why" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Why distributed transactions don't fit</h2></div>
+  <p>In the monolith, <code>createOrder()</code> runs in one ACID transaction. Now the data it touches lives in the Order, Consumer, Kitchen and Accounting services, each with a private database. The textbook answer is a <b>distributed transaction</b>: the X/Open XA standard and two-phase commit (2PC). The book rejects it for three reasons.</p>
+  <div class="cardgrid" id="no2pc"></div>
+  <div class="sheet">
+    <div class="row"><span>Participants in the 2PC transaction</span></div>
+    <label class="rng"><span>Each participant up <b id="p2V"></b> of the time; participants: <b id="p2N"></b></span><input type="range" id="p2n" min="2" max="8" value="4"></label>
+    <div class="bars" id="p2Bars"></div>
+    <p class="small">With 2PC, every participant must be up for the transaction to commit, so availability is the product of all of them. Eric Brewer's CAP theorem says that under a network partition you choose consistency or availability; modern architects usually choose availability.</p>
+  </div>
+</section>
+
+<section id="saga" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>A saga: local transactions plus compensations</h2></div>
+  <p>The <b>Saga pattern</b> maintains data consistency across services with a sequence of <b>local transactions</b>, each in one service, each triggered by the completion of the previous one via a message. Every step commits immediately, so a saga can't simply roll back: if a later step fails, earlier steps are undone by <b>compensating transactions</b>, run in reverse order. Here is the Create Order Saga. Choose a step that fails and run it.</p>
+  <div class="sheet">
+    <div class="row"><span>Make this step fail:</span><select id="failAt" aria-label="Failing step"><option value="-1">nothing, happy path</option><option value="1">2 · verify consumer</option><option value="3" selected>4 · authorize card</option></select><button class="btn primary" id="run">Run saga</button></div>
+    <div class="sim" id="sim"></div>
+    <div class="log" id="sagaLog" aria-live="polite"></div>
+  </div>
+  <p class="small">Steps that are only checks (verify consumer, authorize card) or that come after the last possible failure need no compensation. Only <i>createOrder</i> and <i>createTicket</i> have undo actions: <i>rejectOrder</i> and <i>rejectTicket</i>.</p>
+</section>
+
+<section id="coord" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Coordinating a saga: choreography or orchestration</h2></div>
+  <p>Someone has to decide which step runs next. With <b>choreography</b> there is no central coordinator: each participant subscribes to the others' events and reacts. With <b>orchestration</b> a saga orchestrator object sends command messages to participants and reacts to their replies. Compare the happy path of the same saga.</p>
+  <div class="sheet stepper" id="coStep">
+    <div class="seg" role="group" aria-label="Coordination"><button data-co="ch" aria-pressed="true">Choreography</button><button data-co="or" aria-pressed="false">Orchestration</button></div>
+    <div class="svgbox"><svg id="coSvg" viewBox="0 0 640 300" role="img" aria-label="Sequence diagram of the Create Order saga"></svg></div>
+  </div>
+  <div class="tbl"><table class="t"><thead><tr><th></th><th>Choreography</th><th>Orchestration</th></tr></thead><tbody>
+    <tr><th>Good</th><td>Simple for small sagas; loose coupling, since participants only subscribe to events.</td><td>Simpler dependencies (no cycles); less coupling between participants; business logic of the saga lives in one place; can be modeled as a state machine.</td></tr>
+    <tr><th>Bad</th><td>Hard to understand: the logic is spread across services. Risk of cyclic dependencies. Each participant must subscribe to everything that affects it.</td><td>Risk of centralizing too much business logic in the orchestrator, leaving dumb services. Keep it to sequencing.</td></tr>
+  </tbody></table></div>
+  <div class="callout blue"><b class="h">The book's advice</b><span>Use choreography for simple sagas, orchestration for anything complex. And publish events or send commands reliably: the participant must update its database and send the message atomically (the transactional outbox from chapter 3).</span></div>
+</section>
+
+<section id="fsm" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Orchestrators as state machines</h2></div>
+  <p>An orchestrator is naturally a state machine: states plus transitions triggered by replies from participants. That makes it easy to design, implement and test. Click a reply to fire a transition.</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="fsmSvg" viewBox="0 0 640 260" role="img" aria-label="Create Order saga orchestrator state machine"></svg></div>
+    <div class="row" id="fsmBtns"></div>
+    <p id="fsmTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="isolation" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>ACD, not ACID: the lack of isolation</h2></div>
+  <p>A saga is atomic (all steps run or all are compensated), consistent and durable, but <b>not isolated</b>: other sagas see its intermediate results. That causes the classic anomalies. Watch a <b>lost update</b>.</p>
+  <div class="sheet stepper" id="luStep">
+    <div class="svgbox"><svg id="luSvg" viewBox="0 0 640 200" role="img" aria-label="Two sagas interleaving"></svg></div>
+  </div>
+  <div class="cardgrid" id="anoms"></div>
+</section>
+
+<section id="counter" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Countermeasures, and the anatomy of a saga</h2></div>
+  <p>Lars Frank and Torben Zahle's 1998 paper names <b>countermeasures</b> that reduce or remove anomalies. To apply them, first classify each saga step. <b>Compensatable</b> transactions can be rolled back. The <b>pivot</b> transaction is the go/no-go point: once it commits, the saga runs to completion. <b>Retriable</b> transactions follow the pivot and are guaranteed to succeed eventually. Classify the Create Order Saga's steps.</p>
+  <div class="sheet"><div class="row between"><h3>What kind of step?</h3><span class="score" id="ctScore"></span></div><div class="quiz" id="ctQuiz"></div></div>
+  <div class="cardgrid" id="cms"></div>
+</section>
+
+<section id="impl" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Inside the Order Service</h2></div>
+  <p>The book builds the Create Order Saga with the Eventuate Tram Saga framework. The <b>OrderService</b> creates the Order and the saga instance in one transaction. The <b>CreateOrderSaga</b> is a singleton that defines the state machine with a small DSL; per-run state lives in a <b>CreateOrderSagaState</b> object persisted by the framework. Proxy classes such as <b>KitchenServiceProxy</b> describe each participant's command channel. <b>OrderCommandHandlers</b> handle the commands that the saga sends to Order Service itself. Here is the idea, in pseudo-Java of our own.</p>
+  <pre class="code"><span class="c">// a saga definition reads like the steps table</span>
+<span class="k">saga</span> = step()
+    .withCompensation(order.reject)                       <span class="c">// 1 createOrder() happened in OrderService</span>
+  .step()
+    .invokeParticipant(consumer.validate)                 <span class="c">// 2</span>
+  .step()
+    .invokeParticipant(kitchen.createTicket)              <span class="c">// 3</span>
+    .onReply(TicketCreated, state::rememberTicketId)
+    .withCompensation(kitchen.rejectTicket)
+  .step()
+    .invokeParticipant(accounting.authorize)              <span class="c">// 4 pivot</span>
+  .step()
+    .invokeParticipant(kitchen.approveTicket)             <span class="c">// 5 retriable</span>
+  .step()
+    .invokeParticipant(order.approve)                     <span class="c">// 6 retriable</span>
+  .build();</pre>
+  <div class="sheet stepper" id="msgStep">
+    <div class="svgbox"><svg id="msgSvg" viewBox="0 0 640 300" role="img" aria-label="Messages between saga orchestrator, broker and Kitchen Service"></svg></div>
+  </div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="quiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Microservices Patterns: With examples in Java</i> by Chris Richardson (Manning, 2019). Explanations, code snippets, diagrams and simulations are original summaries written for this companion; nothing is copied from the book's figures or listings.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch03-interprocess-communication.html"><span>Previous · Chapter 3</span><b>Interprocess Communication</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch05-business-logic.html"><span>Next · Chapter 5</span><b>Designing Business Logic</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('mp:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('mp:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: button.theme switches light/dark, remembered per viewer */
+(function(){const r=document.documentElement;const t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+  const cur=()=>r.getAttribute('data-theme')||(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+  const lab=()=>$$('button.theme').forEach(x=>x.textContent=cur()==='dark'?'Light theme':'Dark theme');lab();
+  $$('button.theme').forEach(b=>b.addEventListener('click',()=>{const n=cur()==='dark'?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n);lab()}))})();
+/* drawing helpers */
+function box(svg,x,y,w,h,t,c,o){o=o||{};const g=el('g',{class:o.cls||''});c=c||'blue';
+  g.appendChild(el('rect',{x,y,width:w,height:h,rx:o.rx!=null?o.rx:8,fill:o.fill||'var(--surface)',stroke:`var(--${c})`,'stroke-width':o.sw||1.8,'stroke-dasharray':o.dash||''}));
+  const L=String(t).split('\n');const fs=o.fs||12.5;L.forEach((l,i)=>g.appendChild(el('text',{x:x+w/2,y:y+h/2+(i-(L.length-1)/2)*(fs+3)+fs*.36,'text-anchor':'middle','font-size':fs,'font-weight':o.fw||600,fill:o.tc||'var(--ink)'},l)));
+  svg.appendChild(g);return g}
+function arrow(svg,x1,y1,x2,y2,c,o){o=o||{};c=c||'muted';const g=el('g',{class:o.cls||''});const dx=x2-x1,dy=y2-y1,L=Math.hypot(dx,dy)||1,ux=dx/L,uy=dy/L,px=-uy,py=ux;
+  g.appendChild(el('line',{x1,y1,x2:x2-ux*8,y2:y2-uy*8,stroke:`var(--${c})`,'stroke-width':o.sw||2,'stroke-dasharray':o.dash||'',class:o.flow?'flow':''}));
+  g.appendChild(el('polygon',{points:`${x2},${y2} ${x2-ux*10+px*5},${y2-uy*10+py*5} ${x2-ux*10-px*5},${y2-uy*10-py*5}`,fill:`var(--${c})`}));
+  if(o.t)g.appendChild(el('text',{x:(x1+x2)/2+(o.dx||0),y:(y1+y2)/2-6+(o.dy||0),'text-anchor':'middle','font-size':o.fs||11,fill:`var(--${o.tcol||c})`,class:o.mono?'t-mono':''},o.t));
+  svg.appendChild(g);return g}
+function txt(svg,x,y,t,o){o=o||{};const e=el('text',{x,y,'text-anchor':o.a||'middle','font-size':o.fs||11,'font-weight':o.fw||400,fill:`var(--${o.c||'muted'})`,class:o.mono?'t-mono':''},t);svg.appendChild(e);return e}
+/* sequence diagram: lanes [{t,c}], msgs [{f,t,l,c,dash}] (f===t draws a self-call); returns apply(i) showing messages 0..i */
+function seqDiagram(svgSel,lanes,msgs,opt){opt=opt||{};const svg=typeof svgSel==='string'?$(svgSel):svgSel;const W=opt.w||640;const n=lanes.length;const gap=W/n;const top=opt.top||50,dy=opt.dy||30;
+  const H=top+msgs.length*dy+14;svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.innerHTML='';
+  const X=i=>gap/2+i*gap;
+  lanes.forEach((l,i)=>{svg.appendChild(el('line',{x1:X(i),y1:38,x2:X(i),y2:H-4,stroke:'var(--line)','stroke-dasharray':'4 4'}));const w=Math.min(gap-8,140);box(svg,X(i)-w/2,4,w,32,l.t,l.c||'blue',{fs:11})});
+  const rows=msgs.map((m,k)=>{const y=top+10+k*dy;const g=el('g',{class:'fade'});const c=`var(--${m.c||'blue'})`;
+    if(m.f===m.t){const x=X(m.f);g.appendChild(el('path',{d:`M${x},${y-7} h22 v12 h-14`,fill:'none',stroke:c,'stroke-width':1.8}));g.appendChild(el('polygon',{points:`${x},${y+5} ${x+9},${y+1} ${x+9},${y+9}`,fill:c}));
+      g.appendChild(el('text',{x:x+(m.f===n-1?-6:28),y:y+3,'text-anchor':m.f===n-1?'end':'start','font-size':10.5,fill:'var(--ink)'},m.l))}
+    else{const a=X(m.f),b=X(m.t),d=b>a?1:-1;g.appendChild(el('line',{x1:a,y1:y,x2:b-d*8,y2:y,stroke:c,'stroke-width':1.8,'stroke-dasharray':m.dash?'5 4':''}));
+      g.appendChild(el('polygon',{points:`${b},${y} ${b-d*9},${y-4.5} ${b-d*9},${y+4.5}`,fill:c}));
+      g.appendChild(el('text',{x:(a+b)/2,y:y-5,'text-anchor':'middle','font-size':10.5,fill:'var(--ink)'},m.l))}
+    svg.appendChild(g);return g});
+  return function(i){rows.forEach((g,k)=>g.classList.toggle('off',k>i))}}
+/* simple tabs: buttons [data-tab] inside .seg, panels [data-panel] */
+function tabs(rootSel){const r=$(rootSel);const bs=r.querySelectorAll('[data-tab]');bs.forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);r.querySelectorAll('[data-panel]').forEach(p=>p.hidden=p.dataset.panel!==b.dataset.tab)}))}
+function logLine(sel,html,c){const r=$(sel);const d=document.createElement('div');d.innerHTML=html;if(c)d.style.color=`var(--${c})`;r.appendChild(d);r.scrollTop=r.scrollHeight}
+
+
+cards('#no2pc',[{t:'Not supported everywhere',c:'bad',d:'Many modern technologies, such as NoSQL databases (MongoDB, Cassandra) and brokers like RabbitMQ and Kafka, don\'t support XA.'},{t:'Synchronous IPC',c:'bad',d:'2PC is a form of synchronous communication, which reduces availability.'},{t:'Availability',c:'bad',d:'All participants must be available to commit. More participants, lower availability.'}]);
+function p2(){const n=+$('#p2n').value,a=.995;$('#p2N').textContent=n;$('#p2V').textContent='99.5%';bars('#p2Bars',[{l:'One local transaction',v:99.5,c:'ok',txt:'99.50%'},{l:`2PC across ${n}`,v:Math.pow(a,n)*100,c:'bad',txt:(Math.pow(a,n)*100).toFixed(2)+'%'}],100)}
+$('#p2n').addEventListener('input',p2);p2();
+
+/* saga simulator */
+const STEPS=[['Order','createOrder()','rejectOrder()','Create order in APPROVAL_PENDING'],['Consumer','verifyConsumerDetails()',null,'Check the consumer may order'],['Kitchen','createTicket()','rejectTicket()','Create ticket in CREATE_PENDING'],['Accounting','authorizeCreditCard()',null,'Authorize the card'],['Kitchen','approveTicket()',null,'Ticket becomes AWAITING_ACCEPTANCE'],['Order','approveOrder()',null,'Order becomes APPROVED']];
+function simDraw(st){$('#sim').innerHTML=STEPS.map((s,i)=>`<div class="stp ${st[i]||''}"><span class="k">${i+1} · ${s[0]}</span><b>${st[i]==='comp'?s[2]:s[1]}</b><span>${st[i]==='comp'?'compensated':st[i]==='fail'?'failed':st[i]==='done'?'committed':s[3]}</span></div>`).join('')}
+simDraw([]);let running=false;
+$('#run').addEventListener('click',()=>{if(running)return;running=true;$('#sagaLog').innerHTML='';const f=+$('#failAt').value;const st=[];simDraw(st);let i=0;const seq=[];
+  for(i=0;i<STEPS.length;i++){if(i===f){seq.push([i,'fail',`✗ ${STEPS[i][0]} Service: ${STEPS[i][1]} failed`,'bad']);for(let k=i-1;k>=0;k--)if(STEPS[k][2])seq.push([k,'comp',`↺ ${STEPS[k][0]} Service: ${STEPS[k][2]}`,'mid']);seq.push([null,null,'Saga ended: order REJECTED, data consistent again.','bad']);break}
+    seq.push([i,'done',`✓ ${STEPS[i][0]} Service: ${STEPS[i][1]} committed locally`,'ok'])}
+  if(f<0)seq.push([null,null,'Saga completed: order APPROVED.','ok']);
+  let k=0;(function tick(){if(k>=seq.length){running=false;return}const [j,c,m,col]=seq[k++];if(j!=null){st[j]=c;simDraw(st)}logLine('#sagaLog',m,col);setTimeout(tick,420)})()});
+
+/* choreography vs orchestration */
+const L=[{t:'Order',c:'d1'},{t:'Consumer',c:'d5'},{t:'Kitchen',c:'d2'},{t:'Accounting',c:'d3'}];
+const CH={lanes:L,msgs:[{f:0,t:0,l:'create Order (PENDING)'},{f:0,t:1,l:'OrderCreated event',c:'pencil'},{f:1,t:2,l:'ConsumerVerified event',c:'pencil'},{f:2,t:2,l:'create Ticket'},{f:2,t:3,l:'TicketCreated event',c:'pencil'},{f:3,t:3,l:'authorize card'},{f:3,t:2,l:'CardAuthorized event',c:'pencil'},{f:3,t:0,l:'CardAuthorized event',c:'pencil'},{f:2,t:2,l:'approve Ticket'},{f:0,t:0,l:'approve Order'}],
+ cap:['Order Service creates the order in a pending state.','It publishes OrderCreated. Consumer Service is subscribed.','Consumer Service verifies and publishes ConsumerVerified.','Kitchen Service reacts by creating a ticket.','Kitchen Service publishes TicketCreated.','Accounting Service authorizes the card.','It publishes CreditCardAuthorized...','...which both Kitchen and Order Service subscribe to.','Kitchen approves the ticket.','Order approves the order. Nobody was "in charge"; the flow emerges from subscriptions.']};
+const OR={lanes:[{t:'Orchestrator',c:'pencil'}].concat(L.slice(1)).concat([{t:'Order',c:'d1'}]),msgs:[{f:0,t:1,l:'verifyConsumer cmd'},{f:1,t:0,l:'reply: ok',dash:1,c:'muted'},{f:0,t:2,l:'createTicket cmd'},{f:2,t:0,l:'reply: ticketId',dash:1,c:'muted'},{f:0,t:3,l:'authorizeCard cmd'},{f:3,t:0,l:'reply: authorized',dash:1,c:'muted'},{f:0,t:2,l:'approveTicket cmd'},{f:0,t:4,l:'approveOrder cmd'}],
+ cap:['The orchestrator (created by Order Service with the order) sends a command to Consumer Service.','Consumer Service replies through the reply channel.','Command to Kitchen Service: create a ticket.','Kitchen replies with the ticket ID.','Command to Accounting: authorize the card.','Accounting replies: authorized.','Command to Kitchen: approve the ticket.','Command to Order Service (via its own command channel): approve the order. Every step is visible in one place.']};
+let co='ch';function coRun(){const d=co==='ch'?CH:OR;const ap=seqDiagram('#coSvg',d.lanes,d.msgs,{dy:24});const st=$('#coStep');st.querySelectorAll('.step-cap,.row.between').forEach(x=>x.remove());st.insertAdjacentHTML('beforeend',stepHTML());stepper('#coStep',d.cap,ap)}
+seg('[data-co]',b=>{co=b.dataset.co;coRun()});coRun();
+
+/* fsm */
+const FS={Verifying:[60,50],Creating:[230,50],Authorizing:[400,50],Approving:[570,50],Approved:[570,190],Rejecting:[230,190],Rejected:[60,190]};
+const TRN={Verifying:[['Consumer verified','Creating'],['Consumer verification failed','Rejected']],Creating:[['Ticket created','Authorizing'],['Ticket creation failed','Rejected']],Authorizing:[['Card authorized','Approving'],['Card authorization failed','Rejecting']],Approving:[['Ticket and order approved','Approved']],Rejecting:[['Ticket rejected, order rejected','Rejected']],Approved:[],Rejected:[]};
+let fs='Verifying';function fsm(){const s=$('#fsmSvg');s.innerHTML='';const E=[['Verifying','Creating'],['Creating','Authorizing'],['Authorizing','Approving'],['Approving','Approved'],['Authorizing','Rejecting'],['Rejecting','Rejected'],['Verifying','Rejected'],['Creating','Rejected']];
+  E.forEach(([a,b])=>{const p=FS[a],q=FS[b];const dx=q[0]-p[0],dy=q[1]-p[1],Lh=Math.hypot(dx,dy);arrow(s,p[0]+dx/Lh*58,p[1]+dy/Lh*24,q[0]-dx/Lh*58,q[1]-dy/Lh*24,b.startsWith('Rej')?'bad':'muted',{sw:1.5})});
+  for(const k in FS){const on=k===fs;const c=k==='Approved'?'ok':k.startsWith('Rej')?'bad':'blue';box(s,FS[k][0]-55,FS[k][1]-20,110,40,k,c,{fill:on?`var(--${c}-soft)`:'var(--surface)',sw:on?3:1.4,fs:11.5})}
+  $('#fsmBtns').innerHTML=TRN[fs].map((t,i)=>`<button class="btn" data-i="${i}">${t[0]}</button>`).join('')+'<button class="btn" id="fsmReset">Start over</button>';
+  $$('#fsmBtns [data-i]').forEach(b=>b.addEventListener('click',()=>{fs=TRN[fs][+b.dataset.i][1];fsm()}));$('#fsmReset').addEventListener('click',()=>{fs='Verifying';fsm()});
+  $('#fsmTxt').textContent={Verifying:'Sent verifyConsumer; waiting for the reply.',Creating:'Sent createTicket; waiting.',Authorizing:'Sent authorizeCard; waiting. This is the pivot.',Approving:'Sent approveTicket and approveOrder; these always succeed eventually.',Approved:'Final state: order approved.',Rejecting:'Card failed: sent rejectTicket to Kitchen, then rejectOrder.',Rejected:'Final state: order rejected, all compensations done.'}[fs]}
+fsm();
+
+/* lost update */
+$('#luStep').insertAdjacentHTML('beforeend',stepHTML());
+const LU=['Create Order Saga, step 1: creates the order.','Meanwhile a Cancel Order Saga cancels the order.','The Create Order Saga, unaware, runs its final step and approves the order, overwriting the cancellation.','The consumer cancelled, yet the food is on its way. The cancel was lost.'];
+stepper('#luStep',LU,i=>{const s=$('#luSvg');s.innerHTML='';txt(s,20,40,'Create Order Saga',{a:'start',c:'d1',fw:600,fs:12});txt(s,20,140,'Cancel Order Saga',{a:'start',c:'pencil',fw:600,fs:12});s.appendChild(el('line',{x1:140,y1:90,x2:630,y2:90,stroke:'var(--line)'}));txt(s,600,108,'time →',{fs:10});
+  if(i>=0)box(s,150,20,140,36,'create order','d1',{fs:11});if(i>=1)box(s,310,120,140,36,'cancel order','pencil',{fs:11});if(i>=2)box(s,470,20,140,36,'approve order','d1',{fs:11});
+  const state=['APPROVAL_PENDING','CANCELLED','APPROVED','APPROVED (wrong!)'][i];txt(s,320,190,'Order state: '+state,{fs:12,c:i>=2?'bad':'ink',fw:600})});
+cards('#anoms',[{t:'Lost update',c:'bad',d:'One saga overwrites another\'s change without reading it first.'},{t:'Dirty read',c:'bad',d:'A saga reads data another saga has not finished updating. E.g. a credit limit reads as lowered by a saga that later compensates.'},{t:'Fuzzy / nonrepeatable read',c:'bad',d:'Two steps of one saga read the same data and get different results because another saga changed it in between.'}]);
+
+quiz('#ctQuiz','#ctScore',[
+ {q:'1 · createOrder()',a:0,why:'Followed by steps that can fail, so it needs rejectOrder().'},
+ {q:'2 · verifyConsumerDetails()',a:0,why:'Followed by steps that can fail. It\'s read-only, so its compensation is a no-op.'},
+ {q:'3 · createTicket()',a:0,why:'Compensated by rejectTicket().'},
+ {q:'4 · authorizeCreditCard()',a:1,why:'The go/no-go point. Once it succeeds, the rest always completes.'},
+ {q:'5 · approveTicket() and 6 · approveOrder()',a:2,why:'They follow the pivot and are retried until they succeed.'}],['Compensatable','Pivot','Retriable']);
+cards('#cms',[{t:'Semantic lock',c:'d1',d:'A compensatable step sets a flag, such as the *_PENDING states. Others see the record is in flux and fail, wait, or proceed with care. The flag is cleared by a retriable step or a compensation.'},{t:'Commutative updates',c:'d2',d:'Design operations that can run in any order, such as debit and credit on an account, to avoid lost updates.'},{t:'Pessimistic view',c:'d3',d:'Reorder steps to reduce business risk from dirty reads, e.g. increase available credit in a retriable step, not a compensatable one.'},{t:'Reread value',c:'d4',d:'Before updating, reread the record to make sure it hasn\'t changed; if it has, abort and maybe restart. A form of optimistic offline lock.'},{t:'Version file',c:'d5',d:'Record operations as they arrive so they can be reordered, turning noncommutative operations into commutative ones.'},{t:'By value',c:'pencil',d:'Pick the concurrency mechanism per request based on business risk: low-risk requests use sagas with countermeasures, high-risk ones use distributed transactions.'}]);
+
+/* message flow */
+$('#msgStep').insertAdjacentHTML('beforeend',stepHTML());
+const MF=seqDiagram('#msgSvg',[{t:'CreateOrderSaga',c:'pencil'},{t:'kitchenService\nchannel',c:'d3'},{t:'Kitchen Service',c:'d2'},{t:'reply channel',c:'d3'}],[{f:0,t:0,l:'state → Creating; save'},{f:0,t:1,l:'CreateTicket command'},{f:1,t:2,l:'deliver'},{f:2,t:2,l:'create Ticket (local txn)'},{f:2,t:3,l:'CreateTicketReply'},{f:3,t:0,l:'deliver reply',dash:1},{f:0,t:0,l:'remember ticketId; next step'}],{dy:34});
+stepper('#msgStep',['The orchestrator updates its saga state and persists it, in the same transaction as writing its outgoing message to the outbox.','It sends a CreateTicket command message to Kitchen Service\'s command channel.','The broker delivers it to Kitchen Service\'s command handler.','The handler creates the Ticket in a local transaction.','It sends a reply (success, with the ticket ID) to the saga\'s reply channel.','The reply is delivered to the orchestrator.','The orchestrator records the ticket ID in CreateOrderSagaState and moves on to authorizing the card.'],MF);
+
+quiz('#quiz','#qScore',[
+ {q:'How does a saga undo a step that already committed?',o:['Rollback','Compensating transaction','2PC abort'],a:1,why:'Each committed step is explicitly undone by a compensating transaction, in reverse order.'},
+ {q:'Which coordination style puts the sequencing logic in one place?',o:['Choreography','Orchestration'],a:1,why:'The orchestrator sends commands and handles replies.'},
+ {q:'Which ACID property do sagas lack?',o:['Atomicity','Isolation','Durability'],a:1,why:'Sagas are ACD; their intermediate results are visible to others.'},
+ {q:'Order states like APPROVAL_PENDING are an example of which countermeasure?',o:['Semantic lock','Version file','By value'],a:0,why:'An application-level flag telling others the record may still change.'},
+ {q:'After the pivot transaction commits, the saga...',o:['May still be compensated','Runs to completion'],a:1,why:'The remaining steps are retriable.'}]);
+
+})();
+</script>
+</body>
+</html>

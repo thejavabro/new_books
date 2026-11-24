@@ -1,0 +1,529 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Distributed Transactions</title>
+<meta name="description" content="A transaction that touches several machines must commit everywhere or nowhere. This chapter walks through the protocols that try to guarantee it, from the classic two-phase commit to the designs behind Spanner and Calvin.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<script>try{var t=localStorage.getItem('dbi:theme');if(t)document.documentElement.dataset.theme=JSON.parse(t)}catch(e){}</script>
+<style>
+/* Shared base for the Database Internals companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+button.tag{cursor:pointer}
+button.tag:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{font-family:var(--mono);font-size:.82rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:0;overflow-x:auto;white-space:pre;max-width:100%}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+pre.code code{border:0;padding:0;background:none}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;max-height:220px;overflow:auto;display:flex;flex-direction:column;gap:2px}
+.log div{white-space:pre-wrap;word-break:break-word}
+.cells{display:flex;flex-wrap:wrap;gap:4px}
+.cell{font-family:var(--mono);font-size:.8rem;min-width:2.4em;padding:4px 6px;text-align:center;border:1px solid var(--line);border-radius:4px;background:var(--paper);transition:background .3s,border-color .3s}
+.cell.hit{background:var(--blue-soft);border-color:var(--blue)}
+.cell.ok{background:var(--ok-soft);border-color:var(--ok)}
+.cell.bad{background:var(--bad-soft);border-color:var(--bad)}
+.cell.mid{background:var(--mid-soft);border-color:var(--mid)}
+.cell.dim{opacity:.35}
+input[type=text],input[type=number]{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+
+/* page */
+
+.pcol{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.ptab{border:1.5px solid var(--line);border-radius:10px;overflow:hidden;background:var(--surface)}
+.ptab h4{margin:0;padding:6px 10px;background:var(--blue-soft);font-size:.85rem}
+.ptab table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:.75rem}
+.ptab td,.ptab th{border-top:1px solid var(--line);padding:4px 6px;text-align:left}
+.ptab th{color:var(--muted);font-weight:600}
+.ptab .new{background:var(--mid-soft)}
+.reps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.rep{border:1.5px solid var(--line);border-radius:10px;padding:10px;background:var(--surface);display:flex;flex-direction:column;gap:4px;align-items:center;text-align:center;font-size:.9rem}
+.rep .v{font-family:var(--mono);font-weight:700}
+@media (max-width:560px){.pcol,.reps{grid-template-columns:1fr}}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Database Internals · visual companion</a><span class="tag">Part II · Chapter 13 of 14</span><button class="tag themebtn" type="button" aria-label="Toggle light and dark theme">Theme</button></div>
+  <h1>Distributed Transactions</h1>
+  <p class="lede">A transaction that touches several machines must commit everywhere or nowhere. This chapter walks through the protocols that try to guarantee it, from the classic two-phase commit to the designs behind Spanner and Calvin.</p>
+  <nav class="toc" aria-label="Sections"><a href="#atomic">Atomic commitment</a><a href="#twopc">Two-phase commit</a><a href="#threepc">Three-phase commit</a><a href="#calvin">Calvin</a><a href="#spanner">Spanner</a><a href="#partition">Partitioning</a><a href="#si">Snapshot isolation</a><a href="#percolator">Percolator</a><a href="#avoid">Coordination avoidance</a><a href="#quiz">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="atomic" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Making several nodes agree to commit</h2></div>
+  <p>Moving money between accounts on two different partitions must change both or neither. Single-node concurrency control (Chapter 5) can't do that alone: we need an <b>atomic commitment</b> protocol. Participants can only vote yes or no on a transaction the coordinator proposes; a single "no" aborts it. Because it needs unanimity, it can't tolerate <b>Byzantine</b> participants that lie about their vote. Each node still decides locally what "ready to commit", "commit" and "roll back" mean.</p>
+  <div class="cardgrid" id="acCards"></div>
+</section>
+
+<section id="twopc" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Two-phase commit (2PC)</h2></div>
+  <p>Phase 1 (<b>prepare</b>): the coordinator sends the transaction to every <b>cohort</b>; each executes it up to the point of no return, logs its vote durably and replies. A "yes" is a promise: the cohort will not change its mind. Phase 2 (<b>commit/abort</b>): if every vote is yes, the coordinator logs and sends Commit; otherwise Abort. Pick a scenario and play it.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="2PC scenario"><button data-tp="ok" aria-pressed="true">Happy path</button><button data-tp="no" aria-pressed="false">Cohort votes no</button><button data-tp="cdown" aria-pressed="false">Cohort crashes</button><button data-tp="coord" aria-pressed="false">Coordinator dies after votes</button></div>
+    <div class="svgbox"><svg id="tpSvg" viewBox="0 0 640 330" role="img" aria-label="Sequence diagram of two-phase commit"></svg></div>
+    <div class="row"><button class="btn primary" id="tpPlay">Play</button></div>
+    <p id="tpTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout"><b class="h">Why 2PC is "blocking"</b><span>Once a cohort has voted yes, it may not decide alone. If the coordinator dies before telling anyone the outcome, cohorts wait, holding locks, until it recovers or a replacement re-collects votes. If <i>any</i> cohort already got the decision, the others can safely copy it, because the decision is unanimous. Still, MySQL, PostgreSQL, MongoDB and Kafka use 2PC: it is simple, cheap in messages, and well understood. Backup coordinators help.</span></div>
+</section>
+
+<section id="threepc" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Three-phase commit (3PC)</h2></div>
+  <p>3PC inserts a <b>prepare</b> round between voting and commit, and gives cohorts timeouts. Before the prepare round, a timeout means abort; after everyone acknowledged prepare, a timeout means commit, because all participants now know the vote passed. That removes blocking on coordinator failure, assuming a synchronous network. Partitions break it.</p>
+  <div class="sheet stepper" id="tcStep">
+    <div class="svgbox"><svg id="tcSvg" viewBox="0 0 640 200" role="img" aria-label="Three-phase commit states for three cohorts"></svg></div>
+  </div>
+</section>
+
+<section id="calvin" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Calvin: agree on the order first</h2></div>
+  <p>Instead of coordinating while executing, <b>Calvin</b> agrees on the <i>input</i> up front. A <b>sequencer</b> collects transactions into short <b>epochs</b> (about 10 ms), replicates each batch via Paxos, and hands it to <b>schedulers</b>. Every replica runs the same batch in the same deterministic order, so they all reach the same state without talking during execution, and a crashed node can just replay. The cost: each transaction's read and write sets must be known before it runs. FaunaDB is built on this idea.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn" data-cv="T+">Client: deposit +10</button><button class="btn" data-cv="T*">Client: double it</button><button class="btn primary" id="cvEpoch">Close epoch</button><button class="btn" id="cvReset">Reset</button><label class="small"><input type="checkbox" id="cvNd"> no sequencer (replicas order freely)</label></div>
+    <div class="row"><span class="small">Pending batch:</span><span class="mono" id="cvBatch">—</span></div>
+    <div class="reps" id="cvReps"></div>
+    <p class="small" id="cvTxt" aria-live="polite"></p>
+  </div>
+  <div class="sheet stepper" id="cwStep"><h3>Inside a worker, per transaction</h3><div class="svgbox"><svg id="cwSvg" viewBox="0 0 640 170" role="img" aria-label="Three partitions exchanging read-set data"></svg></div></div>
+</section>
+
+<section id="spanner" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Spanner: 2PC over Paxos groups, ordered by TrueTime</h2></div>
+  <p><b>Spanner</b> (and CockroachDB, YugabyteDB) takes the other road. Data is split into shards, each replicated by a <b>Paxos group</b> with a long-lived leader. Cross-shard writes run <b>2PC between group leaders</b>; since each cohort is a whole group, one machine failing doesn't block 2PC. Leaders use two-phase locking for isolation. Ordering comes from <b>TrueTime</b>, a clock API returning an interval [earliest, latest] guaranteed to contain real time. A transaction picks commit timestamp s ≥ latest, then <b>waits</b> until earliest &gt; s before revealing results. Then any transaction starting later gets a bigger timestamp: <b>external consistency</b>, a transactional version of linearizability.</p>
+  <div class="sheet">
+    <label class="rng"><span>Clock uncertainty ε: <b id="epsV"></b> ms</span><input type="range" id="eps" min="1" max="20" value="7"></label>
+    <div class="svgbox"><svg id="ttSvg" viewBox="0 0 640 150" role="img" aria-label="TrueTime interval and commit wait"></svg></div>
+    <p id="ttTxt" aria-live="polite"></p>
+  </div>
+  <div class="cardgrid" id="spCards"></div>
+</section>
+
+<section id="partition" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Partitioning and consistent hashing</h2></div>
+  <p>Both systems rely on <b>partitioning</b>: each replica set owns part of the key space. Range partitioning keeps neighbors together (great for scans, risky for hot ranges); hashing the key spreads neighbors apart. The naive mapping <span class="mono">hash(k) mod N</span> reshuffles almost everything when N changes. <b>Consistent hashing</b> places nodes and keys on a ring; each key belongs to the next node clockwise, so adding a node only takes keys from one neighbor: about K/n keys move.</p>
+  <div class="sheet">
+    <div class="row"><div class="seg" role="group" aria-label="Scheme"><button data-hs="ring" aria-pressed="true">Consistent hashing</button><button data-hs="mod" aria-pressed="false">hash mod N</button></div><button class="btn primary" id="hsAdd">Add a node</button><button class="btn" id="hsDel">Remove a node</button></div>
+    <div class="svgbox fit"><svg id="hsSvg" viewBox="0 0 420 320" role="img" aria-label="Hash ring with nodes and keys"></svg></div>
+    <p id="hsTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="si" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Snapshot isolation</h2></div>
+  <p><b>Snapshot isolation</b> lets each transaction read from a frozen snapshot as of its start time; if two concurrent transactions write the same cell, the <b>first committer wins</b> and the other aborts. It stops <b>read skew</b> without read locks. It is not serializable: <b>write skew</b> is still possible when two transactions write disjoint cells based on overlapping reads.</p>
+  <div class="sheet">
+    <div class="row"><span class="small">Invariant: x + y = 100. T1 reads x, then T2 moves money, then T1 reads y.</span><div class="seg" role="group" aria-label="Isolation"><button data-si="rc" aria-pressed="true">Read committed</button><button data-si="si" aria-pressed="false">Snapshot isolation</button></div></div>
+    <div class="log" id="siLog" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="percolator" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Percolator: transactions on top of Bigtable</h2></div>
+  <p>Google's <b>Percolator</b> adds snapshot-isolated transactions to Bigtable using only single-row atomic read-modify-write. Each cell has three columns: <b>data</b> (versioned values), <b>lock</b>, and <b>write</b> (which data version is committed). A <b>timestamp oracle</b> hands out increasing timestamps for start and commit. The client drives a 2PC. TiDB follows this model. Here: move 30 from Account B to Account A.</p>
+  <div class="sheet stepper" id="pcStep">
+    <div class="pcol" id="pcTabs"></div>
+  </div>
+</section>
+
+<section id="avoid" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Coordination avoidance and RAMP</h2></div>
+  <p>Sometimes coordination can be skipped entirely. If operations are <b>invariant-confluent</b> (any two valid diverged states can be merged into a valid state), replicas can run transactions locally and merge later without ever breaking the invariant. Decide for each case.</p>
+  <div class="sheet"><div class="row between"><h3>Can this run without coordination?</h3><span class="score" id="icScore"></span></div><div class="quiz" id="icQuiz"></div></div>
+  <p><b>RAMP</b> (Read Atomic Multi-Partition) transactions provide <b>read atomic</b> isolation: you see all of another transaction's writes or none, never a <b>fractured read</b>. Writes go through prepare (stored, invisible) and commit (visible). Each written version carries metadata listing the transaction's other keys, so a reader that sees a newer version on one partition knows to fetch the matching version from the other, without locks.</p>
+  <div class="sheet">
+    <div class="row"><label class="small"><input type="checkbox" id="rpOn" checked> use RAMP metadata</label><button class="btn primary" id="rpGo">Read x and y mid-commit</button></div>
+    <div class="reps" id="rpReps"></div>
+    <p id="rpTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">10</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">11</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b>2PC</b><span>Vote then decide; simple, but blocks if the coordinator vanishes.</span></div>
+    <div><b class="pencil">3PC</b><span>Extra prepare round and timeouts; non-blocking but splits under partition.</span></div>
+    <div><b class="blue">Calvin</b><span>Agree on a deterministic input order per epoch, then execute independently.</span></div>
+    <div><b>Spanner</b><span>2PC over Paxos groups, 2PL, TrueTime commit wait for external consistency.</span></div>
+    <div><b>Partitioning</b><span>Consistent hashing moves ~K/n keys on membership change.</span></div>
+    <div><b class="okc">SI, Percolator, RAMP</b><span>Snapshot reads, first committer wins, lock columns; RAMP gives read atomicity without locks.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Database Internals: A Deep Dive into How Distributed Data Systems Work</i> by Alex Petrov (O'Reilly, 2019). Explanations, examples, code and drawings are original summaries, not copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch12-anti-entropy.html"><span>Previous · Chapter 12</span><b>Anti-Entropy and Dissemination</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch14a-broadcast-paxos.html"><span>Next · Chapter 14a</span><b>Consensus: Broadcast and Paxos</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('dbi:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('dbi:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle */
+$$('.themebtn').forEach(b=>b.addEventListener('click',()=>{const r=document.documentElement;const dark=r.dataset.theme?r.dataset.theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches;r.dataset.theme=dark?'light':'dark';store.set('theme',r.dataset.theme)}));
+function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'})[c])}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
+
+
+cards('#acCards',[{t:'Coordinator',c:'d1',d:'Often the node that received the request, or an elected one. Holds the decision log; the role can move between nodes.'},{t:'Cohorts',c:'d2',d:'Usually partitions with disjoint data. They vote and keep their own log of votes and outcomes.'},{t:'Transaction manager',c:'d3',d:'The subsystem that schedules, coordinates and tracks distributed transactions so they commit in all partitions and all replicas.'}]);
+
+/* ---- 2PC sequence ---- */
+let tpS='ok',tpBusy=false;const TX=[60,240,400,560],TL=['Coordinator','Cohort 1','Cohort 2','Cohort 3'];
+function tpBase(){const s=$('#tpSvg');s.innerHTML='';TX.forEach((x,i)=>{s.appendChild(el('text',{x,y:18,'text-anchor':'middle','font-size':12,'font-weight':700,fill:i?'var(--ink)':'var(--blue)'},TL[i]));s.appendChild(el('line',{x1:x,y1:26,x2:x,y2:320,stroke:'var(--line)','stroke-width':2}))});return s}
+function arrow(s,a,b,y,lab,c,lost){const x1=TX[a],x2=TX[b],y2=y+24;const L=el('line',{x1,y1:y,x2:lost?(x1+x2)/2:x2,y2:lost?y+12:y2,stroke:`var(--${c})`,'stroke-width':2,'stroke-dasharray':lost?'4 3':''});s.appendChild(L);
+  if(!lost){const d=x2>x1?-1:1;s.appendChild(el('polygon',{points:`${x2},${y2} ${x2+d*9},${y2-6} ${x2+d*9},${y2+2}`,fill:`var(--${c})`}))}else s.appendChild(el('text',{x:(x1+x2)/2+4,y:y+16,'font-size':13,fill:'var(--bad)'},'✕'));
+  s.appendChild(el('text',{x:(x1+x2)/2,y:y+(x2>x1?8:10)-4,'text-anchor':'middle','font-size':10,fill:`var(--${c})`},lab))}
+function mark(s,i,y,t,c){s.appendChild(el('rect',{x:TX[i]-46,y:y-11,width:92,height:20,rx:5,fill:'var(--surface)',stroke:`var(--${c})`}));s.appendChild(el('text',{x:TX[i],y:y+3,'text-anchor':'middle','font-size':10,'font-weight':600,fill:`var(--${c})`},t))}
+async function tpPlay(){if(tpBusy)return;tpBusy=true;const s=tpBase();const w=()=>sleep(380);
+  for(const c of [1,2,3]){arrow(s,0,c,40+c*4,'Propose T','blue');await w()}
+  const votes=[1,2,3].map(c=>tpS==='no'&&c===2?'no':tpS==='cdown'&&c===3?'down':'yes');
+  for(const c of [1,2,3]){const v=votes[c-1];if(v==='down'){mark(s,c,110,'crashed','bad');arrow(s,c,0,130,'','bad',true)}else{mark(s,c,110,v==='yes'?'logged: yes':'logged: no',v==='yes'?'ok':'bad');arrow(s,c,0,130,'vote '+v,v==='yes'?'ok':'bad')}await w()}
+  if(tpS==='coord'){mark(s,0,190,'decides commit…','blue');await w();mark(s,0,220,'CRASHED','bad');await w();[1,2,3].forEach(c=>mark(s,c,250,'waiting, locked','mid'));
+    $('#tpTxt').innerHTML='<b class="badc">Blocked.</b> All cohorts voted yes and promised not to decide alone. Nobody knows whether the coordinator logged commit or abort. Locks stay held until it recovers or a replacement re-runs the vote.';tpBusy=false;return}
+  const dec=votes.every(v=>v==='yes')?'Commit':'Abort';mark(s,0,190,(dec==='Commit'?'all yes → ':(tpS==='cdown'?'timeout → ':'one no → '))+dec.toLowerCase(),dec==='Commit'?'ok':'bad');await w();
+  for(const c of [1,2,3]){arrow(s,0,c,220+c*4,dec,dec==='Commit'?'ok':'bad',votes[c-1]==='down');await w();if(votes[c-1]!=='down')mark(s,c,280,dec==='Commit'?'committed':'rolled back',dec==='Commit'?'ok':'bad')}
+  const t={ok:'<b class="okc">Committed.</b> Two round trips; every step was logged so any node can recover its state.',no:'<b class="badc">Aborted.</b> One no is enough; cohorts that voted yes roll back their prepared work.',cdown:'<b class="badc">Aborted after a timeout.</b> One unavailable cohort stops the whole transaction: 2PC\'s availability problem. When cohort 3 restarts it must learn the outcome from the coordinator\'s log before serving reads. Spanner softens this by making each cohort a Paxos group.'};
+  $('#tpTxt').innerHTML=t[tpS];tpBusy=false}
+seg('[data-tp]',b=>{tpS=b.dataset.tp;tpBase();$('#tpTxt').textContent='Press Play.'});$('#tpPlay').addEventListener('click',tpPlay);tpPlay();
+
+/* ---- 3PC stepper ---- */
+const TC=[{t:'Propose: the coordinator sends the transaction and collects votes. A timeout here aborts.',s:['voting','voting','voting'],p:0},
+ {t:'All voted yes. The coordinator sends Prepare. A cohort that times out before receiving Prepare still aborts.',s:['prepared','prepared','prepared'],p:0},
+ {t:'All acknowledged Prepare. Now the coordinator crashes. Every cohort is prepared, so each times out and commits: no blocking.',s:['commit (timeout)','commit (timeout)','commit (timeout)'],p:0,cd:1},
+ {t:'Worse case: a partition during the Prepare round. Cohort 1 got Prepare and times out into commit. Cohorts 2 and 3 never got it and time out into abort.',s:['prepared','voting','voting'],p:1,cd:1},
+ {t:'Split brain: both sides followed the protocol, yet one committed and the others aborted. Plus extra messages: this is why 3PC is rare in practice.',s:['COMMITTED','ABORTED','ABORTED'],p:1,cd:1}];
+$('#tcStep').insertAdjacentHTML('beforeend',stepHTML());stepper('#tcStep',TC.map(x=>x.t),i=>{const s=$('#tcSvg');s.innerHTML='';const st=TC[i];
+  s.appendChild(el('rect',{x:20,y:70,width:120,height:50,rx:8,fill:'var(--surface)',stroke:st.cd?'var(--bad)':'var(--blue)','stroke-width':2,'stroke-dasharray':st.cd?'5 3':''}));s.appendChild(el('text',{x:80,y:100,'text-anchor':'middle','font-size':12,'font-weight':700,fill:st.cd?'var(--bad)':'var(--blue)'},st.cd?'coordinator ✕':'coordinator'));
+  st.s.forEach((v,k)=>{const y=20+k*60,c=/commit|COMMIT/.test(v)?'ok':/ABORT/.test(v)?'bad':/prepared/.test(v)?'blue':'muted';s.appendChild(el('line',{x1:140,y1:95,x2:330,y2:y+25,stroke:'var(--line)','stroke-width':1.5,'stroke-dasharray':st.cd?'3 4':''}));
+    s.appendChild(el('rect',{x:330,y,width:280,height:50,rx:8,fill:'var(--surface)',stroke:`var(--${c})`,'stroke-width':2}));s.appendChild(el('text',{x:345,y:y+30,'font-size':12,'font-weight':600,fill:'var(--ink)'},'Cohort '+(k+1)));s.appendChild(el('text',{x:600,y:y+30,'text-anchor':'end','font-size':12,'font-weight':700,fill:`var(--${c})`},v))});
+  if(st.p)s.appendChild(el('line',{x1:300,y1:75,x2:640,y2:75,stroke:'var(--bad)','stroke-width':3,'stroke-dasharray':'8 5'}))});
+
+/* ---- Calvin ---- */
+let CV;function cvReset(){CV={batch:[],reps:[[100,[]],[100,[]],[100,[]]],ep:0};cvDraw();$('#cvTxt').textContent='Queue a few transactions, then close the epoch.'}
+function cvDraw(){$('#cvBatch').textContent=CV.batch.length?CV.batch.map(t=>t==='T+'?'+10':'×2').join(', '):'—';$('#cvReps').innerHTML=CV.reps.map((r,i)=>`<div class="rep"><b>Replica ${i+1}</b><span class="v">balance = ${r[0]}</span><span class="small mono">${r[1].slice(-6).join(' ')||'—'}</span></div>`).join('')}
+$$('[data-cv]').forEach(b=>b.addEventListener('click',()=>{if(CV.batch.length<6){CV.batch.push(b.dataset.cv);cvDraw()}}));
+$('#cvEpoch').addEventListener('click',()=>{if(!CV.batch.length)return;CV.ep++;const nd=$('#cvNd').checked;CV.reps.forEach((r,i)=>{let order=[...CV.batch];if(nd&&i>0){order=order.map((t,k)=>[t,Math.sin(k*7+i*13+CV.ep)]).sort((a,b)=>a[1]-b[1]).map(x=>x[0])}
+    order.forEach(t=>{r[0]=t==='T+'?r[0]+10:r[0]*2;r[1].push(t==='T+'?'+10':'×2')})});const same=CV.reps.every(r=>r[0]===CV.reps[0][0]);CV.batch=[];cvDraw();
+  $('#cvTxt').innerHTML=nd?(same?'Replicas happened to agree this time, but nothing guarantees it. Try mixing +10 and ×2 in one batch.':'<b class="badc">Replicas diverged:</b> they applied the same transactions in different orders, and +10 then ×2 ≠ ×2 then +10.'):`<b class="okc">Epoch ${CV.ep} replicated and executed.</b> Same input, same order, same result on every replica, with no coordination during execution.`});
+$('#cvReset').addEventListener('click',cvReset);cvReset();
+const CW=['Analyse read and write sets. Here T reads a (on P1) and b (on P2) and writes c (on P3). P3 is the only <b>active participant</b>.','Each node collects the read-set records it holds locally.','Passive participants forward those records to the active participants.','The active participant now has all inputs and executes T, persisting c locally. Other replicas of P3 do the same from the same inputs, so results are never shipped.'];
+$('#cwStep').insertAdjacentHTML('beforeend',stepHTML());stepper('#cwStep',CW,i=>{const s=$('#cwSvg');s.innerHTML='';const P=[['P1','a = 4',90],['P2','b = 6',320],['P3','c = ?',550]];
+  P.forEach(([n,v,x],k)=>{const act=k===2;s.appendChild(el('rect',{x:x-75,y:40,width:150,height:70,rx:10,fill:act?'var(--blue-soft)':'var(--surface)',stroke:act&&i>=0?'var(--blue)':'var(--line)','stroke-width':2}));s.appendChild(el('text',{x,y:65,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--ink)'},n+(act?' (active)':'')));
+    const val=k===2&&i===3?'c = a + b = 10':v;s.appendChild(el('text',{x,y:92,'text-anchor':'middle','font-size':12.5,class:'t-mono',fill:i>=1&&k<2?'var(--pencil)':k===2&&i===3?'var(--ok)':'var(--ink)'},val))});
+  if(i===2){[90,320].forEach(x=>{s.appendChild(el('path',{d:`M${x},112 Q${(x+550)/2},${165} 550,112`,fill:'none',stroke:'var(--pencil)','stroke-width':2}));s.appendChild(el('polygon',{points:'550,112 543,124 556,122',fill:'var(--pencil)'}))})}});
+
+/* ---- TrueTime ---- */
+function drawTT(){const e=+$('#eps').value;$('#epsV').textContent=e;const s=$('#ttSvg');s.innerHTML='';const X=t=>30+t*6.8;const now=22;
+  s.appendChild(el('line',{x1:20,y1:110,x2:630,y2:110,stroke:'var(--line)','stroke-width':2}));s.appendChild(el('text',{x:630,y:128,'text-anchor':'end','font-size':10,fill:'var(--muted)'},'real time (ms) →'));
+  s.appendChild(el('rect',{x:X(now-e),y:40,width:X(now+e)-X(now-e),height:22,rx:5,fill:'var(--blue-soft)',stroke:'var(--blue)'}));s.appendChild(el('text',{x:X(now),y:55,'text-anchor':'middle','font-size':9.5,fill:'var(--blue)'},'now() at choice'));
+  const sTs=now+e;s.appendChild(el('line',{x1:X(sTs),y1:30,x2:X(sTs),y2:110,stroke:'var(--pencil)','stroke-width':2}));s.appendChild(el('text',{x:X(sTs)+4,y:28,'font-size':10,fill:'var(--pencil)'},'s = latest'));
+  const rel=sTs+e;s.appendChild(el('rect',{x:X(sTs),y:72,width:X(sTs+2*e)-X(sTs),height:22,rx:5,fill:'var(--ok-soft)',stroke:'var(--ok)'}));s.appendChild(el('text',{x:X(rel),y:87,'text-anchor':'middle','font-size':9.5,fill:'var(--ok)'},'now() at release'));
+  s.appendChild(el('line',{x1:X(now),y1:100,x2:X(rel),y2:100,stroke:'var(--bad)','stroke-width':3}));s.appendChild(el('text',{x:(X(now)+X(rel))/2,y:142,'text-anchor':'middle','font-size':11,'font-weight':700,fill:'var(--bad)'},`commit wait ≈ ${2*e} ms`));
+  $('#ttTxt').innerHTML=`With uncertainty ±${e} ms, each read-write commit waits about <b>${2*e} ms</b> before acknowledging. That is why Google invested in GPS and atomic clocks: smaller ε means shorter waits. Under the wait, locks are still held, so conflicting transactions queue behind it.`}
+$('#eps').addEventListener('input',drawTT);drawTT();
+cards('#spCards',[{t:'Read-write transactions',c:'d1',d:'Pessimistic: locks in the leader\'s lock table, writes through the Paxos leader, 2PC across groups.'},{t:'Read-only transactions',c:'d2',d:'Lock-free and can run at any sufficiently up-to-date replica, reading versioned data at a chosen timestamp.'},{t:'Snapshot reads',c:'d3',d:'Read at a past timestamp; versions never change once written, so the result is consistent.'},{t:'Single-shard writes',c:'d4',d:'Skip the transaction manager and 2PC: the group\'s Paxos log and lock table are enough.'}]);
+
+/* ---- consistent hashing ---- */
+let HSm='ring',HN=[37,121,205,290],HK=Array.from({length:30},(_,i)=>(i*97+31)%360),hsPrev=null;
+const own=(k,nodes,m)=>m==='mod'?nodes[k%nodes.length]:([...nodes].sort((a,b)=>a-b).find(n=>n>=k)??Math.min(...nodes));
+function hsDraw(msg){const s=$('#hsSvg');s.innerHTML='';const P=(d,r)=>[210+Math.cos((d-90)*Math.PI/180)*r,160+Math.sin((d-90)*Math.PI/180)*r];const cols=['d1','d2','d3','d4','d5','blue','pencil','bad'];
+  s.appendChild(el('circle',{cx:210,cy:160,r:120,fill:'none',stroke:'var(--line)','stroke-width':3}));const cur=HK.map(k=>own(k,HN,HSm));
+  HK.forEach((k,i)=>{const [x,y]=P(k,100);const ni=HN.indexOf(cur[i]);const moved=hsPrev&&hsPrev[i]!==cur[i];s.appendChild(el('circle',{cx:x,cy:y,r:moved?6:4.5,fill:`var(--${cols[ni%8]})`,stroke:moved?'var(--ink)':'none','stroke-width':1.5}))});
+  HN.forEach((n,i)=>{const [x,y]=P(n,120);s.appendChild(el('rect',{x:x-14,y:y-11,width:28,height:22,rx:5,fill:`var(--${cols[i%8]})`}));s.appendChild(el('text',{x,y:y+4,'text-anchor':'middle','font-size':11,'font-weight':700,fill:'#fff'},'N'+(i+1)))});
+  if(msg)$('#hsTxt').innerHTML=msg}
+function hsChange(f,verb){const before=HK.map(k=>own(k,HN,HSm));f();const after=HK.map(k=>own(k,HN,HSm));hsPrev=before;const moved=after.filter((o,i)=>o!==before[i]).length;
+  hsDraw(`${verb}: <b>${moved} of ${HK.length}</b> keys changed owner (outlined). ${HSm==='mod'?'With modulo, changing N reshuffles most keys.':'Only keys in the range next to the changed node moved.'}`)}
+$('#hsAdd').addEventListener('click',()=>{if(HN.length>=8)return;hsChange(()=>{const cand=[80,250,160,330,10];HN.push(cand.find(c=>!HN.includes(c)))},'Added a node')});
+$('#hsDel').addEventListener('click',()=>{if(HN.length<=2)return;hsChange(()=>HN.pop(),'Removed a node')});
+seg('[data-hs]',b=>{HSm=b.dataset.hs;hsPrev=null;HN=[37,121,205,290];hsDraw(HSm==='mod'?'Keys are coloured by hash mod N. Positions on the circle are only for display.':'Each key belongs to the first node clockwise from it.')});hsDraw('Each key belongs to the first node clockwise from it.');
+
+/* ---- snapshot isolation ---- */
+function siDraw(m){const y=m==='si'?50:30;$('#siLog').innerHTML=['Start: x = 50, y = 50 (sum 100)','T1 (start ts 1): read x → <b>50</b>','T2: write x = 70, y = 30; commit at ts 2',`T1: read y → <b>${y}</b>${m==='si'?' (from its snapshot at ts 1)':' (latest committed)'}`,
+  m==='si'?'<b class="okc">T1 sees x + y = 100.</b> The snapshot hides T2\'s commit.':'<b class="badc">T1 sees x + y = 80: read skew.</b> It mixed a value from before T2 with one from after.'].join('<br>')}
+seg('[data-si]',b=>siDraw(b.dataset.si));siDraw('rc');
+
+/* ---- Percolator ---- */
+const PC=[{t:'Initial state. Both accounts were last committed at ts 5 (write column points to data@5). No locks.',a:[['5','A: 100','','data@5']],b:[['5','B: 50','','data@5']]},
+ {t:'The client gets start ts 7 from the timestamp oracle and reads both balances at that snapshot.',a:[['5','A: 100','','data@5']],b:[['5','B: 50','','data@5']]},
+ {t:'Prewrite: write data at ts 7 and take locks. A\'s lock is the <b>primary</b>; B\'s lock points to it. Each is one conditional mutation that fails if a newer write or any lock exists.',a:[['7','A: 130','primary','',1],['5','A: 100','','data@5']],b:[['7','B: 20','→ A (primary)','',1],['5','B: 50','','data@5']]},
+ {t:'Commit: get commit ts 8, then replace the <b>primary</b> lock with a write record "data@7". This single-row atomic step is the commit point.',a:[['8','','','data@7',1],['7','A: 130','','',0],['5','A: 100','','data@5']],b:[['7','B: 20','→ A (primary)',''],['5','B: 50','','data@5']]},
+ {t:'Then release secondary locks the same way. If the client crashes before this, a later reader finds B\'s lock, checks the primary, sees it committed, and rolls B forward itself.',a:[['8','','','data@7'],['7','A: 130','',''],['5','A: 100','','data@5']],b:[['8','','','data@7',1],['7','B: 20','',''],['5','B: 50','','data@5']]}];
+$('#pcStep').insertAdjacentHTML('beforeend',stepHTML());stepper('#pcStep',PC.map(p=>p.t),i=>{const tab=(n,rows)=>`<div class="ptab"><h4>${n}</h4><table><tr><th>ts</th><th>data</th><th>lock</th><th>write</th></tr>${rows.map(r=>`<tr${r[4]?' class="new"':''}><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td></tr>`).join('')}</table></div>`;
+  $('#pcTabs').innerHTML=tab('Account A',PC[i].a)+tab('Account B',PC[i].b)});
+
+/* ---- I-confluence + RAMP ---- */
+quiz('#icQuiz','#icScore',[
+ {q:'Likes counter that only increments',a:0,why:'Two incremented replicas merge into a valid, larger count.'},
+ {q:'Bank balance must stay ≥ 0 under withdrawals',a:1,why:'Two replicas can each withdraw 80 from 100; each is valid, the merge is −60.'},
+ {q:'Unique IDs where each node prefixes its own ID',a:0,why:'Prefixes can\'t collide, so merged sets stay unique.'},
+ {q:'Usernames must be unique, picked freely by users',a:1,why:'Two replicas can both accept "ana"; the merge breaks uniqueness.'}],['No coordination','Needs coordination']);
+let RP;function rpDraw(){$('#rpReps').innerHTML=[['Partition X','x'],['Partition Y','y']].map(([n,k])=>`<div class="rep"><b>${n}</b><span class="v">${RP[k]}</span><span class="small">${RP[k+'m']}</span></div>`).join('')}
+function rpReset(){RP={x:'x = 0 (ts 1)',y:'y = 0 (ts 1)',xm:'',ym:''};rpDraw()}
+$('#rpGo').addEventListener('click',()=>{RP={x:'x = 1 (ts 5) committed',y:'y = 0 (ts 1) · y = 1 (ts 5) prepared',xm:'metadata: T5 also wrote y',ym:'ts 5 not yet visible'};rpDraw();
+  $('#rpTxt').innerHTML=$('#rpOn').checked?'Reader gets x@5 and y@1. x\'s metadata says T5 also wrote y, and the reader holds y only at ts 1, so it asks Y for <b>y at ts 5</b> explicitly. Y has it prepared and returns it. <b class="okc">Result x = 1, y = 1</b>: no fractured read, and the writer was never blocked.':'Reader gets x = 1 from T5 but y = 0 from before it. <b class="badc">Fractured read</b>: it saw half of T5.'});
+$('#rpOn').addEventListener('change',rpReset);rpReset();
+
+quiz('#qQuiz','#qScore',[
+ {q:'In 2PC, after voting yes, a cohort may…',o:['abort on its own if it gets nervous','only wait for the coordinator\'s decision'],a:1,why:'The yes vote is a promise; only the coordinator decides.'},
+ {q:'3PC\'s main weakness is…',o:['blocking on coordinator failure','split brain under network partition'],a:1,why:'Timeouts on different sides of a partition can lead to different decisions.'},
+ {q:'Calvin avoids coordination during execution because…',o:['replicas execute the same input in the same deterministic order','it uses TrueTime'],a:0,why:'The sequencer fixes the order up front.'},
+ {q:'Why does Spanner wait after choosing a commit timestamp?',o:['To flush the WAL','So the timestamp is surely in the past before results are visible'],a:1,why:'Commit wait outlasts TrueTime uncertainty, giving external consistency.'},
+ {q:'Snapshot isolation still allows…',o:['read skew','write skew','dirty reads'],a:1,why:'Disjoint writes based on overlapping reads both commit.'}]);
+
+})();
+</script>
+</body>
+</html>

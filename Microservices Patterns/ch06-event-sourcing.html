@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Event Sourcing</title>
+<meta name="description" content="Instead of saving the current state of an aggregate, save every change as an event, and rebuild the state by replaying them. You get an audit log and reliable event publishing for free, at the price of a new way of thinking.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Microservices Patterns companion. Blueprint grid paper: blue = services and structure, orange = messages and data in flight, green = success, red = failure.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+button.theme{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted)}
+button.theme:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-family:var(--mono);font-size:.8rem;line-height:1.5;overflow-x:auto;white-space:pre;max-width:100%}
+.code .k{color:var(--d5)} .code .s{color:var(--d2)} .code .c{color:var(--muted);font-style:italic}
+.pattern{border:1px solid var(--line);border-left:4px solid var(--d2);background:var(--surface);border-radius:0 10px 10px 0;padding:12px 16px;display:flex;flex-direction:column;gap:4px}
+.pattern .eyebrow{color:var(--d2)}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:5em;max-height:14em;overflow:auto;display:flex;flex-direction:column;gap:2px}
+.chip.on{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+button.chip{cursor:pointer}
+
+/* page */
+
+.evlog{display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:.8rem}
+.evlog div{display:grid;grid-template-columns:2.2em minmax(0,1fr);gap:8px;padding:5px 8px;border-radius:6px;border:1px solid var(--line);background:var(--paper);transition:opacity .3s;overflow-wrap:anywhere}
+.evlog div.dim{opacity:.3}
+.evlog i{font-style:normal;color:var(--muted)}
+.statecard{border:2px solid var(--blue);border-radius:10px;padding:12px 14px;background:var(--surface);font-family:var(--mono);font-size:.85rem;display:flex;flex-direction:column;gap:4px}
+.cipher{font-family:var(--mono);font-size:.8rem;padding:6px 8px;border-radius:6px;background:var(--paper);border:1px solid var(--line);overflow-wrap:anywhere}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Microservices Patterns · visual companion</a><span class="tag">Chapter 6 of 13 · Business logic and data</span><button class="theme" type="button">Dark theme</button></div>
+  <h1>Event Sourcing</h1>
+  <p class="lede">Instead of saving the current state of an aggregate, save every change as an event, and rebuild the state by replaying them. You get an audit log and reliable event publishing for free, at the price of a new way of thinking.</p>
+  <nav class="toc" aria-label="Sections"><a href="#trouble">Why</a><a href="#replay">Replay</a><a href="#locking">Concurrency</a><a href="#snapshots">Snapshots</a><a href="#evolve">Evolving events</a><a href="#tradeoffs">Trade-offs</a><a href="#store">Event store</a><a href="#sagas">Sagas and ES</a><a href="#check">Quick check</a></nav>
+</header>
+
+<section id="trouble" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>The trouble with storing only current state</h2></div>
+  <p>Traditional persistence maps classes to tables and rows to objects: an <code>ORDERS</code> row holds the order as it is right now. That works, but it has drawbacks: an object-relational <b>impedance mismatch</b>, <b>no history</b> (an update overwrites the past), <b>audit logging</b> you must bolt on and keep in sync, and <b>event publishing</b> that is an afterthought, which is easy to get wrong.</p>
+  <div class="pattern"><span class="eyebrow">Pattern: Event sourcing</span><span>Persist an aggregate as a sequence of domain events that represent state changes. Rebuild the current state by loading the events and replaying them.</span></div>
+</section>
+
+<section id="replay" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Rebuild state by replaying events</h2></div>
+  <p>Instead of an ORDERS table, there is an <b>EVENTS</b> table: one row per event, with the aggregate's type and ID, the event type and the event data. Send commands to an order, then drag the replay slider back in time. The current state is just a fold over the events.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn" data-c="create">createOrder</button><button class="btn" data-c="approve">approve</button><button class="btn" data-c="revise">revise quantity</button><button class="btn" data-c="cancel">cancel</button><button class="btn" id="esReset">Reset</button></div>
+    <div class="two">
+      <div class="stack" style="gap:8px"><span class="eyebrow">EVENTS for Order 7</span><div class="evlog" id="evlog"></div></div>
+      <div class="stack" style="gap:8px"><label class="rng"><span>Replay up to event <b id="rpV"></b></span><input type="range" id="rp" min="0" max="0" value="0"></label><div class="statecard" id="stcard"></div></div>
+    </div>
+    <p class="small" id="esMsg" aria-live="polite"></p>
+  </div>
+  <div class="sheet">
+    <h3>Two kinds of method</h3>
+    <pre class="code"><span class="k">class</span> Order {
+  <span class="c">// process(command): validate, decide, return events. Never mutates state.</span>
+  process(CancelOrder cmd) {
+    <span class="k">if</span> (state != APPROVED) <span class="k">throw new</span> UnsupportedStateTransition();
+    <span class="k">return</span> [ <span class="k">new</span> OrderCancelled() ];
+  }
+  <span class="c">// apply(event): update state. Never fails; used for new and replayed events.</span>
+  apply(OrderCancelled e) { state = CANCELLED; }
+}</pre>
+    <p class="small">A command method no longer changes fields directly. To handle a command: load the events, replay them with apply(), call process() to get new events, apply those too, and append them to the event store. Creation works the same way: process(CreateOrder) returns OrderCreated.</p>
+  </div>
+</section>
+
+<section id="locking" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Concurrent updates: optimistic locking</h2></div>
+  <p>Two requests can update the same aggregate at once. The event store uses the aggregate's version (the number of events applied) as an optimistic lock: an append succeeds only if the version is still what the writer read.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn primary" id="lkA">Request A appends (read v3)</button><button class="btn primary" id="lkB">Request B appends (read v3)</button><button class="btn" id="lkR">Reset</button></div>
+    <div class="row between"><span>Stored version: <b class="mono" id="lkV">3</b></span></div>
+    <div class="log" id="lkLog" aria-live="polite"></div>
+  </div>
+  <p>Publishing comes almost for free: the event store <i>is</i> the outbox. A relay polls the EVENTS table for unpublished rows, or tails the transaction log, and pushes events to the broker. Consumers still have to be idempotent; with an RDBMS-based event store they record processed message IDs in the same transaction, and with a NoSQL store the message ID can be stored with the events the handler generates.</p>
+</section>
+
+<section id="snapshots" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Snapshots for long-lived aggregates</h2></div>
+  <p>A long-lived aggregate, such as an Account, may have thousands of events. Loading it means replaying them all. A <b>snapshot</b> stores the aggregate's state every N events; to load, read the latest snapshot and replay only the events after it.</p>
+  <div class="sheet">
+    <label class="rng"><span>Events in the aggregate's history: <b id="snE"></b></span><input type="range" id="snEv" min="10" max="5000" value="1200"></label>
+    <label class="rng"><span>Snapshot every <b id="snN"></b> events</span><input type="range" id="snEvery" min="0" max="500" step="25" value="100"></label>
+    <div class="bars" id="snBars"></div>
+  </div>
+</section>
+
+<section id="evolve" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Evolving domain events: upcasting</h2></div>
+  <p>Events are stored forever, but their schema changes. Adding a field is backward compatible; renaming or removing one is not. Rather than rewriting history, an event-sourced app <b>upcasts</b>: when old events are loaded from the store, a transformer converts them to the latest version before the application sees them.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="View"><button data-u="raw" aria-pressed="true">As stored (v1)</button><button data-u="up" aria-pressed="false">After upcasting (v2)</button></div>
+    <pre class="code" id="upCode"></pre>
+    <div class="tbl"><table class="t"><thead><tr><th>Change</th><th>Backward compatible?</th></tr></thead><tbody>
+      <tr><td>Define a new aggregate or a new event type</td><td class="okc">Yes</td></tr><tr><td>Add an optional field to an event</td><td class="okc">Yes</td></tr>
+      <tr><td>Remove or rename an aggregate or an event type</td><td class="badc">No</td></tr><tr><td>Remove, rename, or change the type of a field</td><td class="badc">No</td></tr>
+    </tbody></table></div>
+  </div>
+</section>
+
+<section id="tradeoffs" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Benefits and drawbacks</h2></div>
+  <div class="cardgrid" id="esCards"></div>
+  <p>Deleting data is a special headache: the GDPR "right to be forgotten" meets an append-only log. One technique is to encrypt each user's data with a per-user key and <b>delete the key</b>; another is <b>pseudonymization</b>, replacing identifying data with tokens. Try the first.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn" id="gdpr">Delete Ann's encryption key</button><button class="btn" id="gdprR">Reset</button></div>
+    <div class="stack" style="gap:6px" id="gdprRows"></div>
+  </div>
+</section>
+
+<section id="store" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Implementing an event store</h2></div>
+  <p>An event store is a hybrid of a database and a message broker. Options include purpose-built ones (Greg Young\'s .NET Event Store, Lightbend\'s Lagom, the Axon framework) or the author's <b>Eventuate</b>: Eventuate SaaS, and <b>Eventuate Local</b>, built on MySQL plus Apache Kafka. Tap a part of Eventuate Local.</p>
+  <div class="sheet two">
+    <div class="svgbox fit"><svg id="elSvg" viewBox="0 0 380 300" role="img" aria-label="Eventuate Local architecture"></svg></div>
+    <div class="detail" id="elInfo" aria-live="polite"></div>
+  </div>
+  <p class="small">The Eventuate client framework gives you a base class for aggregates (ReflectiveMutableCommandProcessingAggregate, which dispatches process() and apply() by reflection), an AggregateRepository with save/find/update, and annotations for event subscribers.</p>
+</section>
+
+<section id="sagas" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Sagas with event sourcing</h2></div>
+  <p><b>Choreography</b> is natural with event sourcing: aggregates emit events when they change, and participants subscribe. One wrinkle: an event handler must also record events for things like "card not authorized" even when no state changes, because events are the only way to say something. <b>Orchestration</b> needs care. Step through creating an orchestrator atomically.</p>
+  <div class="sheet stepper" id="sgStep">
+    <div class="svgbox"><svg id="sgSvg" viewBox="0 0 640 230" role="img" aria-label="Creating a saga orchestrator with event sourcing"></svg></div>
+  </div>
+  <div class="callout blue"><b class="h">Orchestrators can be event-sourced too</b><span>Persist the orchestrator as events (SagaOrchestratorCreated, SagaOrchestratorUpdated). Sending a command becomes a two-step trick: first save a <i>SagaReplyRequested</i>-style pseudo event, then a handler for that event sends the command. Participants must reply even when processing a duplicate, which they handle with the same pseudo-event approach. The result: an application that uses only an event store.</span></div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="quiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Microservices Patterns: With examples in Java</i> by Chris Richardson (Manning, 2019). Explanations, code snippets, diagrams and simulations are original summaries written for this companion; nothing is copied from the book's figures or listings.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch05-business-logic.html"><span>Previous · Chapter 5</span><b>Designing Business Logic</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch07-queries.html"><span>Next · Chapter 7</span><b>Implementing Queries</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('mp:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('mp:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: button.theme switches light/dark, remembered per viewer */
+(function(){const r=document.documentElement;const t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+  const cur=()=>r.getAttribute('data-theme')||(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+  const lab=()=>$$('button.theme').forEach(x=>x.textContent=cur()==='dark'?'Light theme':'Dark theme');lab();
+  $$('button.theme').forEach(b=>b.addEventListener('click',()=>{const n=cur()==='dark'?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n);lab()}))})();
+/* drawing helpers */
+function box(svg,x,y,w,h,t,c,o){o=o||{};const g=el('g',{class:o.cls||''});c=c||'blue';
+  g.appendChild(el('rect',{x,y,width:w,height:h,rx:o.rx!=null?o.rx:8,fill:o.fill||'var(--surface)',stroke:`var(--${c})`,'stroke-width':o.sw||1.8,'stroke-dasharray':o.dash||''}));
+  const L=String(t).split('\n');const fs=o.fs||12.5;L.forEach((l,i)=>g.appendChild(el('text',{x:x+w/2,y:y+h/2+(i-(L.length-1)/2)*(fs+3)+fs*.36,'text-anchor':'middle','font-size':fs,'font-weight':o.fw||600,fill:o.tc||'var(--ink)'},l)));
+  svg.appendChild(g);return g}
+function arrow(svg,x1,y1,x2,y2,c,o){o=o||{};c=c||'muted';const g=el('g',{class:o.cls||''});const dx=x2-x1,dy=y2-y1,L=Math.hypot(dx,dy)||1,ux=dx/L,uy=dy/L,px=-uy,py=ux;
+  g.appendChild(el('line',{x1,y1,x2:x2-ux*8,y2:y2-uy*8,stroke:`var(--${c})`,'stroke-width':o.sw||2,'stroke-dasharray':o.dash||'',class:o.flow?'flow':''}));
+  g.appendChild(el('polygon',{points:`${x2},${y2} ${x2-ux*10+px*5},${y2-uy*10+py*5} ${x2-ux*10-px*5},${y2-uy*10-py*5}`,fill:`var(--${c})`}));
+  if(o.t)g.appendChild(el('text',{x:(x1+x2)/2+(o.dx||0),y:(y1+y2)/2-6+(o.dy||0),'text-anchor':'middle','font-size':o.fs||11,fill:`var(--${o.tcol||c})`,class:o.mono?'t-mono':''},o.t));
+  svg.appendChild(g);return g}
+function txt(svg,x,y,t,o){o=o||{};const e=el('text',{x,y,'text-anchor':o.a||'middle','font-size':o.fs||11,'font-weight':o.fw||400,fill:`var(--${o.c||'muted'})`,class:o.mono?'t-mono':''},t);svg.appendChild(e);return e}
+/* sequence diagram: lanes [{t,c}], msgs [{f,t,l,c,dash}] (f===t draws a self-call); returns apply(i) showing messages 0..i */
+function seqDiagram(svgSel,lanes,msgs,opt){opt=opt||{};const svg=typeof svgSel==='string'?$(svgSel):svgSel;const W=opt.w||640;const n=lanes.length;const gap=W/n;const top=opt.top||50,dy=opt.dy||30;
+  const H=top+msgs.length*dy+14;svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.innerHTML='';
+  const X=i=>gap/2+i*gap;
+  lanes.forEach((l,i)=>{svg.appendChild(el('line',{x1:X(i),y1:38,x2:X(i),y2:H-4,stroke:'var(--line)','stroke-dasharray':'4 4'}));const w=Math.min(gap-8,140);box(svg,X(i)-w/2,4,w,32,l.t,l.c||'blue',{fs:11})});
+  const rows=msgs.map((m,k)=>{const y=top+10+k*dy;const g=el('g',{class:'fade'});const c=`var(--${m.c||'blue'})`;
+    if(m.f===m.t){const x=X(m.f);g.appendChild(el('path',{d:`M${x},${y-7} h22 v12 h-14`,fill:'none',stroke:c,'stroke-width':1.8}));g.appendChild(el('polygon',{points:`${x},${y+5} ${x+9},${y+1} ${x+9},${y+9}`,fill:c}));
+      g.appendChild(el('text',{x:x+(m.f===n-1?-6:28),y:y+3,'text-anchor':m.f===n-1?'end':'start','font-size':10.5,fill:'var(--ink)'},m.l))}
+    else{const a=X(m.f),b=X(m.t),d=b>a?1:-1;g.appendChild(el('line',{x1:a,y1:y,x2:b-d*8,y2:y,stroke:c,'stroke-width':1.8,'stroke-dasharray':m.dash?'5 4':''}));
+      g.appendChild(el('polygon',{points:`${b},${y} ${b-d*9},${y-4.5} ${b-d*9},${y+4.5}`,fill:c}));
+      g.appendChild(el('text',{x:(a+b)/2,y:y-5,'text-anchor':'middle','font-size':10.5,fill:'var(--ink)'},m.l))}
+    svg.appendChild(g);return g});
+  return function(i){rows.forEach((g,k)=>g.classList.toggle('off',k>i))}}
+/* simple tabs: buttons [data-tab] inside .seg, panels [data-panel] */
+function tabs(rootSel){const r=$(rootSel);const bs=r.querySelectorAll('[data-tab]');bs.forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);r.querySelectorAll('[data-panel]').forEach(p=>p.hidden=p.dataset.panel!==b.dataset.tab)}))}
+function logLine(sel,html,c){const r=$(sel);const d=document.createElement('div');d.innerHTML=html;if(c)d.style.color=`var(--${c})`;r.appendChild(d);r.scrollTop=r.scrollHeight}
+
+
+/* replay */
+let EV=[];const RULE={create:(s)=>s.state?null:['OrderCreated','{ items: 2 × Pad thai }'],approve:s=>s.state==='APPROVAL_PENDING'?['OrderAuthorized','{}']:null,revise:s=>s.state==='APPROVED'?['OrderRevised','{ qty: 3 }']:null,cancel:s=>s.state==='APPROVED'?['OrderCancelled','{}']:null};
+function fold(n){let s={state:null,qty:0,ver:0};EV.slice(0,n).forEach(e=>{s.ver++;if(e[0]==='OrderCreated'){s.state='APPROVAL_PENDING';s.qty=2}if(e[0]==='OrderAuthorized')s.state='APPROVED';if(e[0]==='OrderRevised')s.qty=3;if(e[0]==='OrderCancelled')s.state='CANCELLED'});return s}
+function esDraw(){const n=+$('#rp').value;$('#rpV').textContent=n+' of '+EV.length;$('#evlog').innerHTML=EV.length?EV.map((e,i)=>`<div class="${i>=n?'dim':''}"><i>${i+1}</i><span><b>${e[0]}</b> ${e[1]}</span></div>`).join(''):'<div><i>—</i><span>no events yet</span></div>';
+  const s=fold(n);$('#stcard').innerHTML=`<span class="eyebrow">Order 7 rebuilt in memory</span><span>state: <b>${s.state||'(does not exist)'}</b></span><span>Pad thai × ${s.qty}</span><span>version: ${s.ver}</span>`}
+$$('[data-c]').forEach(b=>b.addEventListener('click',()=>{const cur=fold(EV.length);const ev=RULE[b.dataset.c](cur);if(!ev){$('#esMsg').textContent=`process(${b.dataset.c}) rejected: not allowed in state ${cur.state||'none'}. No event appended.`;return}
+  EV.push(ev);$('#rp').max=EV.length;$('#rp').value=EV.length;$('#esMsg').textContent=`process(${b.dataset.c}) returned ${ev[0]}; apply() updated the state; the event was appended.`;esDraw()}));
+$('#rp').addEventListener('input',esDraw);$('#esReset').addEventListener('click',()=>{EV=[];$('#rp').max=0;$('#rp').value=0;$('#esMsg').textContent='';esDraw()});esDraw();
+
+/* locking */
+let lk=3,lkDone={};function lkShow(){$('#lkV').textContent=lk}
+function lkTry(w){if(lkDone[w]){logLine('#lkLog',`${w} already finished.`);return}lkDone[w]=1;if(lk===3){lk=4;logLine('#lkLog',`${w}: INSERT event, expected version 3 → OK, now version 4`,'ok')}else logLine('#lkLog',`${w}: expected version 3 but it is ${lk} → OptimisticLockingException. Reload, replay, retry the command.`,'bad');lkShow()}
+$('#lkA').addEventListener('click',()=>lkTry('A'));$('#lkB').addEventListener('click',()=>lkTry('B'));$('#lkR').addEventListener('click',()=>{lk=3;lkDone={};$('#lkLog').innerHTML='';lkShow()});
+
+/* snapshots */
+function sn(){const e=+$('#snEv').value,n=+$('#snEvery').value;$('#snE').textContent=e;$('#snN').textContent=n?n:'never';const with_=n?(e%n):e;
+  bars('#snBars',[{l:'Replay without snapshots',v:e,c:'bad',txt:e+' events'},{l:'Snapshot + tail',v:with_+(n?1:0),c:'ok',txt:n?`1 snapshot + ${with_} events`:e+' events'}],e)}
+$('#snEv').addEventListener('input',sn);$('#snEvery').addEventListener('input',sn);sn();
+
+/* upcasting */
+const UP={raw:`{ "type": "OrderCreated", "schemaVersion": 1,
+  "address": "1 Main St, Oakland" }`,up:`<span class="c">// upcaster v1 → v2 runs while loading from the store</span>
+{ "type": "OrderCreated", "schemaVersion": 2,
+  "deliveryAddress": { "street": "1 Main St",
+                       "city": "Oakland" } }`};
+seg('[data-u]',b=>$('#upCode').innerHTML=UP[b.dataset.u]);$('#upCode').innerHTML=UP.raw;
+
+cards('#esCards',[{t:'Reliable event publishing',c:'ok',d:'Saving the events is the state change, so every change is published. A solid base for sagas, CQRS views and notifications.'},{t:'History preserved',c:'ok',d:'Temporal queries, accurate audit logs, and a time machine: replay to any past state, or re-derive new views from old events.'},{t:'No O/R mismatch',c:'ok',d:'Events are simple to serialize; you persist them, not a complex object graph.'},{t:'Learning curve',c:'bad',d:'A different and unfamiliar programming model; migrating an existing app is hard.'},{t:'Messaging complexity',c:'bad',d:'At-least-once delivery means idempotent handlers everywhere.'},{t:'Evolving events',c:'bad',d:'Old versions live forever; code must cope with all of them (upcasting helps).'},{t:'Deleting data',c:'bad',d:'Append-only clashes with privacy laws; needs crypto-shredding or pseudonymization.'},{t:'Querying is hard',c:'bad',d:'"Customers whose credit is exhausted" requires folding events; you usually need CQRS views (chapter 7).'}]);
+
+/* GDPR */
+let keyGone=false;function gd(){const rows=[['ConsumerCreated','name: Ann Lee, email: ann@example.com'],['OrderCreated','deliveryAddress: 1 Main St'],['OrderDelivered','courierNote: left at door']];
+  $('#gdprRows').innerHTML=rows.map(r=>`<div class="cipher"><b>${r[0]}</b> · ${keyGone?'█▓▒ 9f3a…c71e (unreadable, key destroyed)':r[1]}</div>`).join('')+`<p class="small">${keyGone?'The events still exist, so the log stays intact, but Ann\'s personal data is gone for good.':'Ann\'s data is stored encrypted with a key only for her.'}</p>`}
+$('#gdpr').addEventListener('click',()=>{keyGone=true;gd()});$('#gdprR').addEventListener('click',()=>{keyGone=false;gd()});gd();
+
+/* eventuate local */
+const ELP={db:['Event database (MySQL)','Three tables: <b>events</b> (the events, with entity type and ID), <b>entities</b> (one row per aggregate with its current version, for optimistic locking) and <b>snapshots</b>.','d1'],relay:['Event relay','Connects to MySQL like a replication slave, reads the binlog and publishes each insert into the events table to the right Kafka topic, ignoring other changes. It runs as a standalone process and saves its binlog position in a Kafka topic so it can resume after a restart. (For other databases it falls back to polling.)','d5'],kafka:['Event broker (Kafka)','One topic per aggregate type, partitioned by aggregate ID, so events from one aggregate stay in order while consumers scale out.','pencil'],app:['Your services','Save events to MySQL via the Eventuate client; subscribe to events from Kafka.','d2']};
+(function(){const s=$('#elSvg');const P=[['app',120,10,140,46],['db',20,120,150,56],['relay',210,120,150,56],['kafka',120,230,140,50]];
+  P.forEach(p=>{const g=box(s,p[1],p[2],p[3],p[4],ELP[p[0]][0].split(' (')[0],ELP[p[0]][2],{cls:'gnode',fs:11.5});g.setAttribute('tabindex',0);g.setAttribute('role','button');
+    const go=()=>{$$('#elSvg .gnode').forEach(x=>x.classList.toggle('sel',x===g));$('#elInfo').style.borderLeftColor=`var(--${ELP[p[0]][2]})`;$('#elInfo').innerHTML=`<span class="eyebrow">Eventuate Local</span><h3 style="color:var(--${ELP[p[0]][2]})">${ELP[p[0]][0]}</h3><p>${ELP[p[0]][1]}</p>`};
+    g.addEventListener('click',go);g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go()}});if(p[0]==='db')go()});
+  arrow(s,150,56,100,120,'blue',{t:'insert events',fs:10,dx:-30});arrow(s,170,148,210,148,'d5');txt(s,190,140,'binlog',{fs:9.5});arrow(s,285,176,230,230,'pencil',{t:'publish',fs:10,dx:30});s.appendChild(el('path',{d:'M260,250 C350,250 360,40 262,33',fill:'none',stroke:'var(--pencil)','stroke-dasharray':'4 3','stroke-width':1.6}));txt(s,345,110,'subscribe',{fs:10,c:'pencil'})})();
+
+/* saga + ES */
+$('#sgStep').insertAdjacentHTML('beforeend',stepHTML());
+stepper('#sgStep',['Problem: with an RDBMS you create the Order and the saga orchestrator in one ACID transaction. An event store can\'t update both atomically.','Solution: Order Service just creates the Order aggregate and saves its OrderCreated event.','An event handler for OrderCreated creates the CreateOrderSaga orchestrator.','To be idempotent when the event is redelivered, the saga\'s ID is derived from the event (e.g. the order ID), so a duplicate tries to create the same saga and is detected.','The orchestrator proceeds as before, sending commands to participants.'],i=>{const s=$('#sgSvg');s.innerHTML='';
+  box(s,10,90,120,50,'Order Service','blue');if(i===0){box(s,200,40,150,50,'Order','d1');box(s,200,140,150,50,'Saga orchestrator','pencil');s.appendChild(el('rect',{x:190,y:30,width:170,height:170,rx:10,fill:'none',stroke:'var(--bad)','stroke-dasharray':'5 4'}));txt(s,275,220,'one transaction? not with an event store',{fs:10.5,c:'bad'});return}
+  box(s,180,90,120,50,'Event store','d5');arrow(s,130,115,180,115,'blue',{t:'OrderCreated',fs:10});
+  if(i>=2){box(s,350,90,130,50,'OrderCreated\nhandler','d2',{fs:11});arrow(s,300,115,350,115,'pencil',{flow:i===2})}
+  if(i>=2){box(s,520,90,110,50,'CreateOrder\nSaga','pencil',{fs:11});arrow(s,480,115,520,115,'pencil')}
+  if(i>=3)txt(s,575,165,'sagaId = orderId',{mono:1,fs:10,c:'ink'});if(i>=4){['Consumer','Kitchen','Accounting'].forEach((t,k)=>{box(s,390+k*82,10,76,32,t,'line',{fs:10});arrow(s,575,90,428+k*82,42,'muted',{dash:'3 3'})})}});
+
+quiz('#quiz','#qScore',[
+ {q:'How is an event-sourced aggregate loaded?',o:['SELECT its row','Replay its events (after a snapshot)'],a:1,why:'apply() each event in order, starting from the latest snapshot if there is one.'},
+ {q:'Which method may throw because a command is invalid?',o:['process()','apply()'],a:0,why:'process() validates and decides; apply() must always succeed.'},
+ {q:'How does the event store detect concurrent updates?',o:['Pessimistic locks','Version check on append'],a:1,why:'Optimistic locking with the aggregate\'s version.'},
+ {q:'Old events are converted to the newest schema when loaded. This is called...',o:['Upcasting','Snapshotting','Enrichment'],a:0,why:'The store keeps the original events untouched.'},
+ {q:'Which is a drawback of event sourcing?',o:['Unreliable event publishing','Querying the event store is hard'],a:1,why:'You usually add CQRS views for queries.'}]);
+
+})();
+</script>
+</body>
+</html>

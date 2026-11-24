@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>CMS, Advanced Tunings and New Collectors</title>
+<meta name="description" content="The concurrent mark-sweep collector, the knobs shared by all collectors (tenuring, TLABs, humongous objects), and the experimental low-pause collectors that point to the future.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Java Performance companion. Layout: an engineer's notebook column on blueprint grid paper.
+   Blue ink = the JVM and measurement, orange pencil = your application code, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code and terminal snippets */
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)} pre.code .b{color:var(--bad)} pre.code .p{color:var(--pencil)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+button.tag.theme{cursor:pointer}
+button.tag.theme:hover{border-color:var(--blue);color:var(--blue)}
+.meter{height:14px;border-radius:7px;background:var(--paper);border:1px solid var(--line);overflow:hidden}
+.meter>i{display:block;height:100%;width:0;background:var(--blue);transition:width .3s}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.kv>div{border:1px solid var(--line);border-radius:8px;padding:8px 12px;background:var(--paper);display:flex;flex-direction:column;min-width:0}
+.kv b{font-family:var(--mono);font-size:1.1rem}
+.kv span{font-size:.82rem;color:var(--muted)}
+
+/* page */
+
+.g2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+@media (max-width:640px){.g2{grid-template-columns:1fr}}
+.tlab{display:flex;gap:3px;height:44px;border:1px solid var(--line);border-radius:8px;padding:3px;background:var(--paper)}
+.tlab i{display:block;border-radius:4px;transition:flex .3s}
+.bigv{font-family:var(--display);font-weight:800;font-size:1.4rem}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Java Performance · visual companion</a><span class="tag">Part II · Chapter 6b of 12</span><button class="tag theme" type="button" data-theme-toggle aria-label="Switch light or dark theme">Theme</button></div>
+  <h1>CMS, Advanced Tunings and New Collectors</h1>
+  <p class="lede">The concurrent mark-sweep collector, the knobs shared by all collectors (tenuring, TLABs, humongous objects), and the experimental low-pause collectors that point to the future.</p>
+  <nav class="toc" aria-label="Sections"><a href="#cms">CMS</a><a href="#tenure">Tenuring</a><a href="#tlab">TLABs</a><a href="#humongous">Humongous</a><a href="#aggressive">AggressiveHeap</a><a href="#future">ZGC, Shenandoah, Epsilon</a><a href="#check">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="cms" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>CMS: concurrent, but never compacting</h2></div>
+  <p>The Concurrent Mark-Sweep collector was the first to clean the old generation while the application ran. Young collections still stop the world (logged as <code>ParNew</code>). For the old generation it runs a background cycle with two short pauses. The catch: it <b>sweeps</b> dead objects into free lists but never moves the live ones. Over time the old generation fragments, and when nothing fits, CMS falls back to a long single-threaded full GC. That, plus G1 doing the same job better, is why it is deprecated in JDK 11.</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="cmsSvg" viewBox="0 0 640 150" role="img" aria-label="Phases of a CMS concurrent cycle"></svg></div>
+    <div class="stepper" id="cmsStep"></div>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>When does CMS start?</h3><span class="small">-XX:CMSInitiatingOccupancyFraction=N -XX:+UseCMSInitiatingOccupancyOnly</span></div>
+    <div class="g2">
+      <label class="rng"><span>Start cycle at old-gen occupancy: <b id="cfV">70%</b></span><input type="range" id="cf" min="30" max="95" value="70"></label>
+      <label class="rng"><span>Live data in old gen: <b id="clV">50%</b></span><input type="range" id="cl" min="20" max="80" value="50"></label>
+    </div>
+    <p id="cfTxt" aria-live="polite"></p>
+  </div>
+  <p class="small">Other CMS facts: its background thread count is <code>(3 + ParallelGCThreads) / 4</code>; on a single CPU the background thread competes with the app (the old "incremental CMS" mode for that case is gone). By default it does not clean metaspace: <code>-XX:+CMSClassUnloadingEnabled</code> (default true in JDK 8) and <code>-XX:+CMSPermGenSweepingEnabled</code> control that.</p>
+</section>
+
+<section id="tenure" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Survivor spaces and the tenuring threshold</h2></div>
+  <p>Survivor spaces give young objects a few more chances to die before they are promoted. Each object carries an age (minor GCs survived). It is promoted when its age reaches the <b>tenuring threshold</b>, or immediately if the survivor space overflows. The JVM adapts the threshold between 1 and <code>MaxTenuringThreshold</code> (15 for throughput and G1, 6 for CMS), starting at <code>InitialTenuringThreshold</code> (7), aiming to keep survivor spaces about half full (<code>TargetSurvivorRatio=50</code>). Each survivor space starts at young / (<code>InitialSurvivorRatio</code> + 2): 10% of the young generation by default.</p>
+  <div class="sheet">
+    <div class="g2">
+      <label class="rng"><span>Survivor space size: <b id="ssV">60 MB</b></span><input type="range" id="ss" min="10" max="200" step="10" value="60"></label>
+      <label class="rng"><span>Data surviving each young GC: <b id="sdV">80 MB</b></span><input type="range" id="sd" min="10" max="200" step="10" value="80"></label>
+      <label class="rng"><span>Typical object lifetime: <b id="slV">4 GCs</b></span><input type="range" id="sl" min="1" max="20" value="4"></label>
+      <label class="rng"><span>MaxTenuringThreshold: <b id="smV">15</b></span><input type="range" id="sm" min="0" max="15" value="15"></label>
+    </div>
+    <div class="svgbox"><svg id="tnSvg" viewBox="0 0 640 170" role="img" aria-label="Survivor space occupancy and promotions"></svg></div>
+    <p id="tnTxt" aria-live="polite"></p>
+  </div>
+  <p class="small">Watch it in logs with <code>-Xlog:gc+age=debug</code> (JDK 11) or <code>-XX:+PrintTenuringDistribution</code> (JDK 8). <code>-XX:+AlwaysTenure</code> (threshold 0) and <code>-XX:+NeverTenure</code> exist for special cases; rarely useful.</p>
+</section>
+
+<section id="tlab" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Thread-local allocation buffers</h2></div>
+  <p>Allocating in eden is fast because each thread owns a slice of it, a <b>TLAB</b>, and bumps a pointer inside it with no locking. When an object doesn't fit in what's left of the TLAB, the JVM must choose: retire the TLAB (wasting the leftover) and grab a new one, or allocate this one object directly in shared eden (slower, synchronized). TLAB sizes adapt to each thread's allocation rate. Try an allocation:</p>
+  <div class="sheet">
+    <div class="g2">
+      <label class="rng"><span>TLAB size: <b id="tsV">100 KB</b>, already used: <b id="tuV">75 KB</b></span><input type="range" id="tu" min="0" max="100" step="5" value="75"></label>
+      <label class="rng"><span>New object: <b id="toV">30 KB</b></span><input type="range" id="to" min="1" max="120" value="30"></label>
+    </div>
+    <div class="tlab" id="tlBar"></div>
+    <p id="tlTxt" aria-live="polite"></p>
+  </div>
+  <p class="small">You rarely tune TLABs. JFR's TLAB events show allocations outside TLABs; if many large objects land there, prefer smaller objects. Otherwise <code>-XX:TLABSize=N</code> sets an initial size, <code>-XX:-ResizeTLAB</code> stops resizing, <code>-XX:MinTLABSize</code> (2 KB) sets the floor.</p>
+</section>
+
+<section id="humongous" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Humongous objects and G1 region size</h2></div>
+  <p>In G1, an object of half a region or more is <b>humongous</b>: it is placed straight into the old generation in its own set of contiguous regions, skipping the young-generation life cycle. Lots of short-lived humongous arrays mean wasted space, early marking cycles, and possibly a full GC when no contiguous run is free. The fix is bigger regions. The region size is fixed at startup from the initial heap: the smallest power of two from 1 MB to 32 MB that gives about 2,048 regions.</p>
+  <div class="sheet">
+    <div class="g2">
+      <label class="rng"><span>Initial heap (-Xms): <b id="hhV">8 GB</b></span><input type="range" id="hh" min="0" max="7" value="3"></label>
+      <label class="rng"><span>Typical big allocation: <b id="haV">3 MB</b></span><input type="range" id="ha" min="1" max="40" value="3"></label>
+    </div>
+    <div class="kv"><div><b id="hrR">4 MB</b><span>default region size</span></div><div><b id="hrN">2048</b><span>regions</span></div><div><b id="hrH">no</b><span>humongous?</span></div><div><b id="hrW">0 MB</b><span>wasted tail space per object</span></div></div>
+    <p id="hrTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout blue"><b class="h">Initial vs. maximum heap matters here</b><span>Because the size comes from <code>-Xms</code>, a 1 GB initial heap that grows to 32 GB ends up with 32,768 one-megabyte regions, far more than G1 is designed for. Set <code>-XX:G1HeapRegionSize</code> to fit the expected heap.</span></div>
+</section>
+
+<section id="aggressive" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>AggressiveHeap and the default heap calculation</h2></div>
+  <p><code>-XX:+AggressiveHeap</code> is a legacy shortcut for "one JVM owns a big machine": it picks the throughput collector, a heap of up to half of physical memory with <code>Xms</code>=<code>Xmx</code>, a young generation of 3/8 of that, large pages, and fixed 256 KB TLABs. Those values were never updated as the JVM improved, so treat it with suspicion and test before relying on it.</p>
+  <p>Default heap sizes come from physical memory (or the container limit), adjusted by flags such as <code>-XX:MaxRAM</code>, <code>-XX:MaxRAMFraction</code>/<code>-XX:MaxRAMPercentage</code> and <code>-XX:InitialRAMFraction</code>. The arithmetic is simple on normal machines and gets intricate at the edges (tiny memory, compressed-oops limits); when in doubt, check <code>PrintFlagsFinal</code>.</p>
+</section>
+
+<section id="future" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Experimental collectors</h2></div>
+  <p>Even G1 and CMS stop the world to <b>move</b> objects, because updating references is easy only when nothing else is running. <b>ZGC</b> and <b>Shenandoah</b> compact concurrently: application threads pass through a barrier when they load a reference, and if that object is mid-move they wait briefly (or help). Without long compaction pauses, the heap no longer needs generations. Pauses stay around 10 ms or less whatever the heap size, at some cost in throughput and CPU. Enable them with <code>-XX:+UnlockExperimentalVMOptions -XX:+UseZGC</code> or <code>-XX:+UseShenandoahGC</code> (Shenandoah is in AdoptOpenJDK builds, not Oracle's).</p>
+  <div class="sheet">
+    <div class="row between"><h3>REST server, fixed 500 ops/s, response times</h3><div class="seg" role="group" aria-label="Statistic"><button data-st="0" aria-pressed="false">average</button><button data-st="1" aria-pressed="false">90th %</button><button data-st="2" aria-pressed="true">99th %</button><button data-st="3" aria-pressed="false">max</button></div></div>
+    <div class="bars" id="latBars"></div>
+    <p class="small">Data reported in the book for an allocation-heavy request. Throughput GC's full GCs dominate the tail; G1 removes those but keeps young pauses; the concurrent compactors flatten it.</p>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>Epsilon: the collector that never collects</h3><div class="seg" role="group" aria-label="Metric"><button data-ep="t" aria-pressed="true">Run time</button><button data-ep="h" aria-pressed="false">Heap needed</button></div></div>
+    <div class="bars" id="epBars"></div>
+    <p class="small">For a short program that allocates 4,096 half-megabyte arrays and exits, skipping GC entirely was about 30% faster. When the heap fills, Epsilon simply fails with OutOfMemoryError, so it suits very short-lived jobs, programs that never allocate after startup, and testing.</p>
+  </div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b>CMS fragments</b><span>No compaction, so eventually a long full GC. Start cycles early enough; prefer G1.</span></div>
+    <div><b>Survivors buy time</b><span>Too-small survivor spaces promote objects early, causing more old-gen work.</span></div>
+    <div><b>TLABs make allocation cheap</b><span>Large objects fall outside them; prefer smaller objects to tuning.</span></div>
+    <div><b>Humongous = half a region</b><span>Raise G1HeapRegionSize if big short-lived arrays are common.</span></div>
+    <div><b>Concurrent compaction is coming</b><span>ZGC and Shenandoah trade some throughput for tiny pauses.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Java Performance: In-Depth Advice for Tuning and Programming Java 8, 11, and Beyond</i> (2nd edition) by Scott Oaks (O'Reilly, 2020). Explanations, code snippets, simulations and drawings are original summaries; numbers in the drawings are illustrative unless stated.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch06a-gc-throughput-g1.html"><span>Previous · Chapter 6a</span><b>Throughput and G1 Collectors</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch07-heap.html"><span>Next · Chapter 7</span><b>Heap Memory Best Practices</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('jp:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('jp:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle: remembers the choice per viewer */
+(function(){const R=document.documentElement;const saved=store.get('theme',null);if(saved)R.setAttribute('data-theme',saved);
+ $$('[data-theme-toggle]').forEach(b=>b.addEventListener('click',()=>{const cur=R.getAttribute('data-theme');const dark=cur?cur==='dark':matchMedia('(prefers-color-scheme: dark)').matches;const nx=dark?'light':'dark';R.setAttribute('data-theme',nx);store.set('theme',nx)}))})();
+function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+
+
+/* CMS stepper */
+const CP=[['Initial mark','p',10],['Concurrent mark','c',90],['Preclean','c',40],['Abortable preclean','c',60],['Remark','p',14],['Concurrent sweep','c',90],['Reset','c',20]];
+const CPT=['<b>Initial mark</b> (short pause): find objects directly reachable from roots into the old generation.','<b>Mark</b> (concurrent): trace the rest of the old generation while the app runs.','<b>Preclean</b> (concurrent): catch up on references the app changed during marking.','<b>Abortable preclean</b> (concurrent): wait for a young GC to happen so the next pause has less to do, but give up after a few seconds.','<b>Remark</b> (pause): finish marking with the app stopped. Usually tens of milliseconds.','<b>Sweep</b> (concurrent): return dead objects\' space to free lists. Nothing is moved, so free space stays scattered.','<b>Reset</b> (concurrent): clear data structures for the next cycle. If at any point the old generation fills first: <b class="badc">concurrent mode failure</b>, a single-threaded full GC. If a promotion finds no big-enough free chunk: <b class="badc">promotion failure</b>, same result.'];
+function drawCMS(k){const s=$('#cmsSvg');s.innerHTML='';const tot=CP.reduce((a,b)=>a+b[2],0);let x=20;const W=600/tot;
+ CP.forEach((p,i)=>{const w=p[2]*W;s.appendChild(el('rect',{x,y:40,width:w-2,height:40,rx:4,fill:p[1]==='p'?'var(--bad)':'var(--pencil)',opacity:i===k?1:.3}));
+  s.appendChild(el('text',{x:x+w/2,y:i%2?110:28,'text-anchor':'middle','font-size':10.5,fill:i===k?'var(--ink)':'var(--muted)','font-weight':i===k?700:400},p[0]));x+=w});
+ s.appendChild(el('text',{x:20,y:140,'font-size':11,fill:'var(--muted)'},'red = application stopped · orange = runs alongside the application'))}
+$('#cmsStep').innerHTML=stepHTML();stepper('#cmsStep',CPT,drawCMS);
+function drawCF(){const f=+$('#cf').value,l=+$('#cl').value;$('#cfV').textContent=f+'%';$('#clV').textContent=l+'%';
+ $('#cfTxt').innerHTML=f<l+10?'<b class="midc">Too early.</b> The threshold is barely above live data, so cycles run back to back and burn CPU for little benefit. Aim for live data plus 10 to 20%.':f>85?'<b class="badc">Too late.</b> Promotions will likely fill the old generation before the background sweep finishes: concurrent mode failure and a long full GC. Lower it, or grow the heap.':'<b class="okc">Reasonable.</b> Enough headroom for promotions while the cycle runs, without cycling constantly. Default with the "Only" flag is 70%; otherwise CMS uses its own heuristics.'}
+['#cf','#cl'].forEach(i=>$(i).addEventListener('input',drawCF));drawCF();
+
+/* tenuring sim */
+function drawTN(){const ss=+$('#ss').value,sd=+$('#sd').value,life=+$('#sl').value,mt=+$('#sm').value;
+ $('#ssV').textContent=ss+' MB';$('#sdV').textContent=sd+' MB';$('#slV').textContent=life+' GC'+(life>1?'s':'');$('#smV').textContent=mt;
+ const s=$('#tnSvg');s.innerHTML='';const N=12;let promoted=0,promotedLive=0;const X=i=>40+i*48;
+ for(let i=0;i<N;i++){const want=sd;const fit=Math.min(want,ss);const over=want-fit;
+  const thr=Math.max(0,Math.min(mt,ss>=sd*0.5?mt:Math.max(1,Math.floor(mt*ss/sd))));
+  const early=over+(thr<life?fit*0.3:0);promoted+=early;promotedLive+=thr<life?early:early*0.5;
+  s.appendChild(el('rect',{x:X(i),y:20,width:30,height:fit/200*80,fill:'var(--d2)',opacity:.85}));
+  if(early>0)s.appendChild(el('rect',{x:X(i),y:110,width:30,height:Math.min(50,early/200*80),fill:'var(--pencil)',opacity:.85}))}
+ s.appendChild(el('text',{x:40,y:14,'font-size':11,fill:'var(--d2)'},'kept in survivor space per young GC'));
+ s.appendChild(el('text',{x:40,y:106,'font-size':11,fill:'var(--pencil)'},'promoted to old generation per young GC'));
+ const premature=sd>ss||mt<life;
+ $('#tnTxt').innerHTML=sd>ss?`<b class="badc">Survivor overflow.</b> ${sd-ss} MB per GC doesn't fit and is promoted regardless of age. Objects that would have died after ${life} GCs now fill the old generation, triggering more concurrent cycles or full GCs. Enlarge survivor spaces (lower <code>SurvivorRatio</code>, or a bigger young generation).`:mt<life?`<b class="midc">Threshold below lifetime.</b> Objects are promoted at age ${mt} but would die at age ${life}: premature promotion. Let the threshold rise (raise MaxTenuringThreshold).`:`<b class="okc">Healthy.</b> Survivors fit and objects usually die before reaching the threshold, so little reaches the old generation.`}
+['#ss','#sd','#sl','#sm'].forEach(i=>$(i).addEventListener('input',drawTN));drawTN();
+
+/* TLAB */
+function drawTL(){const u=+$('#tu').value,o=+$('#to').value;$('#tuV').textContent=u+' KB';$('#toV').textContent=o+' KB';const free=100-u;
+ const fits=o<=free;let html=`<i style="flex:${u};background:var(--blue);opacity:.75" title="used"></i>`;
+ if(fits)html+=`<i style="flex:${o};background:var(--ok)"></i><i style="flex:${free-o};background:var(--surface)"></i>`;else html+=`<i style="flex:${free};background:var(--bad-soft);border:1px dashed var(--bad)"></i>`;
+ $('#tlBar').innerHTML=html;
+ $('#tlTxt').innerHTML=fits?'<b class="okc">Fast path.</b> It fits: bump the pointer, no locks.':o>50?`<b class="badc">Too big for any TLAB this size.</b> It is allocated directly in shared eden (synchronized), and the TLAB keeps its ${free} KB for later small objects.`:`<b class="midc">Doesn't fit the ${free} KB left.</b> Either retire this TLAB (wasting ${free} KB of eden until the next GC) and take a fresh one, or allocate this object outside the TLAB. The JVM decides using a waste limit that it adjusts over time.`}
+['#tu','#to'].forEach(i=>$(i).addEventListener('input',drawTL));drawTL();
+
+/* humongous */
+function drawHR(){const gb=Math.pow(2,+$('#hh').value);const a=+$('#ha').value;$('#hhV').textContent=gb+' GB';$('#haV').textContent=a+' MB';
+ let r=1;while(r<32&&gb*1024/r>2048)r*=2;const n=Math.round(gb*1024/r);const hum=a>=r/2;const regs=Math.ceil(a/r);const waste=hum?regs*r-a:0;
+ $('#hrR').textContent=r+' MB';$('#hrN').textContent=n.toLocaleString();$('#hrH').textContent=hum?'yes':'no';$('#hrH').style.color=hum?'var(--bad)':'var(--ok)';$('#hrW').textContent=waste+' MB';
+ $('#hrTxt').innerHTML=hum?`A ${a} MB array is at least half of a ${r} MB region, so it goes straight to the old generation in ${regs} contiguous region${regs>1?'s':''}. If these are short-lived, try <code>-XX:G1HeapRegionSize=${Math.min(32,Math.pow(2,Math.ceil(Math.log2(a*2+0.01))))}m</code>${a*2>32?' (the 32 MB maximum still won\'t be enough: make the objects smaller)':''}.`:`Below half a region: allocated normally in eden and collected young.`}
+['#hh','#ha'].forEach(i=>$(i).addEventListener('input',drawHR));drawHR();
+
+/* latency */
+const LAT=[['Throughput',[13,60,160,265],'pencil'],['G1',[5,10,35,87],'blue'],['ZGC',[1,5,5,20],'ok'],['Shenandoah',[1,5,5,22],'ok']];
+function drawLat(k){bars('#latBars',LAT.map(r=>({l:r[0],v:r[1][k],txt:r[1][k]+' ms',c:r[2]})),k===3?270:k===2?170:k===1?65:15)}
+seg('[data-st]',b=>drawLat(+b.dataset.st));drawLat(2);
+const EP={t:[['Throughput',2.3,'2.3 s'],['G1',3.24,'3.24 s'],['Epsilon',1.6,'1.6 s']],h:[['Throughput',3072,'3,072 MB'],['G1',4096,'4,096 MB'],['Epsilon',2052,'2,052 MB']]};
+function drawEP(k){bars('#epBars',EP[k].map((r,i)=>({l:r[0],v:r[1],txt:r[2],c:i===2?'ok':'blue'})),k==='t'?3.5:4300)}
+seg('[data-ep]',b=>drawEP(b.dataset.ep));drawEP('t');
+
+quiz('#qQuiz','#qScore',[
+ {q:'Why can CMS eventually need a long full GC even if well tuned?',o:['It never compacts','It is single-threaded'],a:0,why:'Sweeping leaves fragmented free lists; only a full GC compacts.'},
+ {q:'Survivor spaces overflow each young GC. Effect?',o:['Objects freed sooner','Premature promotion'],a:1,why:'Overflowing survivors are promoted regardless of age.'},
+ {q:'Why is allocation in a TLAB fast?',o:['No synchronization','Objects are smaller'],a:0,why:'Each thread bumps a pointer in its own buffer.'},
+ {q:'Region size 4 MB. Is a 2 MB array humongous?',o:['Yes','No'],a:0,why:'Half a region or more counts as humongous.'},
+ {q:'What lets ZGC and Shenandoah drop generations?',o:['Concurrent compaction','Bigger heaps'],a:0,why:'Without long compaction pauses, a small young generation is no longer needed to keep pauses short.'}]);
+
+})();
+</script>
+</body>
+</html>

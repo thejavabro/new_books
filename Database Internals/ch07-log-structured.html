@@ -1,0 +1,594 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Log-Structured Storage</title>
+<meta name="description" content="Instead of editing data where it lives, write everything to new places and clean up later. That one decision gives you fast writes, simple concurrency and a background job called compaction you have to live with forever.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<script>try{var t=localStorage.getItem('dbi:theme');if(t)document.documentElement.dataset.theme=JSON.parse(t)}catch(e){}</script>
+<style>
+/* Shared base for the Database Internals companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+button.tag{cursor:pointer}
+button.tag:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{font-family:var(--mono);font-size:.82rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:0;overflow-x:auto;white-space:pre;max-width:100%}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+pre.code code{border:0;padding:0;background:none}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;max-height:220px;overflow:auto;display:flex;flex-direction:column;gap:2px}
+.log div{white-space:pre-wrap;word-break:break-word}
+.cells{display:flex;flex-wrap:wrap;gap:4px}
+.cell{font-family:var(--mono);font-size:.8rem;min-width:2.4em;padding:4px 6px;text-align:center;border:1px solid var(--line);border-radius:4px;background:var(--paper);transition:background .3s,border-color .3s}
+.cell.hit{background:var(--blue-soft);border-color:var(--blue)}
+.cell.ok{background:var(--ok-soft);border-color:var(--ok)}
+.cell.bad{background:var(--bad-soft);border-color:var(--bad)}
+.cell.mid{background:var(--mid-soft);border-color:var(--mid)}
+.cell.dim{opacity:.35}
+input[type=text],input[type=number]{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+
+/* page */
+
+.lsm{display:flex;flex-direction:column;gap:10px}
+.lrow{display:grid;grid-template-columns:7.5em minmax(0,1fr);gap:10px;align-items:start}
+.lrow>b{font-family:var(--mono);font-size:.75rem;color:var(--muted);padding-top:6px}
+.tables{display:flex;flex-wrap:wrap;gap:6px}
+.tbl2{border:1.5px solid var(--blue);border-radius:6px;padding:4px 6px;display:flex;flex-wrap:wrap;gap:3px;background:var(--surface);transition:all .3s;max-width:100%}
+.tbl2.mem{border-color:var(--pencil);border-style:dashed}
+.tbl2.chk{outline:3px solid var(--mid);outline-offset:1px}
+.tbl2.skip{opacity:.35}
+.tbl2.found{outline:3px solid var(--ok);outline-offset:1px}
+.tbl2 span{font-family:var(--mono);font-size:.72rem;padding:2px 5px;border-radius:3px;background:var(--paper)}
+.tbl2 span.tomb{background:var(--bad-soft);color:var(--bad)}
+.tbl2 small{width:100%;font-size:.62rem;color:var(--muted);font-family:var(--mono)}
+.bits2{display:grid;grid-template-columns:repeat(32,minmax(0,1fr));gap:2px}
+.bits2 span{height:24px;border-radius:3px;background:var(--paper);border:1px solid var(--line);font-family:var(--mono);font-size:.55rem;display:flex;align-items:center;justify-content:center;transition:all .25s}
+.bits2 span.on{background:var(--blue);border-color:var(--blue);color:var(--surface)}
+.bits2 span.q{outline:2px solid var(--pencil);outline-offset:1px}
+@media (max-width:560px){.bits2{grid-template-columns:repeat(16,minmax(0,1fr))}}
+.cls{display:grid;grid-template-columns:minmax(0,1.5fr) repeat(3,minmax(0,1fr));border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--surface);font-size:.88rem}
+.cls>div{padding:7px 10px;border-bottom:1px solid var(--line)}
+.cls .h{font-family:var(--mono);font-size:.68rem;text-transform:uppercase;color:var(--muted);background:var(--paper)}
+.cls .y{color:var(--ok);font-weight:700}.cls .n{color:var(--muted)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Database Internals · visual companion</a><span class="tag">Part I · Chapter 7 of 14</span><button class="tag themebtn" type="button" aria-label="Toggle light and dark theme">Theme</button></div>
+  <h1>Log-Structured Storage</h1>
+  <p class="lede">Instead of editing data where it lives, write everything to new places and clean up later. That one decision gives you fast writes, simple concurrency and a background job called compaction you have to live with forever.</p>
+  <nav class="toc" aria-label="Sections"><a href="#lsm">LSM Trees</a><a href="#merge">Merge-iteration</a><a href="#compaction">Compaction</a><a href="#rum">Amplification and RUM</a><a href="#sstable">SSTables</a><a href="#bloom">Bloom filters</a><a href="#skiplist">Skiplists</a><a href="#unordered">Bitcask and WiscKey</a><a href="#lsmconc">Concurrency</a><a href="#stacking">Log stacking</a><a href="#partone">Part I recap</a><a href="#quiz">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="lsm" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>The LSM Tree, hands on</h2></div>
+  <p>A <b>log-structured merge tree</b> never updates data in place. Writes go to the <b>write-ahead log</b> and to a sorted in-memory <b>memtable</b>. When the memtable is big enough it is <b>flushed</b> as an immutable, sorted disk table. Deletes are writes too: a <b>tombstone</b> that shadows older values (some engines also support <b>range tombstones</b>). A read must check the memtable and then every table from newest to oldest until it finds the key. The number of tables keeps growing, so a background <b>compaction</b> merges them, dropping shadowed records. Try it; the memtable flushes at 4 entries.</p>
+  <div class="sheet">
+    <div class="row"><input type="text" id="lK" value="k3" style="width:5em" aria-label="Key"><input type="text" id="lV" value="v1" style="width:5em" aria-label="Value"><button class="btn" id="lPut">Put</button><button class="btn" id="lDel">Delete</button><button class="btn primary" id="lGet">Get</button><button class="btn" id="lFlush">Flush</button><button class="btn" id="lComp">Compact all</button><button class="btn" id="lReset">Reset</button></div>
+    <label class="small"><input type="checkbox" id="lBloom" checked> Use Bloom filters on disk tables</label>
+    <div class="lsm" id="lsmView"></div>
+    <div class="log" id="lLog" aria-live="polite"></div>
+  </div>
+  <div class="cardgrid" id="lsmCards"></div>
+</section>
+
+<section id="merge" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Merge-iteration and reconciliation</h2></div>
+  <p>Reads over ranges, flushes and compactions all need the same primitive: merge several sorted iterators into one sorted stream. A <b>priority queue</b> (min-heap) holds the head of each iterator; pop the smallest, output it, refill from the iterator it came from. When several sources hold the same key, <b>reconciliation</b> keeps the record with the newest timestamp, and a tombstone wins over the values it shadows.</p>
+  <div class="sheet stepper" id="mStep">
+    <div class="svgbox"><svg id="mSvg" viewBox="0 0 660 230" role="img" aria-label="Two sorted tables merged through a priority queue"></svg></div>
+  </div>
+</section>
+
+<section id="compaction" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Leveled versus size-tiered compaction</h2></div>
+  <p><b>Leveled</b> compaction (RocksDB): level 0 holds freshly flushed tables whose ranges may overlap; from level 1 on, tables on a level have disjoint key ranges and each level is exponentially larger than the previous one. When a level exceeds its target, tables are merged into the next level's overlapping tables. <b>Size-tiered</b> compaction (Cassandra's classic strategy) groups tables of similar size and merges a group into one bigger table. Leveled rewrites data more often; size-tiered leaves more tables to check per read. Flush tables and compare.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn primary" id="cpFlush">Flush 1 table</button><button class="btn" id="cpFlush10">Flush 10</button><button class="btn" id="cpReset">Reset</button></div>
+    <div class="two">
+      <div class="stack"><h3>Leveled</h3><div class="svgbox fit"><svg id="lvSvg" viewBox="0 0 320 200" role="img" aria-label="Leveled compaction state"></svg></div></div>
+      <div class="stack"><h3>Size-tiered</h3><div class="svgbox fit"><svg id="stSvg" viewBox="0 0 320 200" role="img" aria-label="Size-tiered compaction state"></svg></div></div>
+    </div>
+    <div class="bars" id="cpBars"></div>
+    <p class="small">Simplified model: every flush is one unit of data with no overwrites; L1 holds 4 units, each next level 4× more.</p>
+  </div>
+  <div class="callout"><b class="h">Tombstones and starvation</b><span>A tombstone can only be dropped once no older value it shadows could still exist. RocksDB keeps tombstones until they reach the bottommost level; Cassandra keeps them for a GC grace period so replicas see them. Drop one too early and deleted data is <b>resurrected</b>. In size-tiered compaction, merged tables can stay small (lots of data deleted), so bigger tiers <b>starve</b> and their tombstones are never applied; compaction has to be forced. Cassandra's <b>time window</b> strategy can drop whole expired files without rewriting them.</span></div>
+</section>
+
+<section id="rum" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Read, write and space amplification; the RUM conjecture</h2></div>
+  <p>Immutable storage trades three costs. <b>Read amplification</b>: several tables per lookup. <b>Write amplification</b>: data rewritten again and again by compaction. <b>Space amplification</b>: multiple versions of a key kept until compaction. Compact eagerly and you write more; compact lazily and you read and store more. Note that B-Trees and LSM Trees amplify writes for different reasons (page writeback versus file-to-file migration), so comparing raw numbers can mislead. The <b>RUM conjecture</b> generalises this: of <b>R</b>ead, <b>U</b>pdate and <b>M</b>emory overheads, improving two worsens the third. Click a structure.</p>
+  <div class="sheet">
+    <div class="svgbox fit"><svg id="rumSvg" viewBox="0 0 420 330" role="img" aria-label="RUM triangle with storage structures placed in it" style="max-width:460px;margin:0 auto"></svg></div>
+    <div class="detail" id="rumInfo" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="sstable" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Sorted String Tables</h2></div>
+  <p>Disk tables are usually <b>SSTables</b>: an <b>index file</b> (often a B-Tree or a sorted list of keys and offsets) and a <b>data file</b> of key-sorted records, written sequentially and never modified. Sorted order makes merge-iteration simple and range scans sequential. Cassandra's <b>SSTable-Attached Secondary Indexes</b> (SASI) go further: each table carries its own secondary index, built when the memtable is flushed and merged along with it during compaction.</p>
+  <div class="svgbox"><svg id="ssSvg" viewBox="0 0 660 160" role="img" aria-label="SSTable index and data files"></svg></div>
+</section>
+
+<section id="bloom" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Bloom filters</h2></div>
+  <p>Most tables don't hold the key you want. A <b>Bloom filter</b> per table answers "definitely not here" or "maybe here" from memory. It is a bit array with k hash functions: adding a key sets k bits; a lookup checks those k bits, and any zero proves absence. All ones may be a <b>false positive</b>, never a false negative. The false-positive rate is roughly (1 − e<sup>−kn/m</sup>)<sup>k</sup> for n keys in m bits.</p>
+  <div class="sheet">
+    <div class="row"><input type="text" id="bfK" value="apple" style="width:8em" aria-label="Key"><button class="btn" id="bfAdd">Add to filter</button><button class="btn primary" id="bfTest">Test membership</button><button class="btn" id="bfReset">Clear</button><label class="small">k = <select id="bfk"><option>1</option><option>2</option><option selected>3</option><option>4</option></select></label></div>
+    <div class="bits2" id="bfBits"></div>
+    <p id="bfOut" aria-live="polite"></p>
+    <p class="small" id="bfStats"></p>
+  </div>
+</section>
+
+<section id="skiplist" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Skiplists for memtables</h2></div>
+  <p>Memtables need a sorted structure that is cheap to insert into concurrently. A <b>skiplist</b> is a sorted linked list with extra "express lanes": each node gets a random height (each level with probability ½), and a search starts at the top lane, moves right while the next key is smaller, then drops down. Expected O(log n), no rebalancing, and inserts only touch nearby pointers, which keeps them concurrency-friendly. Some engines also use them in WiredTiger update buffers (chapter 6).</p>
+  <div class="sheet">
+    <div class="row"><input type="number" id="slK" value="42" style="width:5em" aria-label="Key"><button class="btn primary" id="slFind">Search</button><button class="btn" id="slIns">Insert</button><button class="btn" id="slReset">New random list</button></div>
+    <div class="svgbox"><svg id="slSvg" viewBox="0 0 660 200" role="img" aria-label="Skiplist with search path"></svg></div>
+    <p class="small" id="slTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="unordered" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Unordered storage: Bitcask and WiscKey</h2></div>
+  <p>Drop the "ordering" knob and writes get even cheaper. <b>Bitcask</b> (Riak) appends records to log files in write order and keeps an in-memory hash table, the <b>keydir</b>, mapping each key to its latest record. Point lookups take one seek; compaction copies live records and drops shadowed ones. The costs: every key in RAM, a keydir rebuild on startup, and no range scans. <b>WiscKey</b> keeps keys (small) sorted in an LSM Tree and values (large) in an append-only <b>vLog</b>, so compaction moves only keys. Range scans become random reads, eased by SSD parallelism; vLog garbage collection must consult the key tree to know what is live.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Design"><button data-uo="bc" aria-pressed="true">Bitcask</button><button data-uo="wk" aria-pressed="false">WiscKey</button></div>
+    <div class="svgbox"><svg id="uoSvg" viewBox="0 0 660 220" role="img" aria-label="Index pointing into an append-only value log"></svg></div>
+    <div class="row"><button class="btn" id="uoW">Overwrite k2</button><button class="btn primary" id="uoGC">Garbage-collect log</button></div>
+    <p class="small" id="uoTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="lsmconc" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Concurrency: switching table views</h2></div>
+  <p>LSM concurrency is mostly about changing the <b>table view</b> (the set of memtables and disk tables a reader sees) atomically, and coordinating that with the log. Cassandra uses operation-order barriers so the flush knows every accepted write has landed.</p>
+  <div class="sheet stepper" id="fStep">
+    <div class="svgbox"><svg id="fSvg" viewBox="0 0 660 170" role="img" aria-label="Memtables, disk tables and WAL segments during a flush"></svg></div>
+  </div>
+</section>
+
+<section id="stacking" class="stack">
+  <div class="sec-head"><span class="num">10</span><h2>Log stacking</h2></div>
+  <p>Log-structured storage is everywhere: the SSD's <b>flash translation layer</b> remaps pages, batches small writes, garbage-collects erase blocks and spreads wear (<b>wear leveling</b>); many <b>filesystems</b> log too; then the database adds its own WAL and LSM Tree. Stacked logs each keep their own bookkeeping and GC, duplicate work, and misaligned segments fragment the layer below. Interleaved write streams that are each sequential may not be sequential on the device. Align partitions and writes to hardware page sizes, or cut out layers.</p>
+  <div class="sheet">
+    <label class="rng"><span>Database segment size: <b id="segV"></b></span><input type="range" id="seg" min="2" max="12" value="5"></label>
+    <div class="svgbox"><svg id="stkSvg" viewBox="0 0 660 200" role="img" aria-label="Database log segments over filesystem and flash segments"></svg></div>
+    <p class="small" id="stkTxt"></p>
+  </div>
+  <div class="cardgrid" id="stkCards"></div>
+</section>
+
+<section id="partone" class="stack">
+  <div class="sec-head"><span class="num">11</span><h2>Part I in one table</h2></div>
+  <p>Every structure in Part I can be placed by the three properties from chapter 1. Buffering always helps write amplification; immutability shifts work to garbage collection or compaction; ordering buys range scans at the cost of sorting effort.</p>
+  <div class="cls" id="cls"></div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">12</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">13</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b>LSM write path</b><span>WAL + memtable, flush to immutable sorted tables, tombstones for deletes.</span></div>
+    <div><b class="blue">Read path</b><span>Memtable, then tables newest to oldest; Bloom filters skip most tables.</span></div>
+    <div><b>Compaction</b><span>Leveled (less read and space amp) vs size-tiered (less write amp).</span></div>
+    <div><b class="pencil">RUM</b><span>Read, update, memory: pick two.</span></div>
+    <div><b>Unordered</b><span>Bitcask: keydir + logs, no scans. WiscKey: keys in LSM, values in vLog.</span></div>
+    <div><b class="okc">Stacking</b><span>FTL, filesystem and database logs interact; align, coordinate or bypass.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Database Internals: A Deep Dive into How Distributed Data Systems Work</i> by Alex Petrov (O'Reilly, 2019). Explanations, examples, code and drawings are original summaries, not copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch06-btree-variants.html"><span>Previous · Chapter 6</span><b>B-Tree Variants</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch08-distributed-intro.html"><span>Next · Chapter 8</span><b>Introduction and Overview</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('dbi:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('dbi:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle */
+$$('.themebtn').forEach(b=>b.addEventListener('click',()=>{const r=document.documentElement;const dark=r.dataset.theme?r.dataset.theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches;r.dataset.theme=dark?'light':'dark';store.set('theme',r.dataset.theme)}));
+function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'})[c])}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
+
+
+/* ---------- LSM sim ---------- */
+let L,ts;
+function hashS(s,seed){let h=2166136261^seed;for(const c of s){h^=c.charCodeAt(0);h=Math.imul(h,16777619)}return(h>>>0)}
+function lReset(){L={mem:new Map(),tables:[],wal:0};ts=0;['k1','k5','k8','k2'].forEach((k,i)=>put(k,'a'+i,true));flush(true);['k3','k5','k9'].forEach((k,i)=>put(k,'b'+i,true));flush(true);put('k7','c0',true);lLog(['Two tables already flushed; one entry in the memtable.']);draw()}
+function put(k,v,q){L.mem.set(k,{v,ts:++ts});L.wal++;if(!q)lLog([`WAL append, then memtable.set(${k}) @t${ts}`]);if(L.mem.size>=4)flush()}
+function flush(q){if(!L.mem.size)return;const rows=[...L.mem.entries()].sort((a,b)=>a[0]<b[0]?-1:1);const bits=new Set();rows.forEach(([k])=>[0,1,2].forEach(s=>bits.add(hashS(k,s)%64)));L.tables.unshift({rows,bits,id:'T'+(L.tables.length+1)});L.mem=new Map();L.wal=0;if(!q)lLog([`memtable full → flushed as sorted table ${L.tables[0].id}; WAL segment discarded`])}
+function lLog(lines){$('#lLog').innerHTML=lines.map(x=>`<div>${esc(x)}</div>`).join('')}
+function draw(hl){hl=hl||{};const v=$('#lsmView');const tbl=(rows,cls,lab)=>`<div class="tbl2 ${cls}"><small>${lab}</small>${rows.map(([k,r])=>`<span class="${r.v===null?'tomb':''}">${k}:${r.v===null?'✝':r.v}</span>`).join('')||'<span>empty</span>'}</div>`;
+  v.innerHTML=`<div class="lrow"><b>memory</b><div class="tables">${tbl([...L.mem.entries()].sort((a,b)=>a[0]<b[0]?-1:1),'mem'+(hl.mem||''),'memtable ('+L.mem.size+'/4) · WAL '+L.wal)}</div></div><div class="lrow"><b>disk (newest first)</b><div class="tables">${L.tables.map((t,i)=>tbl(t.rows,(hl['t'+i]||''),t.id)).join('')||'<span class="small">no tables</span>'}</div></div>`}
+$('#lPut').addEventListener('click',()=>{put($('#lK').value.trim()||'k0',$('#lV').value.trim()||'v');draw();$('#lV').value='v'+(ts+1)});
+$('#lDel').addEventListener('click',()=>{const k=$('#lK').value.trim();L.mem.set(k,{v:null,ts:++ts});L.wal++;lLog([`delete ${k}: write a tombstone @t${ts}. Older values stay on disk until compaction.`]);if(L.mem.size>=4)flush();draw()});
+$('#lGet').addEventListener('click',()=>{const k=$('#lK').value.trim();const hl={};const out=[];const bloom=$('#lBloom').checked;let res=null,reads=0;
+  if(L.mem.has(k)){hl.mem=' found';res=L.mem.get(k);out.push(`memtable: hit`)}else{hl.mem=' chk';out.push('memtable: miss');
+    for(let i=0;i<L.tables.length;i++){const t=L.tables[i];if(bloom&&![0,1,2].every(s=>t.bits.has(hashS(k,s)%64))){hl['t'+i]=' skip';out.push(`${t.id}: Bloom filter says no → skipped`);continue}
+      reads++;const r=t.rows.find(x=>x[0]===k);if(r){hl['t'+i]=' found';res=r[1];out.push(`${t.id}: read → found`);break}hl['t'+i]=' chk';out.push(`${t.id}: read → ${bloom?'false positive, ':''}not here`)}}
+  out.push(res?(res.v===null?`result: deleted (tombstone shadows older values)`:`result: ${k} = ${res.v}`):`result: not found`);out.push(`disk tables read: ${reads}`);lLog(out);draw(hl)});
+$('#lFlush').addEventListener('click',()=>{flush();draw()});
+$('#lComp').addEventListener('click',()=>{if(L.tables.length<2)return lLog(['Need at least two tables.']);const m=new Map();[...L.tables].reverse().forEach(t=>t.rows.forEach(([k,r])=>m.set(k,r)));const before=L.tables.reduce((a,t)=>a+t.rows.length,0);
+  const rows=[...m.entries()].filter(([k,r])=>r.v!==null).sort((a,b)=>a[0]<b[0]?-1:1);const bits=new Set();rows.forEach(([k])=>[0,1,2].forEach(s=>bits.add(hashS(k,s)%64)));
+  lLog([`merged ${L.tables.length} tables (${before} records) → 1 table (${rows.length} records)`,`shadowed versions and tombstones dropped (safe here: this is the bottom level)`]);L.tables=[{rows,bits,id:'C'+ts}];draw()});
+$('#lReset').addEventListener('click',lReset);lReset();
+cards('#lsmCards',[{t:'Two-component LSM',c:'d1',d:'The original design: one memory tree and one disk B-Tree with full, read-only pages. Flushes merge memory subtrees into disk subtrees. Merges happen on every flush, so write amplification is high; no known implementations at the time of writing.'},{t:'Multicomponent LSM',c:'d2',d:'What RocksDB, Cassandra and friends do: flush whole memtables as new tables and let compaction merge them later.'},{t:'Flush rules',c:'d3',d:'New writes go to a new memtable; the flushing one stays readable; swapping it for the disk table is atomic; then its WAL segment can go.'}]);
+
+/* ---------- merge iteration ---------- */
+const MA=[['a',1,'x'],['c',3,'y'],['e',2,'✝'],['g',5,'p']],MB=[['b',4,'q'],['c',6,'z'],['e',1,'w'],['f',2,'r']];
+function mergeSteps(){const st=[];let ia=0,ib=0;const out=[];const pq=()=>{const h=[];if(ia<MA.length)h.push({s:'A',r:MA[ia]});if(ib<MB.length)h.push({s:'B',r:MB[ib]});return h.sort((x,y)=>x.r[0]<y.r[0]?-1:x.r[0]>y.r[0]?1:y.r[1]-x.r[1])};
+  st.push({ia,ib,out:[...out],pq:pq(),t:'Fill the priority queue with the head of each iterator.'});
+  while(ia<MA.length||ib<MB.length){const h=pq();const top=h[0];const same=h.filter(x=>x.r[0]===top.r[0]);
+    if(same.length>1){const win=same.sort((x,y)=>y.r[1]-x.r[1])[0];out.push(win.r);ia++;ib++;st.push({ia,ib,out:[...out],pq:pq(),t:`Both heads are key "${top.r[0]}". Reconcile: keep the newer one (t${win.r[1]} = ${win.r[2]}${win.r[2]==='✝'?', a tombstone':''}), advance both iterators.`})}
+    else{out.push(top.r);if(top.s==='A')ia++;else ib++;st.push({ia,ib,out:[...out],pq:pq(),t:`Pop "${top.r[0]}" from ${top.s}, emit it, refill from ${top.s}.`})}}
+  st.push({ia,ib,out:[...out],pq:[],t:'Done: one sorted, deduplicated stream. During compaction the tombstone for "e" would be dropped only if no older "e" can exist in tables outside this merge.'});return st}
+const MS=mergeSteps();$('#mStep').insertAdjacentHTML('beforeend',stepHTML());
+stepper('#mStep',MS.map(s=>s.t),i=>{const S=MS[i];const s=$('#mSvg');s.innerHTML='';const cell=(x,y,r,cls)=>{s.appendChild(el('rect',{x,y,width:58,height:34,rx:4,fill:cls==='done'?'var(--paper)':cls==='head'?'var(--blue-soft)':'var(--surface)',stroke:cls==='head'?'var(--blue)':'var(--line)',opacity:cls==='done'?.5:1}));s.appendChild(el('text',{x:x+29,y:y+15,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--ink)',class:'t-mono'},r[0]+':'+r[2]));s.appendChild(el('text',{x:x+29,y:y+28,'text-anchor':'middle','font-size':9.5,fill:'var(--muted)',class:'t-mono'},'t'+r[1]))};
+  s.appendChild(el('text',{x:10,y:34,'font-size':11,fill:'var(--muted)',class:'t-mono'},'A'));MA.forEach((r,k)=>cell(28+k*62,14,r,k<S.ia?'done':k===S.ia?'head':''));
+  s.appendChild(el('text',{x:10,y:84,'font-size':11,fill:'var(--muted)',class:'t-mono'},'B'));MB.forEach((r,k)=>cell(28+k*62,64,r,k<S.ib?'done':k===S.ib?'head':''));
+  s.appendChild(el('text',{x:310,y:24,'font-size':11,fill:'var(--muted)',class:'t-mono'},'PRIORITY QUEUE (min-heap)'));S.pq.forEach((p,k)=>cell(310+k*62,32,p.r,k===0?'head':''));
+  s.appendChild(el('text',{x:10,y:140,'font-size':11,fill:'var(--muted)',class:'t-mono'},'OUTPUT'));S.out.forEach((r,k)=>{cell(28+k*62,150,r,'');if(r[2]==='✝')s.appendChild(el('rect',{x:28+k*62,y:150,width:58,height:34,rx:4,fill:'var(--bad-soft)',opacity:.5}))})});
+
+/* ---------- compaction comparison ---------- */
+let CP;function cpReset(){CP={lv:{L0:[],levels:[0,0,0,0],written:0},st:{tiers:[],written:0},ingest:0};cpDraw()}
+function cpFlushOne(){CP.ingest++;const lv=CP.lv;lv.L0.push(1);lv.written+=1;
+  if(lv.L0.length>=4){const amt=lv.L0.length;lv.written+=amt+lv.levels[0];lv.levels[0]+=amt;lv.L0=[]}
+  for(let i=0;i<3;i++){const cap=4*Math.pow(4,i);if(lv.levels[i]>cap){const mv=lv.levels[i]-cap;lv.written+=mv+Math.min(lv.levels[i+1],mv*4);lv.levels[i+1]+=mv;lv.levels[i]=cap}}
+  const st=CP.st;st.tiers.push(1);st.written+=1;let changed=true;while(changed){changed=false;const by={};st.tiers.forEach(s=>by[s]=(by[s]||0)+1);for(const s in by){if(by[s]>=4){let n=4;st.tiers=st.tiers.filter(x=>{if(x==s&&n>0){n--;return false}return true});st.tiers.push(+s*4);st.written+=+s*4;changed=true;break}}}}
+function cpDraw(){const lv=CP.lv,st=CP.st;const s=$('#lvSvg');s.innerHTML='';const rowsL=[['L0',lv.L0.length,'tables',4],['L1',lv.levels[0],'units',4],['L2',lv.levels[1],'units',16],['L3',lv.levels[2],'units',64],['L4',lv.levels[3],'units',256]];
+  rowsL.forEach(([n,v,u,cap],i)=>{const y=10+i*38;s.appendChild(el('text',{x:6,y:y+19,'font-size':11,fill:'var(--muted)',class:'t-mono'},n));s.appendChild(el('rect',{x:34,y,width:280,height:26,rx:4,fill:'var(--paper)',stroke:'var(--line)'}));
+    if(i===0)for(let k=0;k<v;k++)s.appendChild(el('rect',{x:38+k*30,y:y+4,width:26,height:18,rx:3,fill:'var(--pencil)',opacity:.75}));else{const w=Math.min(1,v/cap)*272;s.appendChild(el('rect',{x:38,y:y+4,width:Math.max(0,w),height:18,rx:3,fill:'var(--blue)',opacity:.7}))}
+    s.appendChild(el('text',{x:308,y:y+18,'text-anchor':'end','font-size':10,fill:'var(--ink)',class:'t-mono'},i===0?`${v}/4`:`${v}/${cap}`))});
+  const t=$('#stSvg');t.innerHTML='';const tiers={};st.tiers.forEach(x=>tiers[x]=(tiers[x]||0)+1);[1,4,16,64,256].forEach((sz,i)=>{const y=10+i*38;t.appendChild(el('text',{x:4,y:y+19,'font-size':10,fill:'var(--muted)',class:'t-mono'},'×'+sz));for(let k=0;k<(tiers[sz]||0);k++)t.appendChild(el('rect',{x:40+k*64,y:y+2,width:Math.min(58,10+sz*2),height:22,rx:3,fill:'var(--d2)',opacity:.75}))});
+  const ing=Math.max(1,CP.ingest);const rL=lv.L0.length+lv.levels.filter(x=>x>0).length,rS=st.tiers.length;
+  bars('#cpBars',[{l:'Leveled: write amp',v:lv.written/ing,c:'blue',txt:(lv.written/ing).toFixed(2)+'×'},{l:'Size-tiered: write amp',v:st.written/ing,c:'d2',txt:(st.written/ing).toFixed(2)+'×'},{l:'Leveled: tables per read',v:rL,c:'blue',txt:rL},{l:'Size-tiered: tables per read',v:rS,c:'d2',txt:rS}],12)}
+$('#cpFlush').addEventListener('click',()=>{cpFlushOne();cpDraw()});$('#cpFlush10').addEventListener('click',()=>{for(let i=0;i<10;i++)cpFlushOne();cpDraw()});$('#cpReset').addEventListener('click',cpReset);cpReset();
+
+/* ---------- RUM ---------- */
+const RUM=[['B-Tree',0.22,0.62,'Read-optimized: one root-to-leaf path. Writes find and rewrite pages; reserved free space costs memory/space.','blue'],['LSM Tree',0.62,0.55,'Write-optimized: no lookup before a write, no reserved space. Reads may touch several tables (Bloom filters help); duplicates cost space until compaction.','pencil'],['Hash index',0.2,0.38,'Very fast point reads and writes, but no ordering and memory overhead for the table.','d2'],['Bitcask',0.4,0.3,'Append-only writes and one-seek reads, paid for with every key held in RAM.','d4'],['Sorted array',0.38,0.82,'Compact and fast to search, but an insert shifts everything: terrible updates.','d5']];
+let rumSel=0;function drawRum(){const s=$('#rumSvg');s.innerHTML='';const A=[210,20],B=[20,310],C=[400,310];s.appendChild(el('polygon',{points:`${A} ${B} ${C}`,fill:'var(--paper)',stroke:'var(--line)','stroke-width':2}));
+  [['Read-optimized',A,0,-6],['Update-optimized',B,0,16],['Memory-optimized',C,0,16]].forEach(([t,p,dx,dy])=>s.appendChild(el('text',{x:p[0]+dx,y:p[1]+dy+(dy<0?0:0),'text-anchor':p===B?'start':p===C?'end':'middle','font-size':12,'font-weight':700,fill:'var(--ink)'},t)));
+  s.appendChild(el('text',{x:210,y:200,'text-anchor':'middle','font-size':10.5,fill:'var(--muted)'},'no structure reaches all three corners'));
+  RUM.forEach(([n,u,v,d,c],i)=>{const x=B[0]+(C[0]-B[0])*u,y=A[1]+(B[1]-A[1])*v;const g=el('g',{tabindex:0,role:'button',style:'cursor:pointer'});g.appendChild(el('circle',{cx:x,cy:y,r:i===rumSel?11:8,fill:`var(--${c})`,stroke:'var(--surface)','stroke-width':2}));g.appendChild(el('text',{x:x+14,y:y+4,'font-size':12,'font-weight':i===rumSel?700:500,fill:'var(--ink)'},n));
+    g.addEventListener('click',()=>{rumSel=i;drawRum()});g.addEventListener('keydown',e=>{if(e.key==='Enter'){rumSel=i;drawRum()}});s.appendChild(g)});
+  $('#rumInfo').innerHTML=`<h3>${RUM[rumSel][0]}</h3><p>${RUM[rumSel][3]}</p><p class="small">Positions are illustrative. The model ignores latency, access patterns, complexity and distribution concerns, but it is a useful first approximation.</p>`}
+drawRum();
+
+/* ---------- SSTable drawing ---------- */
+(function(){const s=$('#ssSvg');s.appendChild(el('text',{x:10,y:20,'font-size':11,fill:'var(--muted)',class:'t-mono'},'INDEX FILE'));s.appendChild(el('text',{x:10,y:102,'font-size':11,fill:'var(--muted)',class:'t-mono'},'DATA FILE (sorted, append-only, immutable)'));
+  const keys=['ant','bee','cat','dog','eel','fox','gnu','hen'];[0,3,6].forEach((ki,i)=>{const x=10+i*120;s.appendChild(el('rect',{x,y:28,width:110,height:30,rx:4,fill:'var(--blue-soft)',stroke:'var(--blue)'}));s.appendChild(el('text',{x:x+55,y:48,'text-anchor':'middle','font-size':11,fill:'var(--ink)',class:'t-mono'},keys[ki]+' → @'+ki*72));s.appendChild(el('line',{x1:x+55,y1:58,x2:10+ki*80+36,y2:110,stroke:'var(--blue)',opacity:.6}))});
+  keys.forEach((k,i)=>{const x=10+i*80;s.appendChild(el('rect',{x,y:110,width:74,height:34,rx:4,fill:'var(--surface)',stroke:'var(--d2)'}));s.appendChild(el('text',{x:x+37,y:131,'text-anchor':'middle','font-size':11,fill:'var(--ink)',class:'t-mono'},k+':…'))})})();
+
+/* ---------- Bloom ---------- */
+const BM=32;let bf,bfKeys;function bfReset(){bf=new Array(BM).fill(0);bfKeys=[];['apple','fig','kiwi'].forEach(bfAdd);bfDraw();$('#bfOut').textContent='Filter holds apple, fig, kiwi. Test "pear" or "date".';$('#bfK').value='pear'}
+const kf=()=>+$('#bfk').value;const hs=k=>Array.from({length:kf()},(_,i)=>hashS(k,i*7919+1)%BM);
+function bfAdd(k){if(!bfKeys.includes(k))bfKeys.push(k);hs(k).forEach(i=>bf[i]=1)}
+function bfDraw(q){$('#bfBits').innerHTML=bf.map((b,i)=>`<span class="${b?'on':''}${q&&q.includes(i)?' q':''}">${i}</span>`).join('');const n=bfKeys.length,k=kf();const fp=Math.pow(1-Math.exp(-k*n/BM),k);$('#bfStats').textContent=`n = ${n} keys, m = ${BM} bits, k = ${k}: expected false-positive rate ≈ ${(fp*100).toFixed(1)}%. Real filters use around 10 bits per key for ~1%.`}
+$('#bfAdd').addEventListener('click',()=>{const k=$('#bfK').value.trim();if(!k)return;bfAdd(k);bfDraw(hs(k));$('#bfOut').textContent=`Added "${k}": set bits ${hs(k).join(', ')}.`});
+$('#bfTest').addEventListener('click',()=>{const k=$('#bfK').value.trim();const q=hs(k);const all=q.every(i=>bf[i]);bfDraw(q);const really=bfKeys.includes(k);
+  $('#bfOut').innerHTML=!all?`Bits ${q.join(', ')}: at least one is 0, so "${esc(k)}" is <b class="okc">definitely not</b> in the table. Skip the disk read.`:really?`All bits set: "${esc(k)}" <b>may be</b> present, and it is.`:`All bits set but "${esc(k)}" was never added: a <b class="badc">false positive</b>. We read the table and find nothing.`});
+$('#bfReset').addEventListener('click',()=>{bf=new Array(BM).fill(0);bfKeys=[];bfDraw();$('#bfOut').textContent='Empty filter: every test says "definitely not".'});
+$('#bfk').addEventListener('change',()=>{const ks=[...bfKeys];bf=new Array(BM).fill(0);bfKeys=[];ks.forEach(bfAdd);bfDraw()});bfReset();
+
+/* ---------- skiplist ---------- */
+let SL;function slReset(){const keys=[];while(keys.length<10){const k=5+Math.floor(Math.random()*90);if(!keys.includes(k))keys.push(k)}keys.sort((a,b)=>a-b);SL=keys.map(k=>({k,h:lvl()}));slDraw()}
+function lvl(){let h=1;while(h<4&&Math.random()<.5)h++;return h}
+function slDraw(path,hit){const s=$('#slSvg');s.innerHTML='';const n=SL.length;const X=i=>i<0?20:60+i*(560/Math.max(n,1)),Y=l=>170-l*36;
+  for(let l=0;l<4;l++){let prev=-1;SL.forEach((nd,i)=>{if(nd.h>l){const on=path&&path.some(p=>p[0]===prev&&p[1]===l);s.appendChild(el('line',{x1:X(prev)+14,y1:Y(l),x2:X(i)-14,y2:Y(l),stroke:on?'var(--pencil)':'var(--muted)','stroke-width':on?3:1.2,opacity:on?1:.5}));prev=i}});
+    s.appendChild(el('line',{x1:X(prev)+14,y1:Y(l),x2:640,y2:Y(l),stroke:'var(--muted)','stroke-width':1,opacity:.3,'stroke-dasharray':'3 3'}))}
+  s.appendChild(el('rect',{x:6,y:Y(3)-12,width:28,height:3*36+24,rx:4,fill:'var(--paper)',stroke:'var(--line)'}));s.appendChild(el('text',{x:20,y:190,'text-anchor':'middle','font-size':9,fill:'var(--muted)'},'head'));
+  SL.forEach((nd,i)=>{for(let l=0;l<nd.h;l++){const on=path&&path.some(p=>p[0]===i&&p[1]===l);s.appendChild(el('rect',{x:X(i)-14,y:Y(l)-11,width:28,height:22,rx:4,fill:hit===i?'var(--ok-soft)':on?'var(--pencil-soft)':'var(--surface)',stroke:hit===i?'var(--ok)':on?'var(--pencil)':'var(--blue)'}))}
+    s.appendChild(el('text',{x:X(i),y:Y(0)+4,'text-anchor':'middle','font-size':11,'font-weight':700,fill:'var(--ink)',class:'t-mono'},nd.k))})}
+function slFind(k){const path=[];let cur=-1,steps=0;for(let l=3;l>=0;l--){while(true){let nx=-1;for(let j=cur+1;j<SL.length;j++)if(SL[j].h>l){nx=j;break}steps++;if(nx>=0&&SL[nx].k<k){path.push([cur,l]);cur=nx}else break}path.push([cur,l])}
+  const nx=cur+1<SL.length&&SL[cur+1].k===k?cur+1:null;slDraw(path,nx);$('#slTxt').textContent=`${steps} comparisons across 4 lanes (a plain list would need up to ${SL.length}). ${nx!=null?'Found '+k+'.':k+' not present; it would be inserted after '+(cur>=0?SL[cur].k:'head')+'.'}`}
+$('#slFind').addEventListener('click',()=>slFind(+$('#slK').value));
+$('#slIns').addEventListener('click',()=>{const k=+$('#slK').value;if(SL.some(n=>n.k===k)||SL.length>=14){slFind(k);return}const h=lvl();SL.push({k,h});SL.sort((a,b)=>a.k-b.k);slFind(k);$('#slTxt').textContent+=` Inserted with random height ${h}: only the pointers just before it on ${h} lane(s) change.`});
+$('#slReset').addEventListener('click',slReset);slReset();slFind(SL[6].k);
+
+/* ---------- Bitcask / WiscKey ---------- */
+let uo='bc',UL;function uoReset(){UL={log:[['k1','v1',1],['k2','v2',1],['k3','v3',1]],idx:{k1:0,k2:1,k3:2}}}
+function uoDraw(msg){const s=$('#uoSvg');s.innerHTML='';const keys=Object.keys(UL.idx).sort();
+  s.appendChild(el('text',{x:10,y:18,'font-size':11,fill:'var(--muted)',class:'t-mono'},uo==='bc'?'KEYDIR (in-memory hash table)':'KEY LSM TREE (sorted, on disk)'));
+  keys.forEach((k,i)=>{const x=10+i*90;s.appendChild(el('rect',{x,y:26,width:80,height:30,rx:5,fill:uo==='bc'?'var(--pencil-soft)':'var(--blue-soft)',stroke:uo==='bc'?'var(--pencil)':'var(--blue)'}));s.appendChild(el('text',{x:x+40,y:46,'text-anchor':'middle','font-size':12,fill:'var(--ink)',class:'t-mono'},k+' → @'+UL.idx[k]))});
+  s.appendChild(el('text',{x:10,y:120,'font-size':11,fill:'var(--muted)',class:'t-mono'},uo==='bc'?'DATA LOG FILES (append-only, write order)':'vLOG (values, append-only)'));
+  UL.log.forEach(([k,v,live],i)=>{const x=10+i*72;s.appendChild(el('rect',{x,y:130,width:66,height:34,rx:4,fill:live?'var(--surface)':'var(--paper)',stroke:live?'var(--d2)':'var(--line)',opacity:live?1:.5}));s.appendChild(el('text',{x:x+33,y:151,'text-anchor':'middle','font-size':11,fill:'var(--ink)',class:'t-mono'},k+':'+v));s.appendChild(el('text',{x:x+33,y:180,'text-anchor':'middle','font-size':9,fill:'var(--muted)',class:'t-mono'},'@'+i))});
+  keys.forEach((k,i)=>{const t=UL.idx[k];s.appendChild(el('line',{x1:50+i*90,y1:56,x2:43+t*72,y2:130,stroke:'var(--ok)','stroke-width':1.8}))});
+  $('#uoTxt').textContent=msg||(uo==='bc'?'Point lookup = one hash probe + one seek. No range scans: neither keydir nor logs are ordered.':'Range scan: walk keys in order in the LSM Tree, then fetch each value from the vLog with a random read.')}
+$('#uoW').addEventListener('click',()=>{const old=UL.idx.k2;UL.log[old][2]=0;UL.log.push(['k2','v'+(UL.log.length+1),1]);UL.idx.k2=UL.log.length-1;if(UL.log.length>8){uoGC();return}uoDraw('New value appended; the index now points at it. The old record is still in the log, unreferenced.')});
+function uoGC(){const live=UL.log.map((r,i)=>[r,i]).filter(([r])=>r[2]);const n=UL.log.length-live.length;const map={};UL.log=live.map(([r,i],j)=>{map[i]=j;return r});for(const k in UL.idx)UL.idx[k]=map[UL.idx[k]];
+  uoDraw(`GC copied ${live.length} live records to a new file, dropped ${n} shadowed one(s), and repointed the index. ${uo==='wk'?'WiscKey must ask the key tree which values are live, since the vLog has no liveness info.':'Bitcask knows liveness directly from the keydir.'}`)}
+$('#uoGC').addEventListener('click',uoGC);seg('[data-uo]',b=>{uo=b.dataset.uo;uoDraw()});uoReset();uoDraw();
+
+/* ---------- flush stepper ---------- */
+const FS=[{t:'Steady state: writes go to memtable M1 and WAL segment W1. Readers see M1 + disk tables.',m:[['M1','pencil','active']],d:['T1','T2'],w:['W1']},
+ {t:'<b>Memtable switch.</b> New memtable M2 and WAL segment W2 take all new writes. M1 is frozen but still visible to reads: dropping it now would hide data.',m:[['M2','pencil','active'],['M1','mid','flushing, readable']],d:['T1','T2'],w:['W1','W2']},
+ {t:'M1 is written to disk as T3. Until that write completes, readers keep using M1.',m:[['M2','pencil','active'],['M1','mid','flushing, readable']],d:['T1','T2','T3…'],w:['W1','W2']},
+ {t:'<b>Flush finalization.</b> Atomically replace M1 with T3 in the table view. No reader may see both, or neither.',m:[['M2','pencil','active']],d:['T3','T1','T2'],w:['W1','W2']},
+ {t:'<b>WAL truncation.</b> Only now can W1 be discarded. Truncating before the flush finished would lose data on a crash.',m:[['M2','pencil','active']],d:['T3','T1','T2'],w:['W2']}];
+$('#fStep').insertAdjacentHTML('beforeend',stepHTML());
+stepper('#fStep',FS.map(f=>f.t),i=>{const S=FS[i];const s=$('#fSvg');s.innerHTML='';const lab=(y,t)=>s.appendChild(el('text',{x:10,y,'font-size':10.5,fill:'var(--muted)',class:'t-mono'},t));lab(30,'MEMORY');lab(90,'DISK TABLES');lab(150,'WAL');
+  S.m.forEach(([n,c,st],k)=>{const x=110+k*200;s.appendChild(el('rect',{x,y:12,width:180,height:30,rx:6,fill:'var(--surface)',stroke:`var(--${c})`,'stroke-width':2,'stroke-dasharray':c==='mid'?'5 3':''}));s.appendChild(el('text',{x:x+90,y:32,'text-anchor':'middle','font-size':11.5,fill:'var(--ink)'},`${n} (${st})`))});
+  S.d.forEach((n,k)=>{const x=110+k*90;s.appendChild(el('rect',{x,y:72,width:80,height:30,rx:5,fill:n.endsWith('…')?'var(--mid-soft)':'var(--blue-soft)',stroke:'var(--blue)'}));s.appendChild(el('text',{x:x+40,y:92,'text-anchor':'middle','font-size':11.5,fill:'var(--ink)',class:'t-mono'},n))});
+  S.w.forEach((n,k)=>{const x=110+k*90;s.appendChild(el('rect',{x,y:132,width:80,height:28,rx:5,fill:'var(--surface)',stroke:'var(--d4)'}));s.appendChild(el('text',{x:x+40,y:151,'text-anchor':'middle','font-size':11.5,fill:'var(--ink)',class:'t-mono'},n))})});
+
+/* ---------- log stacking ---------- */
+function drawStk(){const sz=+$('#seg').value;$('#segV').textContent=sz+' units';const s=$('#stkSvg');s.innerHTML='';const U=600/24;
+  const row=(y,lab,size,c,off)=>{s.appendChild(el('text',{x:10,y:y-4,'font-size':10.5,fill:'var(--muted)',class:'t-mono'},lab));for(let x=off||0;x<24;x+=size){const w=Math.min(size,24-x)*U;s.appendChild(el('rect',{x:30+x*U,y,width:w-2,height:28,rx:3,fill:`var(--${c})`,opacity:.22,stroke:`var(--${c})`}))}};
+  row(30,'database log segments',sz,'pencil');row(95,'filesystem log segments',4,'d2');row(160,'SSD erase blocks',8,'blue');
+  let cross=0;for(let x=sz;x<24;x+=sz){if(x%4)cross++;}let crossB=0;for(let x=sz;x<24;x+=sz){if(x%8)crossB++}
+  for(let x=sz;x<24;x+=sz){s.appendChild(el('line',{x1:30+x*U-1,y1:24,x2:30+x*U-1,y2:192,stroke:x%4?'var(--bad)':'var(--ok)','stroke-width':1.5,'stroke-dasharray':'4 3'}))}
+  $('#stkTxt').innerHTML=`${cross} database segment boundaries fall inside filesystem segments and ${crossB} inside erase blocks. Discarding such a segment leaves partly-live segments below, which then have to be relocated by their own GC. ${sz%8===0||sz===4?'<b class="okc">Aligned.</b>':sz%4===0?'Aligned with the filesystem, not the SSD.':'<b class="badc">Misaligned.</b>'}`}
+$('#seg').addEventListener('input',drawStk);drawStk();
+cards('#stkCards',[{t:'LLAMA',c:'d1',d:'The latch-free, log-structured, access-method aware store under the Bw-Tree. Knowing Bw-Tree semantics, its GC can consolidate a node\'s deltas into one base node, and drop updates that cancel out, while it relocates them.'},{t:'Open-channel SSDs',c:'d2',d:'Expose flash internals to the host so software can manage placement and GC itself. LOCS ran an LSM Tree on Baidu\'s SDF this way, with each channel as its own block device.'},{t:'Separate devices',c:'d3',d:'Some vendors recommend putting the log on its own device so write streams don\'t interleave. Alignment to hardware page sizes matters even more.'}]);
+
+/* ---------- Part I classification ---------- */
+const CL=[['B-Tree',0,0,1],['Copy-on-write B-Tree (LMDB)',0,1,1],['Lazy B-Tree (WiredTiger)',1,0,1],['LA-Tree',1,0,1],['FD-Tree',1,1,1],['Bw-Tree',1,1,1],['Two-component LSM',1,1,1],['Multicomponent LSM',1,1,1],['Bitcask',0,1,0],['WiscKey',1,1,0]];
+$('#cls').innerHTML='<div class="h">Structure</div><div class="h">Buffering</div><div class="h">Immutable</div><div class="h">Ordered</div>'+CL.map(r=>`<div><b>${r[0]}</b></div>`+r.slice(1).map(v=>`<div class="${v?'y':'n'}">${v?'yes':'no'}</div>`).join('')).join('');
+
+quiz('#qQuiz','#qScore',[
+ {q:'How does an LSM Tree delete a key?',o:['Erase it from the newest table','Write a tombstone','Rewrite every table'],a:1,why:'Tables are immutable; the tombstone shadows older values until compaction.'},
+ {q:'A Bloom filter says "maybe". What do you know?',o:['The key is present','The key may or may not be present','The key is absent'],a:1,why:'All k bits set can be a false positive. Only a zero bit is conclusive.'},
+ {q:'Which compaction strategy usually rewrites data more?',o:['Leveled','Size-tiered'],a:0,why:'Leveled keeps levels non-overlapping by merging into the next level repeatedly; it reads fewer tables in return.'},
+ {q:'What does Bitcask give up?',o:['Fast writes','Point lookups','Range scans'],a:2,why:'Neither the keydir nor the logs are ordered.'},
+ {q:'Why must WAL truncation wait for the memtable flush to finish?',o:['To save space','A crash before the flush completes would lose the data','For compaction'],a:1,why:'Until the disk table exists, the WAL is the only durable copy.'}]);
+
+})();
+</script>
+</body>
+</html>

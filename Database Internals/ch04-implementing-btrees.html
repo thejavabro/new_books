@@ -1,0 +1,602 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Implementing B-Trees</title>
+<meta name="description" content="The textbook algorithm leaves out everything that makes a B-Tree work in production: what goes in the page header, how to find your way back up the tree, what to do with huge values, and how to clean up after deletes.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<script>try{var t=localStorage.getItem('dbi:theme');if(t)document.documentElement.dataset.theme=JSON.parse(t)}catch(e){}</script>
+<style>
+/* Shared base for the Database Internals companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+button.tag{cursor:pointer}
+button.tag:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{font-family:var(--mono);font-size:.82rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:0;overflow-x:auto;white-space:pre;max-width:100%}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+pre.code code{border:0;padding:0;background:none}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;max-height:220px;overflow:auto;display:flex;flex-direction:column;gap:2px}
+.log div{white-space:pre-wrap;word-break:break-word}
+.cells{display:flex;flex-wrap:wrap;gap:4px}
+.cell{font-family:var(--mono);font-size:.8rem;min-width:2.4em;padding:4px 6px;text-align:center;border:1px solid var(--line);border-radius:4px;background:var(--paper);transition:background .3s,border-color .3s}
+.cell.hit{background:var(--blue-soft);border-color:var(--blue)}
+.cell.ok{background:var(--ok-soft);border-color:var(--ok)}
+.cell.bad{background:var(--bad-soft);border-color:var(--bad)}
+.cell.mid{background:var(--mid-soft);border-color:var(--mid)}
+.cell.dim{opacity:.35}
+input[type=text],input[type=number]{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+
+/* page */
+
+.hdr{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:3px}
+.hdr button{border:1.5px solid var(--line);background:var(--paper);border-radius:5px;padding:8px 2px;font-family:var(--mono);font-size:.7rem;line-height:1.2;overflow:hidden}
+.hdr button[aria-pressed="true"]{border-color:var(--blue);background:var(--blue-soft)}
+@media (max-width:560px){.hdr{grid-template-columns:repeat(4,minmax(0,1fr))}}
+.stackv{display:flex;flex-direction:column-reverse;gap:4px;min-height:60px;font-family:var(--mono);font-size:.8rem}
+.stackv div{border:1px solid var(--blue);background:var(--blue-soft);border-radius:4px;padding:4px 8px;transition:opacity .3s}
+.stackv div.pop{opacity:.35;text-decoration:line-through}
+.vac{display:grid;grid-template-columns:repeat(16,minmax(0,1fr));gap:2px}
+.vac span{height:30px;border-radius:3px;background:var(--paper);border:1px solid var(--line);font-family:var(--mono);font-size:.62rem;display:flex;align-items:center;justify-content:center;transition:all .4s}
+.vac span.live{background:var(--ok-soft);border-color:var(--ok);color:var(--ok)}
+.vac span.dead{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+.vac span.hdrc{background:var(--line)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Database Internals · visual companion</a><span class="tag">Part I · Chapter 4 of 14</span><button class="tag themebtn" type="button" aria-label="Toggle light and dark theme">Theme</button></div>
+  <h1>Implementing B-Trees</h1>
+  <p class="lede">The textbook algorithm leaves out everything that makes a B-Tree work in production: what goes in the page header, how to find your way back up the tree, what to do with huge values, and how to clean up after deletes.</p>
+  <nav class="toc" aria-label="Sections"><a href="#header">Page header</a><a href="#siblings">Sibling links</a><a href="#rightmost">Rightmost and high keys</a><a href="#overflow">Overflow pages</a><a href="#bsearch">Binary search</a><a href="#breadcrumbs">Breadcrumbs</a><a href="#balance">Rebalancing</a><a href="#compress">Compression</a><a href="#vacuum">Vacuum</a><a href="#quiz">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="header" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>The page header and magic numbers</h2></div>
+  <p>Every page starts with a small fixed header that the engine reads before anything else: flags describing the layout, the number of cells, the <b>lower and upper offsets</b> bounding free space, and whatever else the implementation needs. PostgreSQL keeps page size and layout version there; InnoDB keeps the number of heap records and the tree level; SQLite keeps the cell count and the rightmost pointer. Click a field.</p>
+  <div class="sheet">
+    <div class="hdr" id="hdr" role="group" aria-label="Header fields"></div>
+    <div class="detail" id="hdrInfo" aria-live="polite"></div>
+  </div>
+  <p>A <b>magic number</b> is a constant multi-byte value written into the header, for example <code>50 41 47 45</code>, ASCII for "PAGE". On read, compare the first four bytes. Random bytes almost never match, so a match means the page was loaded from the right, aligned offset. Try reading at different offsets.</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="mgSvg" viewBox="0 0 660 110" role="img" aria-label="Bytes of two pages with a read window"></svg></div>
+    <label class="rng"><span>Read offset: <b id="mgV"></b></span><input type="range" id="mg" min="0" max="20" value="0"></label>
+    <p id="mgTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="siblings" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Sibling links versus climbing the tree</h2></div>
+  <p>To reach the next leaf during a range scan, a tree without sibling links must go back up to a parent, and if the node is the parent's last child, keep climbing until it can turn right, then come back down. Storing <b>forward and backward links</b> in each header makes it one hop. The price: splits and merges must also update a <i>neighbour's</i> header, which may need extra locking. Pick a leaf.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Links"><button data-sib="1" aria-pressed="true">With sibling links</button><button data-sib="0" aria-pressed="false">Parent pointers only</button></div>
+    <div class="svgbox"><svg id="sbSvg" viewBox="0 0 660 260" role="img" aria-label="Moving from a leaf to its right neighbour"></svg></div>
+    <div class="row" id="sbBtns"></div>
+    <p id="sbTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="rightmost" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Rightmost pointers and high keys</h2></div>
+  <p>A node with N keys has N + 1 pointers, so one pointer has no key to pair with. Implementations either store that <b>rightmost pointer</b> separately (SQLite keeps it in the header and has to reassign it when the rightmost child splits) or add a <b>high key</b>: an upper bound for everything in the node. With a high key every pointer gets a partner cell, there are fewer edge cases, and each node knows its own key range. PostgreSQL does this, following the B<sup>link</sup>-Tree design (more in chapter 5).</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Layout"><button data-rm="rp" aria-pressed="true">Rightmost pointer</button><button data-rm="hk" aria-pressed="false">High key</button></div>
+    <div class="svgbox"><svg id="rmSvg" viewBox="0 0 660 190" role="img" aria-label="Node layout with a separate rightmost pointer or with a high key"></svg></div>
+    <p id="rmTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="overflow" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Overflow pages for oversized records</h2></div>
+  <p>Node size is fixed, but values aren't. A node can be "not full" by key count yet out of bytes. Rather than resizing pages, engines cap how many payload bytes live in the node, <code>max_payload = page_size / fanout</code>, and spill the rest to linked <b>overflow pages</b>. The first overflow page ID goes in the primary page header; further ones are chained. Keys are usually distinctive enough that the prefix kept in the primary page settles most comparisons.</p>
+  <div class="sheet">
+    <label class="rng"><span>Record size: <b id="ovV"></b></span><input type="range" id="ov" min="100" max="20000" step="100" value="6200"></label>
+    <label class="rng"><span>Fanout: <b id="ofV"></b></span><input type="range" id="of" min="4" max="64" step="4" value="16"></label>
+    <div class="svgbox"><svg id="ovSvg" viewBox="0 0 660 120" role="img" aria-label="Primary page with a chain of overflow pages"></svg></div>
+    <p class="small" id="ovTxt"></p>
+  </div>
+</section>
+
+<section id="bsearch" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Binary search through indirection pointers</h2></div>
+  <p>Cells sit in insertion order; only the pointer array is sorted. Binary search therefore probes the <b>middle pointer</b>, follows it to the cell, compares the key, and halves the range. On an internal node we rarely expect an exact hit: we want the <b>insertion point</b>, the first key greater than the search key, which tells us which child to follow. Step through a search.</p>
+  <div class="sheet stepper" id="bsStep">
+    <div class="row"><label for="bsK">Search for</label><select id="bsK"><option>Kim</option><option>Leslie</option><option>Ann</option><option>Zed</option></select></div>
+    <div class="svgbox"><svg id="bsSvg" viewBox="0 0 660 210" role="img" aria-label="Sorted pointer array pointing to cells in insertion order"></svg></div>
+  </div>
+</section>
+
+<section id="breadcrumbs" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Breadcrumbs: remembering the way up</h2></div>
+  <p>A split may have to propagate to the parent, grandparent and so on. Nodes could store <b>parent pointers</b>, but those must be updated every time a separator moves between nodes. The alternative is to remember the descent: push each visited node and the child index followed onto a <b>stack</b> (PostgreSQL calls it <code>BTStack</code>). If the leaf splits, pop to find the parent and the slot where the promoted key goes; repeat until a level absorbs the change.</p>
+  <div class="sheet">
+    <div class="row"><input type="number" id="bcK" value="44" style="width:6em" aria-label="Key"><button class="btn primary" id="bcGo">Insert with breadcrumbs</button><button class="btn" id="bcReset">Reset</button></div>
+    <div class="two">
+      <div class="svgbox"><svg id="bcSvg" viewBox="0 0 660 260" role="img" aria-label="B-Tree with the descent path"></svg></div>
+      <div class="stack"><span class="eyebrow">Breadcrumb stack (top at the top)</span><div class="stackv" id="bcStack"></div><div class="log" id="bcLog"></div></div>
+    </div>
+  </div>
+</section>
+
+<section id="balance" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Rebalancing, right-only appends and bulk loading</h2></div>
+  <p>Splits leave two half-empty nodes. Three tricks push occupancy up. <b>Rebalancing</b> moves keys to a less full sibling (updating the parent separator) instead of splitting; <b>B*-Trees</b> wait until two siblings are full and split two nodes into three, each two-thirds full (SQLite does this). <b>Right-only appends</b> exploit auto-increment keys: PostgreSQL's <i>fastpath</i> inserts straight into the cached rightmost leaf, and SQLite's <i>quickbalance</i> starts a new, nearly empty rightmost page rather than splitting in half, since it will fill soon anyway. Insert 60 keys and compare.</p>
+  <div class="sheet">
+    <div class="row"><div class="seg" role="group" aria-label="Key order"><button data-ko="seq" aria-pressed="true">Auto-increment keys</button><button data-ko="rnd" aria-pressed="false">Random keys</button></div></div>
+    <div class="bars" id="balBars"></div>
+    <p class="small" id="balTxt"></p>
+  </div>
+  <p><b>Bulk loading</b> takes this to the limit. Given presorted data, write full leaves left to right, push each leaf's first key into the parent level, and build the upper levels the same way. No splits, no merges, only the current right edge in memory. An immutable tree can fill every page completely.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn primary" id="blGo">Bulk load 1..27</button><span class="small" id="blTxt"></span></div>
+    <div class="svgbox"><svg id="blSvg" viewBox="0 0 660 200" role="img" aria-label="Tree built bottom-up level by level"></svg></div>
+  </div>
+</section>
+
+<section id="compress" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Compression granularity</h2></div>
+  <p>Compressing the whole file gives the best ratio but means decompressing a lot to reach one page. <b>Page-wise</b> compression couples nicely with loading and flushing, but a compressed page rarely fills whole disk blocks, so reads drag in bytes belonging to neighbours. Compressing <b>rows or columns</b> instead decouples compression from page management. Libraries such as Snappy, zlib and LZ4 trade ratio against CPU and memory.</p>
+  <div class="sheet">
+    <label class="rng"><span>Compression ratio: <b id="cmV"></b></span><input type="range" id="cm" min="10" max="40" value="23"></label>
+    <div class="svgbox"><svg id="cmSvg" viewBox="0 0 660 120" role="img" aria-label="Compressed pages against 4 KB disk block boundaries"></svg></div>
+    <p class="small" id="cmTxt"></p>
+  </div>
+</section>
+
+<section id="vacuum" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Fragmentation and vacuum</h2></div>
+  <p>Deletes only remove a cell's pointer. Splits only trim the pointer array. Updates may leave older versions of a cell behind (MVCC even relies on them for a while). The bytes stay: they are <b>garbage</b>, no longer <b>addressable</b> from the root. The page ends up with enough free space in total but not enough <i>contiguous</i> space. <b>Vacuum</b> (also called compaction or maintenance) rewrites pages, puts cells back in key order and records freed page IDs in a persistent <b>free list</b>.</p>
+  <div class="sheet">
+    <div class="vac" id="vac"></div>
+    <div class="row"><button class="btn" id="vDel">Delete 3 random cells</button><button class="btn" id="vUpd">Update 2 cells</button><button class="btn primary" id="vRun">Run vacuum</button></div>
+    <p class="small" id="vTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">10</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">11</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b>Header</b><span>Flags, cell count, free-space bounds, magic number, sibling links, rightmost pointer.</span></div>
+    <div><b class="blue">High keys</b><span>Pair every pointer with a key and bound the node's range.</span></div>
+    <div><b>Overflow</b><span>Keep max_payload in the node, chain the rest.</span></div>
+    <div><b class="pencil">Breadcrumbs</b><span>A stack of visited nodes lets splits walk back up without parent pointers.</span></div>
+    <div><b>Occupancy</b><span>Rebalancing, B*-Trees, right-only appends and bulk loading avoid half-empty pages.</span></div>
+    <div><b class="okc">Maintenance</b><span>Vacuum reclaims unaddressable cells and tracks free pages.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Database Internals: A Deep Dive into How Distributed Data Systems Work</i> by Alex Petrov (O'Reilly, 2019). Explanations, examples, code and drawings are original summaries, not copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch03-file-formats.html"><span>Previous · Chapter 3</span><b>File Formats</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch05a-buffers-recovery.html"><span>Next · Chapter 5a</span><b>Buffer Management and Recovery</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('dbi:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('dbi:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle */
+$$('.themebtn').forEach(b=>b.addEventListener('click',()=>{const r=document.documentElement;const dark=r.dataset.theme?r.dataset.theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches;r.dataset.theme=dark?'light':'dark';store.set('theme',r.dataset.theme)}));
+function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'})[c])}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
+
+
+/* ---------- B+ tree engine ---------- */
+function BT(cap){this.cap=cap;this.root={leaf:true,keys:[]};this.log=[]}
+BT.prototype.find=function(k){let n=this.root,path=[];while(!n.leaf){let i=0;while(i<n.keys.length&&k>=n.keys[i])i++;path.push([n,i]);n=n.kids[i]}return{n,path}};
+BT.prototype.insert=function(k){const {n,path}=this.find(k);if(n.keys.includes(k)){this.log.push(`${k} already present`);return}
+  n.keys.push(k);n.keys.sort((a,b)=>a-b);this.log.push(`insert ${k} into leaf [${n.keys.join(' ')}]`);let node=n;
+  while(node.keys.length>this.cap){let up,right;
+    if(node.leaf){const rm=this.rightOnly&&path.every(([p,i])=>i===p.kids.length-1)&&node.keys[node.keys.length-1]===k;const m=rm?node.keys.length-1:Math.ceil(node.keys.length/2);if(rm)this.log.push('rightmost append: new key starts a fresh page instead of a half split');right={leaf:true,keys:node.keys.slice(m)};node.keys=node.keys.slice(0,m);up=right.keys[0];this.log.push(`leaf overflow → split into [${node.keys.join(' ')}] and [${right.keys.join(' ')}], copy ${up} up`)}
+    else{const m=Math.floor(node.keys.length/2);up=node.keys[m];right={leaf:false,keys:node.keys.slice(m+1),kids:node.kids.slice(m+1)};node.keys=node.keys.slice(0,m);node.kids=node.kids.slice(0,m+1);this.log.push(`internal overflow → split, move ${up} up`)}
+    right.fresh=true;
+    if(!path.length){this.root={leaf:false,keys:[up],kids:[node,right],fresh:true};this.log.push('root split: tree grows one level');break}
+    const [p,i]=path.pop();p.keys.splice(i,0,up);p.kids.splice(i+1,0,right);node=p}};
+BT.prototype.remove=function(k){const {n,path}=this.find(k);const i=n.keys.indexOf(k);if(i<0){this.log.push(`${k} not found`);return}
+  n.keys.splice(i,1);this.log.push(`delete ${k} from leaf → [${n.keys.join(' ')}]`);this.fix(n,path)};
+BT.prototype.fix=function(node,path){
+  if(!path.length){if(!node.leaf&&node.keys.length===0){this.root=node.kids[0];this.log.push('root has one child left: tree shrinks one level')}return}
+  const minL=Math.ceil((this.cap+1)/2)-0,under=node.leaf?node.keys.length<Math.floor((this.cap+1)/2):node.keys.length<1;if(!under)return;
+  const [p,i]=path[path.length-1];const cap=this.cap;const self=this;
+  function tryMerge(li){const L=p.kids[li],R=p.kids[li+1];const size=L.leaf?L.keys.length+R.keys.length:L.keys.length+R.keys.length+1;if(size>cap)return false;
+    if(L.leaf){L.keys=L.keys.concat(R.keys)}else{L.keys=L.keys.concat([p.keys[li]],R.keys);L.kids=L.kids.concat(R.kids)}
+    self.log.push(`underflow → merge with ${li===i?'right':'left'} sibling into [${L.keys.join(' ')}], remove separator ${p.keys[li]} from parent`);p.keys.splice(li,1);p.kids.splice(li+1,1);L.fresh=true;return true}
+  if((i>0&&tryMerge(i-1))||(i<p.kids.length-1&&tryMerge(i))){path.pop();this.fix(p,path);return}
+  if(i>0){const S=p.kids[i-1];if(node.leaf){node.keys.unshift(S.keys.pop());p.keys[i-1]=node.keys[0]}else{node.keys.unshift(p.keys[i-1]);p.keys[i-1]=S.keys.pop();node.kids.unshift(S.kids.pop())}}
+  else{const S=p.kids[i+1];if(node.leaf){node.keys.push(S.keys.shift());p.keys[i]=S.keys[0]}else{node.keys.push(p.keys[i]);p.keys[i]=S.keys.shift();node.kids.push(S.kids.shift())}}
+  node.fresh=true;this.log.push('underflow, sibling too full to merge → borrow one key and update the separator')};
+BT.prototype.layout=function(){const lv=[];(function w(n,d){(lv[d]=lv[d]||[]).push(n);if(!n.leaf)n.kids.forEach(c=>w(c,d+1))})(this.root,0);
+  const KW=28,G=14;const nw=n=>Math.max(1,n.keys.length)*KW+8;const leaves=lv[lv.length-1];let x=10;leaves.forEach(n=>{n._x=x;n._w=nw(n);x+=n._w+G});
+  for(let d=lv.length-2;d>=0;d--)lv[d].forEach(n=>{n._w=nw(n);const a=n.kids[0],b=n.kids[n.kids.length-1];n._x=(a._x+b._x+b._w)/2-n._w/2});
+  // resolve overlaps on upper levels
+  for(let d=lv.length-2;d>=0;d--){for(let k=1;k<lv[d].length;k++){const p=lv[d][k-1],q=lv[d][k];if(q._x<p._x+p._w+G)q._x=p._x+p._w+G}}
+  let minx=Infinity,maxx=0;lv.flat().forEach(n=>{minx=Math.min(minx,n._x);maxx=Math.max(maxx,n._x+n._w)});lv.flat().forEach(n=>n._x+=10-minx);return{lv,width:Math.max(maxx-minx+20,300),KW}};
+function drawBT(t,svg,opt){opt=opt||{};const s=$(svg);s.innerHTML='';const {lv,width,KW}=t.layout();const H=Math.max(lv.length*80+20,140);const W=Math.max(width,640);s.setAttribute('viewBox',`0 0 ${W} ${H}`);
+  const off=(W-width)/2;const Y=d=>20+d*80;
+  lv.forEach((row,d)=>row.forEach(n=>{if(!n.leaf)n.kids.forEach((c,ci)=>{const px=off+n._x+4+ci*KW,cx=off+c._x+c._w/2;const on=opt.path&&opt.path.includes(n)&&opt.path.includes(c);s.appendChild(el('line',{x1:px,y1:Y(d)+28,x2:cx,y2:Y(d+1),stroke:on?'var(--pencil)':'var(--muted)','stroke-width':on?3:1.2,opacity:on?1:.6}))})}));
+  const leaves=lv[lv.length-1];leaves.forEach((n,i)=>{if(i<leaves.length-1){const a=leaves[i+1];s.appendChild(el('line',{x1:off+n._x+n._w,y1:Y(lv.length-1)+14,x2:off+a._x,y2:Y(lv.length-1)+14,stroke:'var(--d2)','stroke-width':1.2,'stroke-dasharray':'3 3'}))}});
+  lv.forEach((row,d)=>row.forEach(n=>{const x=off+n._x,y=Y(d);const on=opt.path&&opt.path.includes(n);
+    s.appendChild(el('rect',{x,y,width:n._w,height:28,rx:5,fill:n.fresh?'var(--mid-soft)':on?'var(--pencil-soft)':'var(--surface)',stroke:on?'var(--pencil)':n.leaf?'var(--d2)':'var(--blue)','stroke-width':on?2.4:1.6}));
+    n.keys.forEach((k,ki)=>{const hit=opt.hit&&opt.hit.includes(k)&&n.leaf;if(hit)s.appendChild(el('rect',{x:x+4+ki*KW,y:y+3,width:KW-2,height:22,rx:3,fill:'var(--ok-soft)',stroke:'var(--ok)'}));
+      const tx=el('text',{x:x+4+ki*KW+KW/2-1,y:y+19,'text-anchor':'middle','font-size':12.5,'font-weight':n.leaf?400:700,fill:'var(--ink)',class:'t-mono'},k);if(opt.onKey){tx.style.cursor='pointer';tx.addEventListener('click',()=>opt.onKey(n,ki))}s.appendChild(tx);
+      if(ki>0)s.appendChild(el('line',{x1:x+4+ki*KW-1,y1:y+4,x2:x+4+ki*KW-1,y2:y+24,stroke:'var(--line)'}))});
+    if(!n.keys.length)s.appendChild(el('text',{x:x+n._w/2,y:y+19,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},'empty'))}));
+  lv.flat().forEach(n=>delete n.fresh);return lv}
+
+
+/* header fields */
+const HF=[['magic','4 B','A constant such as 50 41 47 45 ("PAGE") used to validate that the bytes really are a page of the expected kind and version.'],['flags','1 B','Page type (leaf or internal), whether values are variable-size, whether overflow pages exist, and so on.'],['cells','2 B','How many cells (and pointers) the page holds.'],['lower','2 B','Where free space begins: the end of the cell pointer array. New pointers are written here.'],['upper','2 B','Where free space ends: the start of the cell area. New cells are appended just below it.'],['right-ptr','4 B','SQLite-style rightmost child pointer, the one pointer without a separator key.'],['siblings','8 B','IDs of the left and right neighbour pages, so scans can move sideways.'],['checksum','4 B','Checksum or CRC of the page body, verified on every read.']];
+$('#hdr').innerHTML=HF.map((f,i)=>`<button data-i="${i}" aria-pressed="${i===0}">${f[0]}<br><span class="small">${f[1]}</span></button>`).join('');
+function hdrShow(i){$('#hdrInfo').innerHTML=`<h3>${HF[i][0]}</h3><p>${HF[i][2]}</p>`}
+$$('#hdr button').forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);hdrShow(+b.dataset.i)}));hdrShow(0);
+
+/* magic */
+const MB=[0x50,0x41,0x47,0x45,0x01,0x08,0x00,0x03,0x2E,0x14,0x99,0x50,0x41,0x47,0x45,0x01,0x00,0x00,0x07,0xAA,0x31,0x41,0x47,0x00];
+function drawMg(){const o=+$('#mg').value;$('#mgV').textContent=o;const s=$('#mgSvg');s.innerHTML='';const W=26;
+  MB.forEach((b,i)=>{const pg=i<11?0:1;s.appendChild(el('rect',{x:10+i*W,y:30,width:W-2,height:30,rx:3,fill:pg?'var(--blue-soft)':'var(--pencil-soft)',stroke:'var(--line)'}));s.appendChild(el('text',{x:10+i*W+W/2-1,y:50,'text-anchor':'middle','font-size':10,fill:'var(--ink)',class:'t-mono'},b.toString(16).padStart(2,'0').toUpperCase()))});
+  s.appendChild(el('text',{x:10,y:20,'font-size':10.5,fill:'var(--pencil)'},'page 0 starts @0'));s.appendChild(el('text',{x:10+11*W,y:20,'font-size':10.5,fill:'var(--blue)'},'page 1 starts @11'));
+  const ok=MB[o]===0x50&&MB[o+1]===0x41&&MB[o+2]===0x47&&MB[o+3]===0x45;s.appendChild(el('rect',{x:8+o*W,y:26,width:4*W+2,height:38,rx:5,fill:'none',stroke:ok?'var(--ok)':'var(--bad)','stroke-width':3}));
+  s.appendChild(el('text',{x:10+o*W,y:84,'font-size':11,fill:ok?'var(--ok)':'var(--bad)',class:'t-mono'},MB.slice(o,o+4).map(b=>b.toString(16).padStart(2,'0')).join(' ')+(ok?'  = "PAGE" ✓':'  ≠ magic ✗')));
+  $('#mgTxt').innerHTML=ok?'The four bytes match the magic number: this offset is a page boundary.':'Mismatch. Interpreting these bytes as a header would yield garbage cell counts and offsets, so the read is rejected before it can do damage.'}
+$('#mg').addEventListener('input',drawMg);drawMg();
+
+/* siblings */
+const sbT=new BT(3);[2,5,8,11,14,17,20,23,26,29,32,35,38,41].forEach(k=>sbT.insert(k));let sib=1,sbLeaf=0;
+function drawSb(){const lv=drawBT(sbT,'#sbSvg');const leaves=lv[lv.length-1];if(sbLeaf>=leaves.length-1)sbLeaf=leaves.length-2;
+  $('#sbBtns').innerHTML=leaves.slice(0,-1).map((n,i)=>`<button class="btn${i===sbLeaf?' primary':''}" data-l="${i}">[${n.keys.join(' ')}] →</button>`).join('');
+  $$('#sbBtns button').forEach(b=>b.addEventListener('click',()=>{sbLeaf=+b.dataset.l;drawSb()}));
+  const from=leaves[sbLeaf],to=leaves[sbLeaf+1];let path;
+  if(sib){path=[from,to];$('#sbTxt').innerHTML=`One hop: read the right-sibling ID from the header of [${from.keys.join(' ')}] and load the next page. <b>1 page read.</b>`}
+  else{const par=new Map();lv.flat().forEach(n=>{if(!n.leaf)n.kids.forEach(c=>par.set(c,n))});const up=[from];let c=from;let p=par.get(c);while(p&&p.kids.indexOf(c)===p.kids.length-1){up.push(p);c=p;p=par.get(c)}up.push(p);let d=p.kids[p.kids.indexOf(c)+1];const down=[d];while(!d.leaf){d=d.kids[0];down.push(d)}path=[...up,...down];
+    $('#sbTxt').innerHTML=`Climb ${up.length-1} level${up.length>2?'s':''} until a parent has a child further right, then descend its leftmost branch. <b>${path.length-1} page visits.</b> Parents are usually cached, but every hop still costs a lookup and latch.`}
+  drawBT(sbT,'#sbSvg',{path});}
+seg('[data-sib]',b=>{sib=+b.dataset.sib;drawSb()});drawSb();
+
+/* rightmost / high key */
+function drawRm(m){const s=$('#rmSvg');s.innerHTML='';const keys=['K1','K2','K3'];const cw=90,x0=90,y=40;
+  if(m==='rp'){s.appendChild(el('rect',{x:20,y,width:60,height:40,rx:4,fill:'var(--line)'}));s.appendChild(el('text',{x:50,y:y+18,'text-anchor':'middle','font-size':10,fill:'var(--ink)',class:'t-mono'},'header'));s.appendChild(el('text',{x:50,y:y+32,'text-anchor':'middle','font-size':10,fill:'var(--pencil)',class:'t-mono',"font-weight":700},'P4'));
+    keys.forEach((k,i)=>{s.appendChild(el('rect',{x:x0+i*cw,y,width:cw-6,height:40,rx:4,fill:'var(--surface)',stroke:'var(--blue)'}));s.appendChild(el('text',{x:x0+i*cw+(cw-6)/2,y:y+25,'text-anchor':'middle','font-size':12,fill:'var(--ink)',class:'t-mono'},`P${i+1} | ${k}`))});
+    const ranges=['< K1','K1 ≤ k < K2','K2 ≤ k < K3','≥ K3 … +∞'];ranges.forEach((r,i)=>{const cx=i<3?x0+i*cw+20:50;s.appendChild(el('line',{x1:cx,y1:y+40,x2:110+i*140,y2:130,stroke:i===3?'var(--pencil)':'var(--muted)','stroke-width':1.5}));s.appendChild(el('rect',{x:60+i*140,y:130,width:110,height:32,rx:5,fill:'var(--paper)',stroke:'var(--line)'}));s.appendChild(el('text',{x:115+i*140,y:150,'text-anchor':'middle','font-size':11,fill:'var(--ink)'},r))});
+    $('#rmTxt').innerHTML='Three cells pair a pointer with a key; <b class="pencil">P4</b> lives in the header. When the rightmost child splits, the parent gets a new cell for the old child, and P4 is reassigned to the new node. The last subtree is unbounded: it goes up to +∞.'}
+  else{s.appendChild(el('rect',{x:20,y,width:60,height:40,rx:4,fill:'var(--line)'}));s.appendChild(el('text',{x:50,y:y+25,'text-anchor':'middle','font-size':10,fill:'var(--ink)',class:'t-mono'},'header'));
+    [...keys,'K4 (high)'].forEach((k,i)=>{s.appendChild(el('rect',{x:x0+i*cw*1.1,y,width:cw*1.1-6,height:40,rx:4,fill:i===3?'var(--ok-soft)':'var(--surface)',stroke:i===3?'var(--ok)':'var(--blue)'}));s.appendChild(el('text',{x:x0+i*cw*1.1+(cw*1.1-6)/2,y:y+25,'text-anchor':'middle','font-size':12,fill:'var(--ink)',class:'t-mono'},`P${i+1} | ${k}`))});
+    const ranges=['< K1','K1 ≤ k < K2','K2 ≤ k < K3','K3 ≤ k < K4'];ranges.forEach((r,i)=>{const cx=x0+i*cw*1.1+20;s.appendChild(el('line',{x1:cx,y1:y+40,x2:115+i*140,y2:130,stroke:i===3?'var(--ok)':'var(--muted)','stroke-width':1.5}));s.appendChild(el('rect',{x:60+i*140,y:130,width:110,height:32,rx:5,fill:'var(--paper)',stroke:'var(--line)'}));s.appendChild(el('text',{x:115+i*140,y:150,'text-anchor':'middle','font-size':11,fill:'var(--ink)'},r))});
+    $('#rmTxt').innerHTML='Every pointer is stored with a key. The extra <b class="okc">high key</b> K4 bounds the whole node, so the last subtree ends at K4 rather than +∞. A reader can tell from the node alone whether its key could be here, which is what makes B<sup>link</sup>-Trees safe under concurrent splits.'}}
+seg('[data-rm]',b=>drawRm(b.dataset.rm));drawRm('rp');
+
+/* overflow */
+function drawOv(){const sz=+$('#ov').value,f=+$('#of').value,P=4096,maxp=Math.floor(P/f);$('#ovV').textContent=sz.toLocaleString('en-US')+' B';$('#ofV').textContent=f;
+  const inPage=Math.min(sz,maxp),rest=sz-inPage,n=Math.ceil(rest/P);const s=$('#ovSvg');s.innerHTML='';
+  s.appendChild(el('rect',{x:10,y:30,width:130,height:60,rx:6,fill:'var(--surface)',stroke:'var(--blue)','stroke-width':2}));s.appendChild(el('rect',{x:16,y:56,width:Math.max(4,118*inPage/maxp),height:18,rx:3,fill:'var(--ok)'}));
+  s.appendChild(el('text',{x:75,y:48,'text-anchor':'middle','font-size':11,fill:'var(--ink)'},'primary page'));s.appendChild(el('text',{x:75,y:106,'text-anchor':'middle','font-size':10,fill:'var(--muted)',class:'t-mono'},inPage+' B in node'));
+  const show=Math.min(n,4);for(let i=0;i<show;i++){const x=180+i*120;s.appendChild(el('line',{x1:x-40+(i?0:0),y1:60,x2:x,y2:60,stroke:'var(--pencil)','stroke-width':1.5}));s.appendChild(el('polygon',{points:`${x},60 ${x-7},56 ${x-7},64`,fill:'var(--pencil)'}));
+    const fill=Math.min(P,rest-i*P);s.appendChild(el('rect',{x,y:30,width:90,height:60,rx:6,fill:'var(--surface)',stroke:'var(--pencil)','stroke-width':1.6,'stroke-dasharray':'4 3'}));s.appendChild(el('rect',{x:x+5,y:56,width:80*fill/P,height:18,rx:3,fill:'var(--pencil)',opacity:.7}));s.appendChild(el('text',{x:x+45,y:48,'text-anchor':'middle','font-size':10.5,fill:'var(--ink)'},'overflow '+(i+1)))}
+  if(n>4)s.appendChild(el('text',{x:650,y:64,'text-anchor':'end','font-size':12,fill:'var(--muted)'},`+${n-4} more`));
+  $('#ovTxt').innerHTML=`Page 4 KB, fanout ${f} → max_payload = ${maxp} B. ${rest>0?`${rest.toLocaleString('en-US')} B spill into ${n} overflow page${n>1?'s':''}, linked through their headers. Reading the full value means ${n+1} page reads.`:'The record fits in the node: no overflow needed.'} If most records are this big, a separate blob store may be a better design.`}
+$('#ov').addEventListener('input',drawOv);$('#of').addEventListener('input',drawOv);drawOv();
+
+/* binary search with indirection */
+const ins=['Tom','Leslie','Ron','Ann','Kim','Bo','Zoe'];const sorted=[...ins].sort();
+function bsSteps(k){const st=[];let lo=0,hi=sorted.length;st.push({lo,hi,m:null,t:`Search "${k}" in ${sorted.length} pointers. The range is the whole pointer array.`});
+  while(lo<hi){const m=(lo+hi)>>1;const c=sorted[m];if(c===k){st.push({lo,hi,m,t:`Probe pointer ${m} → follow to cell "${c}". Match: found.`,found:m});return st}
+    if(c<k){st.push({lo,hi,m,t:`Probe pointer ${m} → cell "${c}". "${c}" < "${k}", continue right.`});lo=m+1}else{st.push({lo,hi,m,t:`Probe pointer ${m} → cell "${c}". "${c}" > "${k}", continue left.`});hi=m}}
+  st.push({lo,hi:lo,m:null,t:`Range empty. Not found; insertion point is ${lo}: a new pointer would go at slot ${lo}, and in an internal node we'd follow child ${lo}.`,ip:lo});return st}
+let bsGo;function bsInit(){const k=$('#bsK').value;const st=bsSteps(k);const r=$('#bsStep');r.querySelectorAll('.step-cap,.row.between').forEach(e=>e.remove());r.insertAdjacentHTML('beforeend',stepHTML());
+  stepper('#bsStep',st.map(s=>s.t),i=>{const S=st[i];const s=$('#bsSvg');s.innerHTML='';const pw=70,cw=78;
+    s.appendChild(el('text',{x:20,y:20,'font-size':11,fill:'var(--muted)',class:'t-mono'},'SORTED POINTERS'));s.appendChild(el('text',{x:20,y:142,'font-size':11,fill:'var(--muted)',class:'t-mono'},'CELLS (insertion order)'));
+    sorted.forEach((n,p)=>{const inR=p>=S.lo&&p<S.hi,probe=p===S.m;const x=20+p*pw;s.appendChild(el('rect',{x,y:28,width:pw-8,height:30,rx:4,fill:probe?'var(--pencil-soft)':inR?'var(--blue-soft)':'var(--paper)',stroke:probe?'var(--pencil)':inR?'var(--blue)':'var(--line)','stroke-width':probe?2.5:1.2}));s.appendChild(el('text',{x:x+(pw-8)/2,y:48,'text-anchor':'middle','font-size':11,fill:'var(--ink)',class:'t-mono'},'#'+p));
+      const ci=ins.indexOf(n),cx=20+ci*cw+(cw-8)/2;s.appendChild(el('line',{x1:x+(pw-8)/2,y1:58,x2:cx,y2:150,stroke:probe?'var(--pencil)':'var(--line)','stroke-width':probe?2.5:1,'stroke-dasharray':probe?'':'3 3'}))});
+    ins.forEach((n,ci)=>{const x=20+ci*cw;const hit=S.found!=null&&sorted[S.found]===n;s.appendChild(el('rect',{x,y:150,width:cw-8,height:32,rx:4,fill:hit?'var(--ok-soft)':'var(--surface)',stroke:hit?'var(--ok)':'var(--d2)'}));s.appendChild(el('text',{x:x+(cw-8)/2,y:171,'text-anchor':'middle','font-size':12,fill:'var(--ink)'},n))});
+    if(S.ip!=null){const x=20+S.ip*pw-6;s.appendChild(el('line',{x1:x,y1:22,x2:x,y2:64,stroke:'var(--ok)','stroke-width':3}));s.appendChild(el('text',{x,y:78,'text-anchor':'middle','font-size':10,fill:'var(--ok)'},'insert here'))}})}
+$('#bsK').addEventListener('change',bsInit);bsInit();
+
+/* breadcrumbs */
+let bcT;function bcReset(){bcT=new BT(3);[5,10,15,20,25,30,35,40,45,50,55,60].forEach(k=>bcT.insert(k));bcT.log=[];drawBT(bcT,'#bcSvg');$('#bcStack').innerHTML='';$('#bcLog').innerHTML='<div>Insert a key to collect breadcrumbs.</div>'}
+$('#bcGo').addEventListener('click',async()=>{const k=+$('#bcK').value;const {n,path}=bcT.find(k);const nodes=path.map(p=>p[0]).concat([n]);drawBT(bcT,'#bcSvg',{path:nodes});
+  const crumbs=path.map(([p,i])=>`[${p.keys.join(' ')}] · child ${i}`);$('#bcStack').innerHTML=crumbs.map(c=>`<div>${c}</div>`).join('');
+  const before=bcT.log.length;bcT.insert(k);const msgs=bcT.log.slice(before);const splits=msgs.filter(m=>/overflow/.test(m)).length;
+  const L=[`descend: pushed ${crumbs.length} breadcrumb${crumbs.length!==1?'s':''}`,...msgs];
+  const items=$$('#bcStack div').reverse();for(let i=0;i<Math.min(splits,items.length);i++)items[i].classList.add('pop');
+  if(splits)L.push(`popped ${Math.min(splits,items.length)} breadcrumb(s) to place promoted keys`);else L.push('leaf had room: no split, stack discarded');
+  $('#bcLog').innerHTML=L.map(x=>`<div>${esc(x)}</div>`).join('');setTimeout(()=>drawBT(bcT,'#bcSvg'),1200);$('#bcK').value=k+1});
+$('#bcReset').addEventListener('click',bcReset);bcReset();
+
+/* occupancy comparison */
+function occ(keys,opts){const t=new BT(4);Object.assign(t,opts||{});keys.forEach(k=>t.insert(k));const {lv}=t.layout();const leaves=lv[lv.length-1];return{leaves:leaves.length,occ:keys.length/(leaves.length*4),h:lv.length}}
+function drawBal(o){const keys=o==='seq'?Array.from({length:60},(_,i)=>i+1):(()=>{const a=Array.from({length:60},(_,i)=>i+1);for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a})();
+  const a=occ(keys),b=occ(keys,{rightOnly:true});const ideal=Math.ceil(60/4);
+  bars('#balBars',[{l:'Half split: leaves',v:a.leaves,c:'mid',txt:`${a.leaves} (${Math.round(a.occ*100)}%)`},{l:'Right-only append',v:b.leaves,c:'ok',txt:`${b.leaves} (${Math.round(b.occ*100)}%)`},{l:'Bulk load (ideal)',v:ideal,c:'blue',txt:`${ideal} (100%)`}],32);
+  $('#balTxt').textContent=o==='seq'?'With increasing keys, a normal split leaves every left half permanently part-empty: nothing will ever be inserted into it again. Starting a fresh rightmost page keeps old leaves full.':'With random keys the right-only rule rarely fires, so it behaves like a normal split. The gain is specific to append-heavy workloads.'}
+seg('[data-ko]',b=>drawBal(b.dataset.ko));drawBal('seq');
+
+/* bulk load */
+$('#blGo').addEventListener('click',async()=>{const s=$('#blSvg');s.innerHTML='';const keys=Array.from({length:27},(_,i)=>i+1);const C=3;const leaves=[];for(let i=0;i<keys.length;i+=C)leaves.push(keys.slice(i,i+C));
+  const W=660,lw=W/leaves.length;const box=(x,y,w,t,c)=>{s.appendChild(el('rect',{x,y,width:w,height:26,rx:4,fill:'var(--surface)',stroke:`var(--${c})`,'stroke-width':1.5,class:'fade'}));s.appendChild(el('text',{x:x+w/2,y:y+17,'text-anchor':'middle','font-size':10.5,fill:'var(--ink)',class:'t-mono'},t))};
+  $('#blTxt').textContent='writing leaves…';for(let i=0;i<leaves.length;i++){box(i*lw+3,160,lw-6,leaves[i].join(' '),'d2');await sleep(110)}
+  $('#blTxt').textContent='first key of each leaf goes up a level…';let lvl=leaves.map((l,i)=>({k:l[0],x:i*lw+lw/2}));let y=100;
+  while(lvl.length>1){const nxt=[];for(let i=0;i<lvl.length;i+=C){const g=lvl.slice(i,i+C);const x1=g[0].x,x2=g[g.length-1].x;const cx=(x1+x2)/2;const w=Math.max(60,(g.length-1)*28+40);
+      g.forEach(c=>s.appendChild(el('line',{x1:cx,y1:y+26,x2:c.x,y2:y+60,stroke:'var(--muted)',opacity:.6})));box(cx-w/2,y,w,g.slice(1).map(c=>c.k).join(' '),'blue');nxt.push({k:g[0].k,x:cx});await sleep(160)}lvl=nxt;y-=60}
+  $('#blTxt').textContent='done: 9 full leaves, no splits, every page 100% occupied'});
+$('#blGo').click();
+
+/* compression */
+function drawCm(){const r=+$('#cm').value/10;$('#cmV').textContent=r.toFixed(1)+'×';const s=$('#cmSvg');s.innerHTML='';const B=4096,pg=8192,cs=pg/r,sc=640/(4*B);
+  for(let i=0;i<=4;i++)s.appendChild(el('line',{x1:10+i*B*sc,y1:20,x2:10+i*B*sc,y2:90,stroke:'var(--muted)','stroke-dasharray':'3 3'}));for(let i=0;i<4;i++)s.appendChild(el('text',{x:10+(i+.5)*B*sc,y:104,'text-anchor':'middle','font-size':10,fill:'var(--muted)'},'block '+i));
+  let x=0,i=0;const cols=['d1','d2','d3','d4','d5','pencil','ok','mid'];while(x+cs<=4*B&&i<8){s.appendChild(el('rect',{x:10+x*sc,y:34,width:cs*sc-2,height:40,rx:3,fill:`var(--${cols[i]})`,opacity:i===1?.85:.35}));s.appendChild(el('text',{x:10+(x+cs/2)*sc,y:58,'text-anchor':'middle','font-size':10,fill:'var(--ink)'},'p'+i));x+=cs;i++}
+  const st=cs,en=2*cs;const b0=Math.floor(st/B),b1=Math.ceil(en/B);s.appendChild(el('rect',{x:10+b0*B*sc,y:28,width:(b1-b0)*B*sc,height:52,rx:4,fill:'none',stroke:'var(--pencil)','stroke-width':2.5}));
+  const read=(b1-b0)*B;$('#cmTxt').innerHTML=`Each 8 KB page compresses to ${Math.round(cs)} B. To load page p1 we must read blocks ${b0}–${b1-1}: <b>${read} B</b> for ${Math.round(cs)} B of useful data (${Math.round(cs/read*100)}%).`}
+$('#cm').addEventListener('input',drawCm);drawCm();
+
+/* vacuum */
+let vc;function vReset(){vc=Array.from({length:15},(_,i)=>({id:'k'+(i+1),st:i<9?'live':'free'}))}
+function drawV(){$('#vac').innerHTML='<span class="hdrc">h</span>'+vc.map(c=>`<span class="${c.st==='free'?'':c.st}">${c.st==='free'?'':c.id}</span>`).join('');const live=vc.filter(c=>c.st==='live').length,dead=vc.filter(c=>c.st==='dead').length,free=vc.filter(c=>c.st==='free').length;
+  let run=0,best=0;vc.forEach(c=>{if(c.st==='free'){run++;best=Math.max(best,run)}else run=0});$('#vTxt').textContent=`${live} addressable, ${dead} garbage, ${free} free slots; largest contiguous gap ${best}. ${dead?'Free space is there, but much of it is locked in garbage.':''}`}
+$('#vDel').addEventListener('click',()=>{const L=vc.filter(c=>c.st==='live');for(let i=0;i<3&&L.length;i++){L.splice(Math.floor(Math.random()*L.length),1)[0].st='dead'}drawV()});
+$('#vUpd').addEventListener('click',()=>{for(let i=0;i<2;i++){const L=vc.filter(c=>c.st==='live');const f=vc.findIndex(c=>c.st==='free');if(!L.length||f<0)break;const c=L[Math.floor(Math.random()*L.length)];c.st='dead';vc[f]={id:c.id+"'",st:'live'}}drawV()});
+$('#vRun').addEventListener('click',()=>{const live=vc.filter(c=>c.st==='live').sort((a,b)=>parseInt(a.id.slice(1))-parseInt(b.id.slice(1)));vc=live.concat(Array.from({length:15-live.length},()=>({st:'free'})));drawV();$('#vTxt').textContent+=' Vacuum rewrote live cells in key order.'});
+vReset();drawV();
+
+quiz('#qQuiz','#qScore',[
+ {q:'What does a magic number in the page header protect against?',o:['Concurrent writers','Reading from a wrong or misaligned offset','Data loss on crash'],a:1,why:'A random byte sequence almost never matches, so a match confirms a real page boundary.'},
+ {q:'What is the downside of sibling links?',o:['Slower scans','Splits and merges must update a neighbour too','They use parent pointers'],a:1,why:'Updating the sibling\'s header may require locking a node other than the one being split.'},
+ {q:'Breadcrumbs are usually kept…',o:['on disk in every page','in an in-memory stack during one operation','in the WAL'],a:1,why:'They record the path of the current descent so a split can walk back up.'},
+ {q:'B*-Trees split two full siblings into…',o:['two half-full nodes','three two-thirds-full nodes','one full node'],a:1,why:'Rebalancing until both siblings are full, then splitting 2→3, raises average occupancy.'},
+ {q:'Why might bulk-loaded immutable B-Trees fill pages 100%?',o:['No future in-place inserts need room','They use compression','They skip the root'],a:0,why:'Mutable trees reserve space for later writes; an immutable one never changes.'}]);
+
+})();
+</script>
+</body>
+</html>

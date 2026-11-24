@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Event-Driven Batch Processing</title>
+<meta name="description" content="Chain work queues together and the output of one stage becomes the input of the next. A handful of plumbing patterns cover almost every workflow.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Designing Distributed Systems companion. Layout: an engineer's notebook on blueprint grid paper.
+   Blue ink = containers, services and requests, orange pencil = the pattern being added, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code listings (short, original) */
+pre.code{margin:0;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-family:var(--mono);font-size:.82rem;line-height:1.5;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)} pre.code .p{color:var(--pencil)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+/* log console used by simulations */
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;height:150px;overflow-y:auto;display:flex;flex-direction:column;gap:2px}
+.log div{white-space:pre-wrap;word-break:break-word}
+.log .ok{color:var(--ok)} .log .bad{color:var(--bad)} .log .mid{color:var(--mid)} .log .blue{color:var(--blue)}
+.note-missing{border:1px dashed var(--line);border-radius:10px;padding:14px 16px;font-size:.93rem;color:var(--muted);background:var(--surface)}
+.stat span.big{font-size:clamp(1.5rem,4.5vw,2.1rem);color:var(--ink)}
+.stat span.big.blue{color:var(--blue)} .stat span.big.badc{color:var(--bad)} .stat span.big.okc{color:var(--ok)} .stat span.big.midc{color:var(--mid)} .stat span.big.pencil{color:var(--pencil)}
+:root{--d1-soft:color-mix(in srgb,var(--d1) 15%,var(--surface));--d2-soft:color-mix(in srgb,var(--d2) 15%,var(--surface));--d3-soft:color-mix(in srgb,var(--d3) 15%,var(--surface));--d4-soft:color-mix(in srgb,var(--d4) 15%,var(--surface));--d5-soft:color-mix(in srgb,var(--d5) 15%,var(--surface));--muted-soft:color-mix(in srgb,var(--muted) 12%,var(--surface));--ink-soft:color-mix(in srgb,var(--ink) 8%,var(--surface))}
+
+/* page */
+
+.pat{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+@media (max-width:640px){.pat{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.pat button{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:8px 10px;text-align:left;display:flex;flex-direction:column;gap:2px;font-size:.85rem}
+.pat button b{font-family:var(--display)}
+.pat button span{font-size:.78rem;color:var(--muted)}
+.pat button[aria-pressed="true"]{background:var(--blue-soft);border-color:var(--blue)}
+.shards{display:flex;gap:8px;flex-wrap:wrap}
+.shards button{border:1px solid var(--ok);background:var(--ok-soft);border-radius:8px;padding:6px 12px;font-family:var(--mono);font-size:.82rem}
+.shards button[aria-pressed="false"]{border-color:var(--bad);background:var(--bad-soft);color:var(--bad)}
+.calc{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+@media (max-width:640px){.calc{grid-template-columns:1fr}}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Designing Distributed Systems · visual companion</a><span class="tag">Part IV · Chapter 12</span></div>
+  <h1>Event-Driven Batch Processing</h1>
+  <p class="lede">Chain work queues together and the output of one stage becomes the input of the next. A handful of plumbing patterns cover almost every workflow.</p>
+  <nav class="toc" aria-label="Sections"><a href="#workflow">Workflows</a><a href="#patterns">Five patterns</a><a href="#hedge">Copying for reliability</a><a href="#sharder">Sharding a queue</a><a href="#signup">Signup flow</a><a href="#pubsub">Pub/sub</a><a href="#stealing">Work stealing</a><a href="#errors">Errors and retries</a><a href="#check">Quick check</a></nav>
+</header>
+
+<section id="workflow" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Chaining queues into workflows</h2></div>
+  <p>A single work queue turns one input into one output. Real batch jobs need several steps, or several outputs from one input. So queues get linked: the completion of one stage is the <b>event</b> that feeds the next. The result is a <b>workflow</b>, a directed acyclic graph of stages. Like a web of functions, it is hard to understand without a blueprint, and error handling quickly complicates it. A small vocabulary of linking patterns keeps it readable.</p>
+  <div class="svgbox"><svg id="dagSvg" viewBox="0 0 640 150" role="img" aria-label="A workflow that copies work into two stages and combines them"></svg></div>
+</section>
+
+<section id="patterns" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Copier, filter, splitter, sharder, merger</h2></div>
+  <p>Plain chaining (one queue feeds the next) needs no name. These five describe everything else. Pick one and press play: each coloured token is a work item.</p>
+  <div class="sheet">
+    <div class="pat" id="pat" role="group" aria-label="Pattern"></div>
+    <div class="svgbox"><svg id="patSvg" viewBox="0 0 640 240" role="img" aria-label="Work items flowing through the selected pattern"></svg></div>
+    <div class="row between"><button class="btn primary" id="patGo">Play</button><span class="small" id="patEx"></span></div>
+    <div class="detail" id="patTxt" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="hedge" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Copying to buy reliability and speed</h2></div>
+  <p>A copier can also trade compute for reliability. Run every item twice and keep whichever finishes first: a 1% crash rate becomes 0.01%, and a rare 60× slowdown almost vanishes. The book is clear that fixing the worker is the better long-term answer; doubling is a stopgap when you can't.</p>
+  <div class="sheet">
+    <div class="calc"><label class="rng"><span>Worker crash rate: <b id="cpV">1%</b></span><input type="range" id="cp" min="0" max="20" step=".5" value="1"></label><label class="rng"><span>Copies per item: <b id="kV">2</b></span><input type="range" id="k" min="1" max="4" value="2"></label></div>
+    <div class="bars" id="hBars"></div>
+    <p class="small" id="hTxt"></p>
+  </div>
+</section>
+
+<section id="sharder" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Sharding for blast radius and spread</h2></div>
+  <p>A <b>sharder</b> splits one queue evenly across several. Two payoffs. A bad worker release can be rolled out shard by shard, so a crash hits a quarter of users, not all. And shards can sit in different regions to even out load and survive a region failure. When a shard is unhealthy, the sharding function spills its work onto the healthy ones. Break some shards.</p>
+  <div class="sheet">
+    <div class="shards" id="shards" role="group" aria-label="Shard health"></div>
+    <div class="svgbox"><svg id="shSvg" viewBox="0 0 640 200" role="img" aria-label="Work distributed across healthy shards"></svg></div>
+  </div>
+</section>
+
+<section id="signup" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Putting it together: a signup workflow</h2></div>
+  <p>The book's worked example combines the patterns into two linked workflows.</p>
+  <div class="sheet stepper" id="suStep"><div class="svgbox"><svg id="suSvg" viewBox="0 0 640 250" role="img" aria-label="Signup workflow with sharder, copier and splitter"></svg></div></div>
+</section>
+
+<section id="pubsub" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>The plumbing: publish/subscribe</h2></div>
+  <p>Stages could pass files through a shared directory, but that ties you to one node or a network file system. The usual answer is a <b>pub/sub</b> service: publishers write messages to named <b>topics</b>, the service stores them reliably, and subscribers receive them. Clouds offer managed ones; <b>Kafka</b> is the popular open source choice, easy to install on Kubernetes with Helm. Typically each stage's output is a topic, so a three-way sharder writes to <code>photos-1</code>, <code>photos-2</code>, <code>photos-3</code>. Two settings matter when creating a topic.</p>
+  <div class="sheet">
+    <div class="calc"><label class="rng"><span>Replication factor: <b id="rfV">3</b></span><input type="range" id="rf" min="1" max="5" value="3"></label><label class="rng"><span>Partitions: <b id="ptV">6</b></span><input type="range" id="pt" min="1" max="10" value="6"></label></div>
+    <div class="svgbox"><svg id="kSvg" viewBox="0 0 640 220" role="img" aria-label="Topic partitions and replicas spread across brokers"></svg></div>
+    <p class="small" id="kTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="stealing" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Uneven work and work stealing</h2></div>
+  <p>Real work items are not identical: a longer movie, a deep directory tree your code handles badly. Usually it averages out, until all the slow items land in one queue, like a grocery checkout lane stuck behind a full trolley. <b>Work stealing</b>: a worker with an empty queue takes items from the <i>back</i> of the longest other queue (the back, because nobody is about to start on those). Run both.</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Stealing"><button data-ws="off" aria-pressed="true">No stealing</button><button data-ws="on" aria-pressed="false">Work stealing</button></div><div class="row"><button class="btn primary" id="wsGo">Run</button><button class="btn" id="wsNew">New random load</button></div></div>
+    <div class="svgbox"><svg id="wsSvg" viewBox="0 0 640 220" role="img" aria-label="Four worker queues processing items"></svg></div>
+    <p id="wsTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="errors" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Crashes, poison items and the retry queue</h2></div>
+  <p>Queues usually <b>hide</b> a message while a worker processes it and delete it only on a "completed" acknowledgment. If the ack does not come in time, the message reappears for someone else. That rescues work from crashed workers, but a merely slow worker means two workers on one item, so <b>assume duplicates and make work idempotent</b>. Then there is the <b>poison</b> item that crashes every worker that touches it: count its attempts and back off exponentially until it is set aside.</p>
+  <div class="sheet stepper" id="pzStep"><div class="svgbox"><svg id="pzSvg" viewBox="0 0 640 170" role="img" aria-label="A poison message crashing workers with exponential backoff"></svg></div></div>
+  <p>Last trap: after a stall (say a downstream dependency was returning garbage), the backlog of old retries sits in front of fresh work, though the fresh work is often what users still care about. Keep <b>two queues</b>, fresh and retry, and serve them with priority.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Queues"><button data-dq="one" aria-pressed="true">One queue</button><button data-dq="two" aria-pressed="false">Fresh + retry queues</button></div>
+    <div class="svgbox"><svg id="dqSvg" viewBox="0 0 640 200" role="img" aria-label="Latency of new work after an outage"></svg></div>
+    <p id="dqTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Name the pattern</h3><span class="score" id="pScore"></span></div><div class="quiz" id="pQuiz"></div></div>
+  <div class="sheet"><div class="row between"><h3>Three more</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Designing Distributed Systems: Patterns and Paradigms for Scalable, Reliable Systems Using Kubernetes</i>, 2nd edition, by Brendan Burns (O'Reilly, 2025). Explanations, code snippets, diagrams and simulations are original summaries, not copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch11-work-queues.html"><span>Previous · Chapter 11</span><b>Work Queue Systems</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch13-coordinated-batch.html"><span>Next · Chapter 13</span><b>Coordinated Batch Processing</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('dds:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('dds:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+
+function bx(s,x,y,w,h,t,sub,c,soft,ex){s.appendChild(el('rect',Object.assign({x,y,width:w,height:h,rx:8,fill:soft===false?'var(--surface)':`var(--${c}-soft)`,stroke:`var(--${c})`,'stroke-width':1.6},ex||{})));s.appendChild(el('text',{x:x+w/2,y:y+h/2+(sub?-3:5),'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},t));if(sub)s.appendChild(el('text',{x:x+w/2,y:y+h/2+13,'text-anchor':'middle','font-size':10.5,class:'t-mono',fill:'var(--muted)'},sub))}
+function ln(s,x1,y1,x2,y2,c,fl,w){s.appendChild(el('line',{x1,y1,x2,y2,stroke:`var(--${c})`,'stroke-width':w||2,class:fl?'flow':''}))}
+
+(function(){const s=$('#dagSvg');bx(s,10,50,110,46,'stage 1','ingest','blue');bx(s,200,10,120,46,'stage 2a','','blue');bx(s,200,94,120,46,'stage 2b','','blue');bx(s,400,50,110,46,'stage 3','combine','blue');bx(s,560,50,70,46,'out','','ok');
+ ln(s,120,73,200,33,'pencil',1);ln(s,120,73,200,117,'pencil',1);ln(s,320,33,400,73,'d5',1);ln(s,320,117,400,73,'d5',1);ln(s,510,73,560,73,'muted',1);
+ s.appendChild(el('text',{x:160,y:145,'text-anchor':'middle','font-size':11,fill:'var(--pencil)'},'copy'));s.appendChild(el('text',{x:360,y:145,'text-anchor':'middle','font-size':11,fill:'var(--d5)'},'merge'))})();
+
+/* pattern playground */
+const PATS={copier:['Copier','1 → N identical','One stream duplicated into several identical streams, because several different jobs need the same input.','Render one uploaded video as 4K, 1080p, low-res mobile and a GIF thumbnail.'],
+ filter:['Filter','N → fewer','Drops items that fail a test. Best built as an ambassador wrapping an existing source container, which returns only matching items.','From all new signups, keep only users who opted in to promotional email.'],
+ splitter:['Splitter','1 → A or B','Routes each item to one of several queues by a rule; nothing is dropped. If an item qualifies for both, it is copied: a splitter is a copier plus filters, packaged like an XOR gate.','Shipping notices: email queue or SMS queue (or both).'],
+ sharder:['Sharder','1 → N even','Spreads items evenly across N queues using a sharding function, for blast-radius control and to spread load across regions.','Spread photo processing over four regional queues.'],
+ merger:['Merger','N → 1','The opposite of a copier: several sources adapted into one stream. It is an adapter over several source containers.','Commits from many repositories into one shared build-and-test system.']};
+let pat='copier',anim=null;$('#pat').innerHTML=Object.entries(PATS).map(([k,p])=>`<button data-p="${k}" aria-pressed="${k===pat}"><b>${p[0]}</b><span>${p[1]}</span></button>`).join('');
+const COL=['d1','d3','d2','d4','d5'];
+function drawPat(prog){const s=$('#patSvg');s.innerHTML='';const p=PATS[pat];const k=pat;
+ const lanesIn=k==='merger'?3:1,lanesOut=k==='filter'||k==='merger'?1:k==='sharder'?4:k==='splitter'?2:3;
+ const yIn=i=>lanesIn===1?120:40+i*80,yOut=i=>lanesOut===1?120:30+i*(180/(lanesOut-1));
+ for(let i=0;i<lanesIn;i++){bx(s,10,yIn(i)-20,90,40,k==='merger'?'repo '+(i+1):'source','','muted',false)}
+ bx(s,260,90,120,60,p[0].toLowerCase(),'','pencil');for(let i=0;i<lanesIn;i++)ln(s,100,yIn(i),260,120,'line',0,1.5);
+ const outN=k==='copier'?['4K','1080p','GIF']:k==='splitter'?['email','sms']:k==='sharder'?['shard 1','shard 2','shard 3','shard 4']:k==='filter'?['opted in']:['build'];
+ for(let i=0;i<lanesOut;i++){bx(s,520,yOut(i)-17,110,34,outN[i],'','blue');ln(s,380,120,520,yOut(i),'line',0,1.5)}
+ if(k==='filter'){s.appendChild(el('text',{x:320,y:200,'text-anchor':'middle','font-size':11,fill:'var(--bad)'},'✕ dropped'))}
+ if(prog==null)return;const items=[0,1,2,3,4,5];
+ items.forEach((it,j)=>{const t=prog*1.6-j*.12;if(t<0||t>1.3)return;const src=k==='merger'?j%3:0;const c=COL[j%5];
+  if(t<.5){const u=t/.5;s.appendChild(el('circle',{cx:100+160*u,cy:yIn(src)+(120-yIn(src))*u,r:8,fill:`var(--${c})`}))}
+  else{const u=Math.min(1,(t-.5)/.5);let outs=[];if(k==='copier')outs=[0,1,2];else if(k==='filter')outs=j%2?[]:[0];else if(k==='splitter')outs=j%3===2?[0,1]:[j%2];else if(k==='sharder')outs=[j%4];else outs=[0];
+   if(!outs.length&&k==='filter'){s.appendChild(el('circle',{cx:320,cy:150+40*u,r:8,fill:`var(--${c})`,opacity:1-u}))}
+   outs.forEach(o=>s.appendChild(el('circle',{cx:380+140*u,cy:120+(yOut(o)-120)*u,r:8,fill:`var(--${c})`})))}})}
+function showPat(){const p=PATS[pat];$('#patTxt').innerHTML=`<span class="eyebrow">${p[1]}</span><h3 class="blue">${p[0]}</h3><p>${p[2]}</p>`;$('#patEx').textContent='Example: '+p[3];drawPat()}
+seg('#pat button',b=>{pat=b.dataset.p;cancelAnimationFrame(anim);showPat()});
+$('#patGo').addEventListener('click',()=>{cancelAnimationFrame(anim);const t0=performance.now();(function f(now){const pr=(now-t0)/2600;drawPat(pr);if(pr<1.05)anim=requestAnimationFrame(f);else drawPat()})(t0)});showPat();
+
+/* hedging */
+function drawH(){const p=+$('#cp').value/100,k=+$('#k').value;$('#cpV').textContent=(p*100)+'%';$('#kV').textContent=k;const fail=Math.pow(p,k),slow=Math.pow(.01,k);
+ const nines=v=>v<=0?'∞':(-Math.log10(v)).toFixed(1);bars('#hBars',[{l:'Items that fail',v:Math.max(.5,100-(-Math.log10(Math.max(fail,1e-12)))*10),c:'bad',txt:(fail*100).toPrecision(2)+'%'},{l:'Items hit by the 60× slowdown (1% chance each run)',v:Math.max(.5,100-(-Math.log10(slow))*10),c:'mid',txt:(slow*100).toPrecision(2)+'%'},{l:'Compute spent',v:k*25,c:'blue',txt:k+'×'}],100);
+ $('#hTxt').textContent=`Reliability: ${nines(fail)} nines${p?'':' (no crashes to hedge against)'}. Each extra copy multiplies the cost and divides the failure odds by the crash rate. (Bar lengths for failures are on a log scale.)`}
+['#cp','#k'].forEach(i=>$(i).addEventListener('input',drawH));drawH();
+
+/* sharder */
+const sh=[1,1,1,1];$('#shards').innerHTML=sh.map((_,i)=>`<button data-s="${i}" aria-pressed="true">shard ${i+1}: healthy</button>`).join('');
+function drawSh(){const s=$('#shSvg');s.innerHTML='';bx(s,10,75,100,50,'queue','','muted',false);bx(s,170,70,110,60,'sharder','hash(user)','pencil');ln(s,110,100,170,100,'muted',1);const healthy=sh.map((h,i)=>h?i:-1).filter(i=>i>=0);
+ sh.forEach((h,i)=>{const y=10+i*48;const share=h&&healthy.length?Math.round(100/healthy.length):0;bx(s,400,y,140,38,'shard '+(i+1),h?share+'% of work':'down',h?'ok':'bad',undefined,{opacity:h?1:.6});if(h)ln(s,280,100,400,y+19,'ok',1,1+share/25);else{ln(s,280,100,400,y+19,'line',0,1)}
+  s.appendChild(el('text',{x:550,y:y+24,'font-size':11,fill:'var(--muted)'},['us-east','us-west','eu','asia'][i]))});
+ if(!healthy.length)s.appendChild(el('text',{x:320,y:195,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--bad)'},'total outage'))}
+$$('#shards button').forEach(b=>b.addEventListener('click',()=>{const i=+b.dataset.s;sh[i]=sh[i]?0:1;b.setAttribute('aria-pressed',sh[i]?'true':'false');b.textContent=`shard ${i+1}: ${sh[i]?'healthy':'failed'}`;drawSh()}));drawSh();
+
+/* signup stepper */
+$('#suStep').insertAdjacentHTML('beforeend',stepHTML());
+stepper('#suStep',['Workflow 1: a new signup arrives.','A <b>sharder</b> spreads users across geographic failure zones, so a zone outage delays only some signups.','Each shard sends the verification email. Workflow 1 ends here.','Workflow 2 starts when the user clicks the link: a new event. A <b>copier</b> duplicates it into two queues.','Queue A sends the welcome email and exits. Queue B handles notification settings: a <b>splitter</b> routes the user to email, SMS, both (copied) or neither.'],i=>{const s=$('#suSvg');s.innerHTML='';const on=(k)=>k<=i;const o=k=>({opacity:on(k)?1:.25});
+ bx(s,10,30,90,40,'signup','','muted',on(0)?undefined:false,o(0));bx(s,130,30,90,40,'sharder','','pencil',undefined,o(1));for(let z=0;z<3;z++){bx(s,250,5+z*32,120,26,'zone '+(z+1)+' · verify','','blue',undefined,o(2));if(on(1))ln(s,220,50,250,18+z*32,'pencil',i===1)}
+ if(on(1))ln(s,100,50,130,50,'muted',0);s.appendChild(el('line',{x1:20,y1:115,x2:620,y2:115,stroke:'var(--line)','stroke-dasharray':'4 4'}));s.appendChild(el('text',{x:20,y:108,'font-size':10.5,fill:'var(--muted)',class:'t-mono'},'workflow 1 ↑ · workflow 2 ↓'));
+ bx(s,10,160,90,40,'verified','event','muted',on(3)?undefined:false,o(3));bx(s,130,160,90,40,'copier','','pencil',undefined,o(3));if(on(3)){ln(s,100,180,130,180,'muted',0);ln(s,220,180,260,145,'pencil',i===3);ln(s,220,180,260,215,'pencil',i===3)}
+ bx(s,260,128,130,34,'welcome email','','blue',undefined,o(4));bx(s,260,198,130,34,'notify settings','','blue',undefined,o(4));bx(s,420,198,80,34,'splitter','','pencil',undefined,o(4));
+ bx(s,530,170,90,28,'email','','ok',undefined,o(4));bx(s,530,206,90,28,'sms','','ok',undefined,o(4));if(on(4)){ln(s,390,215,420,215,'muted',0);ln(s,500,215,530,184,'ok',1);ln(s,500,215,530,220,'ok',1)}});
+
+/* kafka */
+function drawK(){const rf=+$('#rf').value,pt=+$('#pt').value;$('#rfV').textContent=rf;$('#ptV').textContent=pt;const B=5,s=$('#kSvg');s.innerHTML='';
+ for(let b=0;b<B;b++){const x=10+b*126;s.appendChild(el('rect',{x,y:10,width:116,height:200,rx:10,fill:'var(--surface)',stroke:'var(--line)'}));s.appendChild(el('text',{x:x+58,y:28,'text-anchor':'middle','font-size':11.5,'font-weight':600,fill:'var(--ink)'},'broker '+(b+1)))}
+ const cnt=new Array(B).fill(0);for(let p=0;p<pt;p++)for(let r=0;r<Math.min(rf,B);r++){const b=(p+r)%B;const x=18+b*126,y=38+cnt[b]*17;cnt[b]++;if(y>196)continue;
+  s.appendChild(el('rect',{x,y,width:100,height:14,rx:3,fill:r?`var(--${COL[p%5]}-soft)`:`var(--${COL[p%5]})`,stroke:`var(--${COL[p%5]})`}));s.appendChild(el('text',{x:x+50,y:y+11,'text-anchor':'middle','font-size':9.5,class:'t-mono',fill:r?'var(--ink)':'var(--surface)'},'p'+p+(r?' replica':' leader')))}
+ $('#kTxt').innerHTML=`<b>Replication factor ${rf}</b>: each message is stored on ${Math.min(rf,B)} brokers, so the topic survives ${Math.min(rf,B)-1} broker failure${Math.min(rf,B)-1===1?'':'s'} (3 or 5 is the usual advice). <b>${pt} partitions</b>: at most ${pt} consumers can share the load in parallel.`}
+['#rf','#pt'].forEach(i=>$(i).addEventListener('input',drawK));drawK();
+
+/* work stealing */
+let ws='off',load=[];function newLoad(){load=[0,1,2,3].map(w=>Array.from({length:6},(_,i)=>w===1?(i<4?6:2):1+((w*7+i*3)%3)))}newLoad();
+function simWS(){const q=load.map(l=>l.slice()),cur=[null,null,null,null],fin=[0,0,0,0],tl=[[],[],[],[]];let t=0;
+ while(t<200){let busy=false;for(let w=0;w<4;w++){if(!cur[w]){if(q[w].length)cur[w]={d:q[w].shift(),s:t,o:w};else if(ws==='on'){let L=-1,m=0;q.forEach((qq,k)=>{if(qq.length>m){m=qq.length;L=k}});if(L>=0)cur[w]={d:q[L].pop(),s:t,o:L}}}
+  if(cur[w]){busy=true;if(t+1>=cur[w].s+cur[w].d){tl[w].push(cur[w]);fin[w]=t+1;cur[w]=null}}}if(!busy&&q.every(x=>!x.length))break;t++}return{tl,fin,mk:Math.max(...fin)}}
+function drawWS(animate){const r=simWS(),s=$('#wsSvg');s.innerHTML='';const X=t=>80+t*13;
+ for(let w=0;w<4;w++){const y=15+w*48;s.appendChild(el('text',{x:10,y:y+24,'font-size':12,'font-weight':600,fill:'var(--ink)'},'worker '+(w+1)));
+  r.tl[w].forEach((it,j)=>{const stolen=it.o!==w;s.appendChild(el('rect',{x:X(it.s),y,width:it.d*13-2,height:34,rx:4,fill:stolen?'var(--pencil-soft)':`var(--${it.d>=5?'bad':'blue'}-soft)`,stroke:stolen?'var(--pencil)':`var(--${it.d>=5?'bad':'blue'})`,class:animate?'fade':''}));if(stolen)s.appendChild(el('text',{x:X(it.s)+(it.d*13-2)/2,y:y+21,'text-anchor':'middle','font-size':9.5,fill:'var(--pencil)'},'from '+(it.o+1)))})}
+ s.appendChild(el('line',{x1:X(r.mk),y1:8,x2:X(r.mk),y2:210,stroke:'var(--muted)','stroke-dasharray':'3 3'}));s.appendChild(el('text',{x:X(r.mk)+4,y:212,'font-size':11,fill:'var(--muted)'},'all done: t='+r.mk));
+ $('#wsTxt').innerHTML=ws==='on'?`Finished at <b>t=${r.mk}</b>. Idle workers took items (orange) from the back of worker 2's long queue.`:`Finished at <b>t=${r.mk}</b>. Worker 2 got the slow items (red) and everyone else waits idle.`}
+seg('[data-ws]',b=>{ws=b.dataset.ws;drawWS()});$('#wsGo').addEventListener('click',()=>drawWS(true));$('#wsNew').addEventListener('click',()=>{load=[0,1,2,3].map(()=>Array.from({length:4+((Math.random()*4)|0)},()=>Math.random()<.2?5+((Math.random()*4)|0):1+((Math.random()*2)|0)));drawWS()});drawWS();
+
+/* poison */
+$('#pzStep').insertAdjacentHTML('beforeend',stepHTML());
+const PZ=[[1,0,1],[1,1,2],[2,2,4],[3,3,8],[4,4,0]];
+stepper('#pzStep',['Worker 1 takes the message. The queue hides it (not deletes) until an ack arrives.','Worker 1 crashes. No ack before the timeout, so the message reappears. Attempt count: 1. Worker 2 takes it, and crashes too.','The queue notices repeated failures and backs off: the retry delay doubles each time (1, 2, 4, 8...).','Healthy items flow to the remaining workers in the meantime, so capacity is not consumed by one bad item.','After N attempts the item is parked for a human (a "dead-letter" spot). Without this, the poison item would take down workers one after another.'],i=>{const s=$('#pzSvg');s.innerHTML='';
+ for(let w=0;w<4;w++){const dead=i>=1&&i<3&&w<PZ[i][0],busy=i===0&&w===0,x=20+w*100;bx(s,x,20,86,40,'worker '+(w+1),dead?'crashed':busy?'processing':'ok',dead?'bad':busy?'blue':'ok',undefined,{opacity:dead?.6:1})}
+ bx(s,450,20,170,40,'queue','attempts: '+PZ[i][1],'d5');if(i>=2){const d=[1,2,4,8];d.forEach((v,k)=>{s.appendChild(el('rect',{x:20+k*80,y:100,width:Math.min(70,v*9),height:22,rx:4,fill:k<=i-2+1?'var(--mid-soft)':'var(--paper)',stroke:'var(--mid)'}));s.appendChild(el('text',{x:24+k*80,y:140,'font-size':11,class:'t-mono',fill:'var(--muted)'},'wait '+v+'m'))})}
+ if(i===4){bx(s,450,100,170,40,'dead-letter','for humans','bad')}s.appendChild(el('circle',{cx:i<2?63+i*100:535,cy:i<2?80:80,r:9,fill:'var(--bad)'}));s.appendChild(el('text',{x:i<2?63+i*100:535,y:i<2?84:84,'text-anchor':'middle','font-size':10,fill:'var(--surface)','font-weight':700},'☠'))});
+
+/* dual queue */
+function drawDQ(m){const s=$('#dqSvg');s.innerHTML='';const X=t=>50+t/120*570,Y=v=>180-v/60*160;s.appendChild(el('line',{x1:50,y1:180,x2:620,y2:180,stroke:'var(--line)'}));
+ s.appendChild(el('rect',{x:X(20),y:15,width:X(50)-X(20),height:165,fill:'var(--bad-soft)',opacity:.6}));s.appendChild(el('text',{x:X(35),y:30,'text-anchor':'middle','font-size':11,fill:'var(--bad)'},'dependency outage'));
+ [0,30,60,90,120].forEach(t=>s.appendChild(el('text',{x:X(t),y:196,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},t+' min')));s.appendChild(el('text',{x:54,y:20,'font-size':11,fill:'var(--muted)'},'wait for a NEW item (min)'));
+ let d='';for(let t=0;t<=120;t+=1){let v;if(t<20)v=1;else if(t<50)v=t-20+1;else v=m==='one'?Math.max(1,30-(t-50)*0.45):Math.max(1,(t<52?30-(t-50)*14:1));d+=(t?'L':'M')+X(t)+','+Y(Math.min(60,v))}
+ s.appendChild(el('path',{d,fill:'none',stroke:m==='one'?'var(--bad)':'var(--ok)','stroke-width':2.5}));
+ $('#dqTxt').innerHTML=m==='one'?'<b class="badc">Traffic jam after the accident.</b> Once the dependency recovers, every new item still waits behind the whole backlog of retries, often stale by now.':'<b class="okc">Fresh work goes first.</b> New items get their own queue with priority; the retry backlog drains in the background.'}
+seg('[data-dq]',b=>drawDQ(b.dataset.dq));drawDQ('one');
+
+quiz('#pQuiz','#pScore',[
+ {q:'Send each new order to fraud check AND to the warehouse',a:0,why:'Identical item, two different jobs.'},
+ {q:'Process only photos larger than 1 MB',a:1,why:'Drops items that fail a test.'},
+ {q:'Route invoices to the EU or US tax queue by country',a:2,why:'Every item goes somewhere, by rule.'},
+ {q:'Spread log files evenly over 8 regional queues',a:3,why:'Even division by a sharding function.'},
+ {q:'Feed bug reports from three trackers into one triage queue',a:4,why:'Many sources, one stream.'}],['Copier','Filter','Splitter','Sharder','Merger']);
+quiz('#qQuiz','#qScore',[
+ {q:'Work stealing takes items from which end of another worker\'s queue?',o:['Front','Back'],a:1,why:'Nobody is about to start the back item, so taking it is safe.'},
+ {q:'A worker is slow, not dead, and its ack times out. What follows?',o:['Item lost','Item processed twice'],a:1,why:'Another worker gets it too, so make work idempotent (or lock).'},
+ {q:'Kafka partitions limit...',o:['How many copies exist','How many consumers can share the load'],a:1,why:'Replication factor sets copies; partitions set the maximum parallelism.'}]);
+
+})();
+</script>
+</body>
+</html>

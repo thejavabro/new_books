@@ -1,0 +1,497 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Deploying Microservices</title>
+<meta name="description" content="Deployment has moved from copying a WAR file onto a hand-built server to declaring what should run and letting a platform make it so. This chapter walks the four main patterns and the trade-offs between them.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Microservices Patterns companion. Blueprint grid paper: blue = services and structure, orange = messages and data in flight, green = success, red = failure.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+button.theme{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted)}
+button.theme:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-family:var(--mono);font-size:.8rem;line-height:1.5;overflow-x:auto;white-space:pre;max-width:100%}
+.code .k{color:var(--d5)} .code .s{color:var(--d2)} .code .c{color:var(--muted);font-style:italic}
+.pattern{border:1px solid var(--line);border-left:4px solid var(--d2);background:var(--surface);border-radius:0 10px 10px 0;padding:12px 16px;display:flex;flex-direction:column;gap:4px}
+.pattern .eyebrow{color:var(--d2)}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:5em;max-height:14em;overflow:auto;display:flex;flex-direction:column;gap:2px}
+.chip.on{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+button.chip{cursor:pointer}
+
+/* page */
+
+.pods{display:flex;gap:8px;flex-wrap:wrap}
+.pod{border:2px solid var(--line);border-radius:10px;padding:8px 10px;min-width:92px;font-size:.85rem;display:flex;flex-direction:column;gap:2px;transition:all .3s;background:var(--surface)}
+.pod b{font-family:var(--mono);font-size:.8rem}
+.pod.v1{border-color:var(--d1)}.pod.v2{border-color:var(--d2);background:var(--ok-soft)}
+.pod.starting{border-style:dashed;opacity:.7}.pod.bad{border-color:var(--bad);background:var(--bad-soft)}.pod.term{opacity:.25}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Microservices Patterns · visual companion</a><span class="tag">Chapter 12 of 13 · Production and migration</span><button class="theme" type="button">Dark theme</button></div>
+  <h1>Deploying Microservices</h1>
+  <p class="lede">Deployment has moved from copying a WAR file onto a hand-built server to declaring what should run and letting a platform make it so. This chapter walks the four main patterns and the trade-offs between them.</p>
+  <nav class="toc" aria-label="Sections"><a href="#overview">Four patterns</a><a href="#packages">Packages and VMs</a><a href="#containers">Containers</a><a href="#k8s">Kubernetes</a><a href="#rolling">Zero-downtime</a><a href="#mesh">Service mesh</a><a href="#serverless">Serverless</a><a href="#check">Quick check</a></nav>
+</header>
+
+<section id="overview" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Four ways to deploy a service</h2></div>
+  <p>Deployment combines a <b>process</b> (the steps people and automation take to get code into production) and an <b>architecture</b> (the environment it runs in). Both changed enormously: from hand-copying WAR files to hand-tended servers, to declaring what should run and letting a platform keep it running. A production environment must provide a service management interface, runtime service management (keeping instances running), monitoring, and request routing. The book covers four patterns. Compare them.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Pattern" id="patSeg"></div>
+    <div class="two"><div class="detail" id="patInfo" aria-live="polite"></div><div class="bars" id="patBars"></div></div>
+  </div>
+  <div class="callout ok"><b class="h">The book's rule of thumb</b><span>Choose the most lightweight pattern that meets the service's needs, evaluating in this order: serverless, then containers, then VMs, then language-specific packages.</span></div>
+</section>
+
+<section id="packages" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Language-specific packages and virtual machines</h2></div>
+  <p>Pack services onto a machine and see what each pattern isolates. In the <b>language-specific package</b> pattern, a JVM may even host several WARs, so a runaway service can starve its neighbors. With <b>a service per VM</b>, each instance is a VM image (an AWS AMI built with tools such as Netflix Aminator or Packer, or deployed with Elastic Beanstalk): fully isolated, but heavy.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Packing"><button data-pk="pkg" aria-pressed="true">Packages on one host</button><button data-pk="vm" aria-pressed="false">One VM per instance</button><button data-pk="ct" aria-pressed="false">Containers</button></div>
+    <div class="row"><button class="btn" id="leak">Trigger a memory leak in Kitchen Service</button></div>
+    <div class="svgbox"><svg id="pkSvg" viewBox="0 0 640 230" role="img" aria-label="Services packed on a host"></svg></div>
+    <p id="pkTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="containers" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Service as a container, with Docker</h2></div>
+  <p>A <b>container</b> is OS-level virtualization: an isolated sandbox with its own process, network and file-system view, sharing the host's kernel. You can limit its CPU and memory. Build, push, run. Step through.</p>
+  <div class="sheet stepper" id="dkStep">
+    <div class="two"><pre class="code" id="dkCode"></pre><div class="svgbox fit"><svg id="dkSvg" viewBox="0 0 320 220" role="img" aria-label="Docker build, push and run"></svg></div></div>
+  </div>
+  <div class="cardgrid" id="ctCards"></div>
+</section>
+
+<section id="k8s" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Kubernetes: a Docker orchestration framework</h2></div>
+  <p>Running containers on one machine is easy; running hundreds across a cluster isn't. <b>Kubernetes</b> turns a set of machines into one pool of resources, schedules containers onto them, restarts failed ones, and routes requests to them. Tap a part.</p>
+  <div class="sheet two">
+    <div class="svgbox fit"><svg id="k8Svg" viewBox="0 0 380 300" role="img" aria-label="Kubernetes architecture"></svg></div>
+    <div class="detail" id="k8Info" aria-live="polite"></div>
+  </div>
+  <pre class="code"><span class="c"># a Deployment, in spirit (abridged, our own example)</span>
+<span class="k">kind:</span> Deployment
+<span class="k">metadata:</span> { name: restaurant-service }
+<span class="k">spec:</span>
+  replicas: 2
+  template:
+    spec:
+      containers:
+      - image: ftgo/restaurant-service:1.1
+        env: [ { name: DB_URL, valueFrom: { secretKeyRef: ... } } ]
+        <span class="k">readinessProbe:</span> { httpGet: { path: /actuator/health, port: 8080 } }
+        <span class="k">livenessProbe:</span>  { httpGet: { path: /actuator/health, port: 8080 } }</pre>
+  <p class="small">A <b>Service</b> object gives the pods a stable DNS name and IP and load-balances across them (server-side discovery from chapter 3). To expose the API gateway outside the cluster, use a Service of type <b>NodePort</b> (a port on every node) or <b>LoadBalancer</b> (a cloud load balancer). Configuration and credentials come from <b>ConfigMaps</b> and <b>Secrets</b>.</p>
+</section>
+
+<section id="rolling" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Zero-downtime rolling updates</h2></div>
+  <p>Change the image tag and reapply the Deployment, and Kubernetes performs a <b>rolling update</b>: it starts a new pod, waits for its <b>readiness probe</b> to pass, then terminates an old one, and repeats. If the new version never becomes ready, the rollout stalls without hurting traffic, and <code>kubectl rollout undo</code> puts the old version back.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn primary" id="rlGo">Roll out v2</button><label class="row small"><input type="checkbox" id="rlBad"> v2 has a bug (fails readiness)</label><button class="btn" id="rlUndo">kubectl rollout undo</button></div>
+    <div class="pods" id="pods"></div>
+    <div class="log" id="rlLog" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="mesh" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Separate deployment from release with a service mesh</h2></div>
+  <p>A rolling update still sends real users to the new code the moment a pod is ready. A <b>service mesh</b> such as <b>Istio</b> lets you <i>deploy</i> without <i>releasing</i>. Each pod gets an <b>Envoy</b> proxy as a sidecar; all traffic goes through it. The control plane (<b>Pilot</b> configures the proxies with routing rules; <b>Mixer</b> handles policy and telemetry) lets you route by header or by percentage. Try it.</p>
+  <div class="sheet">
+    <div class="row"><label class="row small"><input type="checkbox" id="msTest" checked> route requests with header <span class="mono">testuser: …</span> to v2</label></div>
+    <label class="rng"><span>Production traffic to v2: <b id="msV"></b></span><input type="range" id="msPct" min="0" max="100" step="5" value="0"></label>
+    <div class="svgbox"><svg id="msSvg" viewBox="0 0 640 220" role="img" aria-label="Istio routing between v1 and v2"></svg></div>
+    <p id="msTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="serverless" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Serverless deployment with AWS Lambda</h2></div>
+  <p>With <b>serverless deployment</b> you upload code (for Java, a ZIP or JAR) and the cloud runs it as many times as needed, in response to requests or events. You never see a server, an OS or a runtime. A lambda can be invoked by <b>HTTP requests</b> via the AWS API Gateway, by <b>events</b> from AWS services (S3, DynamoDB, Kinesis, SQS), on a <b>schedule</b>, or directly by an <b>API call</b>. The book deploys a REST version of Restaurant Service as lambdas with the Serverless framework. Compare cost and latency against an always-on container.</p>
+  <div class="sheet">
+    <label class="rng"><span>Requests per day: <b id="slV"></b></span><input type="range" id="slReq" min="0" max="100" value="30"></label>
+    <div class="bars" id="slBars"></div>
+    <p class="small" id="slTxt"></p>
+  </div>
+  <div class="cardgrid" id="slCards"></div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="quiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Microservices Patterns: With examples in Java</i> by Chris Richardson (Manning, 2019). Explanations, code snippets, diagrams and simulations are original summaries written for this companion; nothing is copied from the book's figures or listings.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch11-production-ready.html"><span>Previous · Chapter 11</span><b>Developing Production-Ready Services</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch13-refactoring.html"><span>Next · Chapter 13</span><b>Refactoring to Microservices</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('mp:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('mp:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: button.theme switches light/dark, remembered per viewer */
+(function(){const r=document.documentElement;const t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+  const cur=()=>r.getAttribute('data-theme')||(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+  const lab=()=>$$('button.theme').forEach(x=>x.textContent=cur()==='dark'?'Light theme':'Dark theme');lab();
+  $$('button.theme').forEach(b=>b.addEventListener('click',()=>{const n=cur()==='dark'?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n);lab()}))})();
+/* drawing helpers */
+function box(svg,x,y,w,h,t,c,o){o=o||{};const g=el('g',{class:o.cls||''});c=c||'blue';
+  g.appendChild(el('rect',{x,y,width:w,height:h,rx:o.rx!=null?o.rx:8,fill:o.fill||'var(--surface)',stroke:`var(--${c})`,'stroke-width':o.sw||1.8,'stroke-dasharray':o.dash||''}));
+  const L=String(t).split('\n');const fs=o.fs||12.5;L.forEach((l,i)=>g.appendChild(el('text',{x:x+w/2,y:y+h/2+(i-(L.length-1)/2)*(fs+3)+fs*.36,'text-anchor':'middle','font-size':fs,'font-weight':o.fw||600,fill:o.tc||'var(--ink)'},l)));
+  svg.appendChild(g);return g}
+function arrow(svg,x1,y1,x2,y2,c,o){o=o||{};c=c||'muted';const g=el('g',{class:o.cls||''});const dx=x2-x1,dy=y2-y1,L=Math.hypot(dx,dy)||1,ux=dx/L,uy=dy/L,px=-uy,py=ux;
+  g.appendChild(el('line',{x1,y1,x2:x2-ux*8,y2:y2-uy*8,stroke:`var(--${c})`,'stroke-width':o.sw||2,'stroke-dasharray':o.dash||'',class:o.flow?'flow':''}));
+  g.appendChild(el('polygon',{points:`${x2},${y2} ${x2-ux*10+px*5},${y2-uy*10+py*5} ${x2-ux*10-px*5},${y2-uy*10-py*5}`,fill:`var(--${c})`}));
+  if(o.t)g.appendChild(el('text',{x:(x1+x2)/2+(o.dx||0),y:(y1+y2)/2-6+(o.dy||0),'text-anchor':'middle','font-size':o.fs||11,fill:`var(--${o.tcol||c})`,class:o.mono?'t-mono':''},o.t));
+  svg.appendChild(g);return g}
+function txt(svg,x,y,t,o){o=o||{};const e=el('text',{x,y,'text-anchor':o.a||'middle','font-size':o.fs||11,'font-weight':o.fw||400,fill:`var(--${o.c||'muted'})`,class:o.mono?'t-mono':''},t);svg.appendChild(e);return e}
+/* sequence diagram: lanes [{t,c}], msgs [{f,t,l,c,dash}] (f===t draws a self-call); returns apply(i) showing messages 0..i */
+function seqDiagram(svgSel,lanes,msgs,opt){opt=opt||{};const svg=typeof svgSel==='string'?$(svgSel):svgSel;const W=opt.w||640;const n=lanes.length;const gap=W/n;const top=opt.top||50,dy=opt.dy||30;
+  const H=top+msgs.length*dy+14;svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.innerHTML='';
+  const X=i=>gap/2+i*gap;
+  lanes.forEach((l,i)=>{svg.appendChild(el('line',{x1:X(i),y1:38,x2:X(i),y2:H-4,stroke:'var(--line)','stroke-dasharray':'4 4'}));const w=Math.min(gap-8,140);box(svg,X(i)-w/2,4,w,32,l.t,l.c||'blue',{fs:11})});
+  const rows=msgs.map((m,k)=>{const y=top+10+k*dy;const g=el('g',{class:'fade'});const c=`var(--${m.c||'blue'})`;
+    if(m.f===m.t){const x=X(m.f);g.appendChild(el('path',{d:`M${x},${y-7} h22 v12 h-14`,fill:'none',stroke:c,'stroke-width':1.8}));g.appendChild(el('polygon',{points:`${x},${y+5} ${x+9},${y+1} ${x+9},${y+9}`,fill:c}));
+      g.appendChild(el('text',{x:x+(m.f===n-1?-6:28),y:y+3,'text-anchor':m.f===n-1?'end':'start','font-size':10.5,fill:'var(--ink)'},m.l))}
+    else{const a=X(m.f),b=X(m.t),d=b>a?1:-1;g.appendChild(el('line',{x1:a,y1:y,x2:b-d*8,y2:y,stroke:c,'stroke-width':1.8,'stroke-dasharray':m.dash?'5 4':''}));
+      g.appendChild(el('polygon',{points:`${b},${y} ${b-d*9},${y-4.5} ${b-d*9},${y+4.5}`,fill:c}));
+      g.appendChild(el('text',{x:(a+b)/2,y:y-5,'text-anchor':'middle','font-size':10.5,fill:'var(--ink)'},m.l))}
+    svg.appendChild(g);return g});
+  return function(i){rows.forEach((g,k)=>g.classList.toggle('off',k>i))}}
+/* simple tabs: buttons [data-tab] inside .seg, panels [data-panel] */
+function tabs(rootSel){const r=$(rootSel);const bs=r.querySelectorAll('[data-tab]');bs.forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);r.querySelectorAll('[data-panel]').forEach(p=>p.hidden=p.dataset.panel!==b.dataset.tab)}))}
+function logLine(sel,html,c){const r=$(sel);const d=document.createElement('div');d.innerHTML=html;if(c)d.style.color=`var(--${c})`;r.appendChild(d);r.scrollTop=r.scrollHeight}
+
+
+/* pattern compare */
+const PT={pkg:['Language-specific package','Deploy a JAR or WAR onto a host with the runtime installed. Several instances or services can share a host or even a JVM.',[90,85,15,20,20],'d3'],
+ vm:['Service as a VM','Package the service as a VM image (e.g. an AMI) and launch instances of it. The cloud\'s load balancing and autoscaling work out of the box.',[25,25,95,85,45],'d4'],
+ ct:['Service as a container','Package as a Docker image; run with an orchestrator like Kubernetes. Fast to start, isolated, efficient.',[75,80,80,85,60],'d1'],
+ sl:['Serverless','Hand code to AWS Lambda; it runs per request, scales automatically, bills per use.',[60,95,80,95,95],'d2']};
+const PL=['Deploy speed','Resource efficiency','Isolation','Encapsulates tech stack','Less to administer'];
+$('#patSeg').innerHTML=Object.keys(PT).map((k,i)=>`<button data-k="${k}" aria-pressed="${k==='ct'}">${PT[k][0].replace('Service as a ','').replace('Language-specific package','Package')}</button>`).join('');
+function pat(k){const p=PT[k];$('#patInfo').style.borderLeftColor=`var(--${p[3]})`;$('#patInfo').innerHTML=`<span class="eyebrow">Pattern</span><h3 style="color:var(--${p[3]})">${p[0]}</h3><p>${p[1]}</p>`;bars('#patBars',PL.map((l,i)=>({l,v:p[2][i],c:p[2][i]>70?'ok':p[2][i]>40?'mid':'bad',txt:''})),100)}
+seg('#patSeg button',b=>pat(b.dataset.k));pat('ct');
+
+/* packing */
+let pk='pkg',leak=false;const SVC=[['Order','d1'],['Kitchen','d2'],['Delivery','d4'],['Restaurant','d5']];
+function pack(){const s=$('#pkSvg');s.innerHTML='';s.appendChild(el('rect',{x:10,y:10,width:620,height:200,rx:10,fill:'var(--paper)',stroke:'var(--line)'}));txt(s,320,226,pk==='vm'?'several hosts (hypervisors)':'one host',{fs:10.5});
+  if(pk==='pkg'){s.appendChild(el('rect',{x:30,y:40,width:580,height:150,rx:10,fill:'none',stroke:'var(--d3)','stroke-width':2}));txt(s,320,32,'one JVM / Tomcat',{c:'d3',fs:11,fw:600});
+    SVC.forEach((v,i)=>{const bad=leak&&true;box(s,50+i*140,80,120,70,v[0]+'.war',leak?(i===1?'bad':'bad'):v[1],{fill:leak?'var(--bad-soft)':'var(--surface)'})});}
+  else{SVC.forEach((v,i)=>{const x=30+i*150;s.appendChild(el('rect',{x,y:pk==='vm'?30:50,width:130,height:pk==='vm'?160:120,rx:pk==='vm'?6:12,fill:'none',stroke:pk==='vm'?'var(--d4)':'var(--d1)','stroke-width':1.6,'stroke-dasharray':pk==='vm'?'':'5 4'}));
+      if(pk==='vm')box(s,x+10,40,110,30,'guest OS','line',{fs:10,fw:400});box(s,x+10,pk==='vm'?90:80,110,60,v[0]+'\nservice',leak&&i===1?'bad':v[1],{fill:leak&&i===1?'var(--bad-soft)':'var(--surface)',fs:11.5});txt(s,x+65,pk==='vm'?180:160,pk==='vm'?'VM: 1 GB+ image, minutes to boot':'container: mem limit 512 MB',{fs:9})});}
+  $('#pkTxt').textContent=leak?(pk==='pkg'?'Kitchen\'s leak exhausts the shared JVM heap: every service in it goes down. There was also no way to cap Kitchen\'s memory.':pk==='vm'?'Only the Kitchen VM suffers. The others are fully isolated, but each VM carries a whole guest OS: slower deploys, more overhead.':'The container hits its memory limit and is killed and restarted. Neighbors are unaffected, and containers start in seconds.'):(pk==='pkg'?'Fast deployment, efficient resource use, but no encapsulation of the tech stack and no isolation.':pk==='vm'?'Each instance is its own VM image, built once and launched many times.':'Each instance is a container: isolated like a VM, light like a process.')}
+seg('[data-pk]',b=>{pk=b.dataset.pk;leak=false;pack()});$('#leak').addEventListener('click',()=>{leak=!leak;pack()});pack();
+
+/* docker stepper */
+$('#dkStep').insertAdjacentHTML('beforeend',stepHTML());
+const DK=[[`<span class="c"># Dockerfile (our sketch)</span>
+<span class="k">FROM</span> openjdk:8u171-jre-alpine
+<span class="k">COPY</span> build/libs/restaurant-service.jar app.jar
+<span class="k">HEALTHCHECK</span> CMD curl -f localhost:8080/health
+<span class="k">CMD</span> java -jar app.jar`,'Write a Dockerfile: a base image with the runtime, copy in the service JAR, define how to start it and how to check its health.'],
+ ['$ docker build -t restaurant-service .','Build the image. Each instruction becomes a layer; unchanged layers are cached, so rebuilds are quick.'],
+ ['$ docker tag restaurant-service \\\n    registry.example.com/ftgo/restaurant-service:1.0\n$ docker push registry.example.com/ftgo/restaurant-service:1.0','Tag it with a version and push it to a registry (Docker Hub, AWS ECR, or your own).'],
+ ['$ docker run -d -p 8082:8080 \\\n    -e SPRING_DATASOURCE_URL=... \\\n    registry.example.com/ftgo/restaurant-service:1.0','On any host: pull and run it, passing configuration as environment variables (externalized configuration). In production, an orchestrator does this for you.']];
+stepper('#dkStep',DK.map(d=>d[1]),i=>{$('#dkCode').innerHTML=DK[i][0];const s=$('#dkSvg');s.innerHTML='';box(s,10,20,120,44,'Dockerfile\n+ JAR','muted',{fs:11});box(s,190,20,120,44,'image','d1');box(s,190,100,120,44,'registry','d3');box(s,10,170,300,40,'host: running container','ok',{fill:i>=3?'var(--ok-soft)':'var(--surface)'});
+  if(i>=1)arrow(s,130,42,190,42,'blue',{t:'build',fs:10});if(i>=2)arrow(s,250,64,250,100,'d3',{t:'push',fs:10,dx:20});if(i>=3)arrow(s,250,144,200,170,'ok',{t:'pull + run',fs:10,dx:40})});
+cards('#ctCards',[{t:'Benefits',c:'ok',d:'Encapsulates the tech stack: the API is just "run the container". Instances are isolated and can be resource-limited. Much lighter and faster than VMs.'},{t:'Drawbacks',c:'bad',d:'You must administer the images, patch the OS and runtime, and usually run the orchestration framework and the VMs underneath (unless you use a hosted service such as Google Container Engine or AWS ECS).'}]);
+
+/* k8s */
+const K8={api:['API server','The REST API for deploying and managing services, used by kubectl.','d5'],etcd:['etcd','A distributed key-value store holding the cluster\'s data.','d3'],sched:['Scheduler','Picks a node for each new pod.','d5'],ctrl:['Controller manager','Runs controllers that drive the cluster toward the desired state, e.g. keeping the right number of replicas running.','d5'],kubelet:['Kubelet','On each node: creates and manages the pods scheduled there.','d1'],proxy:['Kube-proxy','On each node: manages networking, including load balancing across pods.','d1'],pod:['Pods','The unit of deployment: one or more containers sharing an IP and storage. A service instance is usually a pod with one container, perhaps plus sidecars. Pods are ephemeral.','d2']};
+(function(){const s=$('#k8Svg');s.appendChild(el('rect',{x:10,y:10,width:360,height:110,rx:10,fill:'none',stroke:'var(--d5)','stroke-dasharray':'5 4'}));txt(s,190,26,'master (control plane)',{fs:11,c:'d5',fw:600});
+  [0,1].forEach(k=>{s.appendChild(el('rect',{x:10+k*185,y:140,width:175,height:150,rx:10,fill:'none',stroke:'var(--d1)','stroke-dasharray':'5 4'}));txt(s,97+k*185,156,'node '+(k+1),{c:'d1',fw:600})});
+  const P=[['api',20,40,110,32],['etcd',140,40,100,32],['sched',250,40,110,32],['ctrl',20,80,340,30],['kubelet',20,165,75,30],['proxy',100,165,75,30],['pod',20,205,155,70]];
+  const nodes=[...P,['kubelet',205,165,75,30],['proxy',285,165,75,30],['pod',205,205,155,70]];
+  nodes.forEach((p,j)=>{const k=K8[p[0]];const g=box(s,p[1],p[2],p[3],p[4],k[0],k[2],{cls:'gnode',fs:10.5});g.setAttribute('tabindex',0);g.setAttribute('role','button');g.dataset.k=p[0];
+    const go=()=>{$$('#k8Svg .gnode').forEach(x=>x.classList.toggle('sel',x.dataset.k===p[0]));$('#k8Info').style.borderLeftColor=`var(--${k[2]})`;$('#k8Info').innerHTML=`<span class="eyebrow">Kubernetes</span><h3 style="color:var(--${k[2]})">${k[0]}</h3><p>${k[1]}</p>`};
+    g.addEventListener('click',go);g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go()}});if(j===0)go()})})();
+
+/* rolling update */
+let pods,rlTimer=null;function rlReset(){pods=[1,2,3].map(i=>({n:'v1-'+i,v:1,st:''}))}rlReset();
+function rlDraw(){$('#pods').innerHTML=pods.map(p=>`<div class="pod v${p.v} ${p.st}"><b>${p.n}</b><span>${p.st==='starting'?'starting…':p.st==='bad'?'not ready':p.st==='term'?'terminating':'ready'}</span></div>`).join('')}rlDraw();
+$('#rlGo').addEventListener('click',()=>{if(rlTimer)return;rlReset();const bad=$('#rlBad').checked;$('#rlLog').innerHTML='';let k=0;
+  (function step(){if(k>=3){logLine('#rlLog','Rollout complete: 3/3 v2 pods ready. No downtime.','ok');rlTimer=null;return}
+    const np={n:'v2-'+(k+1),v:2,st:'starting'};pods.push(np);rlDraw();logLine('#rlLog',`start pod ${np.n}; waiting for readiness probe…`);
+    rlTimer=setTimeout(()=>{if(bad){np.st='bad';rlDraw();logLine('#rlLog',`${np.n} never becomes ready. Rollout stalls; v1 pods keep serving traffic.`,'bad');rlTimer=null;return}
+      np.st='';const old=pods.find(p=>p.v===1&&!p.st);old.st='term';rlDraw();logLine('#rlLog',`${np.n} ready → terminate ${old.n}`,'ok');
+      rlTimer=setTimeout(()=>{pods=pods.filter(p=>p!==old);rlDraw();k++;step()},450)},700)})()});
+$('#rlUndo').addEventListener('click',()=>{clearTimeout(rlTimer);rlTimer=null;rlReset();rlDraw();logLine('#rlLog','kubectl rollout undo: back to v1.','mid')});
+
+/* mesh */
+function ms(){const p=+$('#msPct').value,t=$('#msTest').checked;$('#msV').textContent=p+'%';const s=$('#msSvg');s.innerHTML='';box(s,10,40,110,44,'Test users','d4',{fs:11});box(s,10,140,110,44,'Everyone else','muted',{fs:11});
+  box(s,200,85,130,50,'Envoy (sidecar\nof the caller)','d5',{fs:10.5});box(s,470,30,150,50,'Consumer Service v1','d1',{fs:11});box(s,470,140,150,50,'Consumer Service v2','d2',{fs:11,fill:p>0||t?'var(--ok-soft)':'var(--surface)'});
+  arrow(s,120,62,200,100,'d4');arrow(s,120,162,200,120,'muted');
+  arrow(s,330,100,470,55,'d1',{t:`${100-p}% of prod`+(t?'':' + test'),fs:10,sw:1+3*(100-p)/100});if(p>0||t)arrow(s,330,120,470,165,'d2',{t:(t?'test users':'')+(t&&p?' + ':'')+(p?p+'% of prod':''),fs:10,sw:1+3*p/100,flow:1});
+  $('#msTxt').textContent=p===0?(t?'Deployed but not released: only test users (identified by a header) reach v2. Production traffic stays on v1.':'v2 is running but receives no traffic at all.'):p<100?'Canary release: a slice of production traffic goes to v2. Watch the metrics; if they look bad, set it back to 0% instantly.':'Fully released. v1 can be deleted once you are confident.'}
+['msPct','msTest'].forEach(id=>$('#'+id).addEventListener('input',ms));$('#msTest').addEventListener('change',ms);ms();
+
+/* serverless */
+function sl(){const x=+$('#slReq').value;const req=Math.round(Math.pow(10,x/100*7));$('#slV').textContent=req.toLocaleString();
+  const lam=req*30*(0.0000002+0.0000166667*0.2*0.5);const ctr=2*0.05*24*30;bars('#slBars',[{l:'Lambda, monthly',v:lam,c:lam<ctr?'ok':'bad',txt:'$'+lam.toFixed(2)},{l:'2 always-on containers, monthly',v:ctr,c:lam<ctr?'mid':'ok',txt:'$'+ctr.toFixed(2)}],Math.max(lam,ctr)*1.1);
+  $('#slTxt').textContent=(req<1000?'Rare traffic: instances are often cold, so many requests pay a cold-start delay (hundreds of ms to seconds for a JVM). ':'')+(lam<ctr?'Pay-per-use wins at this volume.':'At this volume, dedicated capacity can be cheaper.')+' Rough illustrative prices, not quotes.'}
+$('#slReq').addEventListener('input',sl);sl();
+cards('#slCards',[{t:'Benefits',c:'ok',d:'Integrates with many AWS services; no system administration; elastic scaling with no capacity planning; request-based pricing.'},{t:'Long-tail latency',c:'bad',d:'Instances are provisioned on demand, so some requests are slow, especially for JVM code. Not for latency-sensitive services.'},{t:'Limited programming model',c:'bad',d:'Event/request-based and short-lived: not for long-running services such as one consuming from a third-party message broker.'}]);
+
+quiz('#quiz','#qScore',[
+ {q:'In which order does the book suggest evaluating deployment options?',o:['VM, container, serverless','Serverless, container, VM, package'],a:1,why:'Pick the most lightweight one that fits.'},
+ {q:'What does a readiness probe decide?',o:['Whether to send traffic to the pod','Whether to delete the image'],a:0,why:'A rolling update waits for it before terminating old pods. A failing liveness probe gets the container restarted.'},
+ {q:'What runs next to each pod in Istio?',o:['An Envoy sidecar proxy','A second JVM'],a:0,why:'All traffic in and out of the pod flows through it.'},
+ {q:'Routing only test users to v2 is an example of...',o:['Separating deployment from release','Blue-green databases'],a:0,why:'v2 is deployed, but not yet released to real users.'},
+ {q:'A drawback of AWS Lambda is...',o:['Long-tail (cold-start) latency','Paying for idle servers'],a:0,why:'You pay per request, but instances start on demand.'}]);
+
+})();
+</script>
+</body>
+</html>

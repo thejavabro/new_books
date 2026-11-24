@@ -1,0 +1,502 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>The Sidecar Pattern</title>
+<meta name="description" content="A sidecar is a helper container that sits next to your application in the same pod and adds a capability, like HTTPS, configuration reloads or a debugging UI, without changing the application itself.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Designing Distributed Systems companion. Layout: an engineer's notebook on blueprint grid paper.
+   Blue ink = containers, services and requests, orange pencil = the pattern being added, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code listings (short, original) */
+pre.code{margin:0;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-family:var(--mono);font-size:.82rem;line-height:1.5;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)} pre.code .p{color:var(--pencil)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+/* log console used by simulations */
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;height:150px;overflow-y:auto;display:flex;flex-direction:column;gap:2px}
+.log div{white-space:pre-wrap;word-break:break-word}
+.log .ok{color:var(--ok)} .log .bad{color:var(--bad)} .log .mid{color:var(--mid)} .log .blue{color:var(--blue)}
+.note-missing{border:1px dashed var(--line);border-radius:10px;padding:14px 16px;font-size:.93rem;color:var(--muted);background:var(--surface)}
+.stat span.big{font-size:clamp(1.5rem,4.5vw,2.1rem);color:var(--ink)}
+.stat span.big.blue{color:var(--blue)} .stat span.big.badc{color:var(--bad)} .stat span.big.okc{color:var(--ok)} .stat span.big.midc{color:var(--mid)} .stat span.big.pencil{color:var(--pencil)}
+:root{--d1-soft:color-mix(in srgb,var(--d1) 15%,var(--surface));--d2-soft:color-mix(in srgb,var(--d2) 15%,var(--surface));--d3-soft:color-mix(in srgb,var(--d3) 15%,var(--surface));--d4-soft:color-mix(in srgb,var(--d4) 15%,var(--surface));--d5-soft:color-mix(in srgb,var(--d5) 15%,var(--surface));--muted-soft:color-mix(in srgb,var(--muted) 12%,var(--surface));--ink-soft:color-mix(in srgb,var(--ink) 8%,var(--surface))}
+
+/* page */
+
+.ns{display:flex;flex-wrap:wrap;gap:8px}
+.ns button{border:1px solid var(--line);background:var(--paper);border-radius:999px;padding:5px 12px;font-size:.88rem}
+.ns button[aria-pressed="true"]{background:var(--pencil-soft);border-color:var(--pencil);color:var(--pencil);font-weight:600}
+.envform{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media (max-width:560px){.envform{grid-template-columns:1fr}}
+.envform label{display:flex;flex-direction:column;gap:4px;font-size:.9rem}
+.envform input{font:inherit;font-family:var(--mono);font-size:.88rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);min-width:0}
+.df{font-family:var(--mono);font-size:.82rem;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.df button{display:grid;grid-template-columns:minmax(0,1fr);width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);background:var(--paper);padding:8px 12px;font-family:var(--mono);font-size:.82rem;white-space:pre-wrap;word-break:break-word}
+.df button:last-child{border-bottom:0}
+.df button[aria-expanded="true"]{background:var(--blue-soft)}
+.df button .why{display:none;font-family:var(--body);font-size:.9rem;color:var(--ink);margin-top:6px}
+.df button[aria-expanded="true"] .why{display:block}
+.vs{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:560px){.vs{grid-template-columns:1fr}}
+.vs>div{border:1px solid var(--line);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;background:var(--surface)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Designing Distributed Systems · visual companion</a><span class="tag">Part II · Chapter 3</span></div>
+  <h1>The Sidecar Pattern</h1>
+  <p class="lede">A sidecar is a helper container that sits next to your application in the same pod and adds a capability, like HTTPS, configuration reloads or a debugging UI, without changing the application itself.</p>
+  <nav class="toc" aria-label="Sections"><a href="#why">Why split a node</a><a href="#shape">The pattern</a><a href="#https">HTTPS for legacy</a><a href="#config">Dynamic config</a><a href="#modular">Modular tools</a><a href="#paas">A tiny PaaS</a><a href="#reuse">Designing for reuse</a><a href="#check">Quick check</a></nav>
+</header>
+
+<section id="why" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Why split one machine into several containers?</h2></div>
+  <p>Part II looks at groups of containers that always run together on one machine. Why split them at all? Containers draw three boundaries: <b>resources</b> (this part gets two cores and 8 GB), <b>ownership</b> (this team owns this image) and <b>concerns</b> (this image does one thing). The resource boundary is easiest to see. Below, a user-facing server and a background config loader share a machine. Let the loader leak memory and watch who pays.</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Packaging"><button data-pk="one" aria-pressed="true">One container</button><button data-pk="two" aria-pressed="false">Two containers</button></div>
+    <label class="rng" style="min-width:220px"><span>Loader memory leak: <b id="leakV">0 GB</b></span><input type="range" id="leak" min="0" max="10" value="0"></label></div>
+    <div class="svgbox"><svg id="rSvg" viewBox="0 0 640 200" role="img" aria-label="Memory of a machine shared by a server and a loader"></svg></div>
+    <p id="rTxt" aria-live="polite"></p>
+  </div>
+  <div class="cardgrid" id="whyCards"></div>
+  <p class="small">All patterns in this part assume the containers are <b>co-scheduled</b> onto one machine and can share volumes, the network namespace and memory. Kubernetes calls this group a <b>pod</b>.</p>
+</section>
+
+<section id="shape" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>The shape of a sidecar</h2></div>
+  <p>A sidecar pattern has exactly two parts. The <b>application container</b> holds the core logic; without it there is no application. The <b>sidecar</b> augments it, often without the application knowing. Because they live in one pod they share the hostname, the network, parts of the filesystem and more. Toggle what is shared to see what each enables.</p>
+  <div class="sheet">
+    <div class="ns" id="ns" role="group" aria-label="Shared namespace"></div>
+    <div class="svgbox"><svg id="shSvg" viewBox="0 0 640 210" role="img" aria-label="Application and sidecar containers inside a pod sharing a namespace"></svg></div>
+    <p id="shTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="https" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Example: HTTPS for a service you cannot rebuild</h2></div>
+  <p>A legacy service speaks only plain HTTP. Security now requires HTTPS, and the old build system no longer works. Rather than resurrect the build, the team binds the legacy server to <code>127.0.0.1</code> and adds an <b>nginx sidecar</b> that terminates HTTPS on the pod's external address and proxies over loopback. Unencrypted bytes never leave the pod. Send a request through each setup.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Setup"><button data-hs="before" aria-pressed="false">Before: legacy on 0.0.0.0</button><button data-hs="after" aria-pressed="true">After: nginx sidecar</button></div>
+    <div class="svgbox"><svg id="hsSvg" viewBox="0 0 640 200" role="img" aria-label="Request path from browser to legacy service"></svg></div>
+    <div class="row"><button class="btn primary" id="hsGo">Send request</button><span class="small" id="hsTxt"></span></div>
+  </div>
+  <p class="small">The same trick adds certificate rotation, or authentication and authorization, to applications that are hard to change.</p>
+</section>
+
+<section id="config" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Example: pushing configuration to an app that reads a file</h2></div>
+  <p>Older apps read a config file at startup. Cloud environments prefer a configuration API (Kubernetes has <b>ConfigMaps</b>) so changes can be pushed, audited and rolled back. A <b>config manager sidecar</b> bridges the two through a shared directory.</p>
+  <div class="sheet stepper" id="cfStep"><div class="svgbox"><svg id="cfSvg" viewBox="0 0 640 220" role="img" aria-label="Configuration flowing from an API through a sidecar into a shared directory"></svg></div></div>
+</section>
+
+<section id="modular" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Sidecars as reusable modules: topz</h2></div>
+  <p>Sidecars are not only for legacy code. Suppose every service should expose a <code>/topz</code> page listing its processes and their resource use. You could ask every team to link a library, then write that library in every language you use, and keep the versions aligned. Or you could ship one <b>topz sidecar</b> that shares the app's <b>PID namespace</b>, and have the orchestrator inject it everywhere.</p>
+  <div class="sheet">
+    <label class="rng"><span>Languages in your organization: <b id="lgV">4</b></span><input type="range" id="lg" min="1" max="10" value="4"></label>
+    <div class="bars" id="lgBars"></div>
+    <div class="vs"><div><b class="blue">Library in each app</b><span class="small">Tailored and possibly faster. Every team must opt in; behaviour drifts between languages; new languages start with nothing.</span></div><div><b class="pencil">Sidecar container</b><span class="small">One implementation, one UI everywhere, any language. Slightly less tailored. The book likens it to buying off the rack instead of bespoke: right for most, not for extreme performance needs.</span></div></div>
+  </div>
+  <pre class="code"><span class="c"># start any app, then attach topz to its process table</span>
+docker run -d my-app            <span class="c"># prints a container id → APP_ID</span>
+docker run --pid=container:$APP_ID -p 8080:8080 <span class="p">topz-image</span>
+<span class="c"># now browse http://localhost:8080/topz</span></pre>
+</section>
+
+<section id="paas" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Building a git-push PaaS from two containers</h2></div>
+  <p>Sidecars can carry real application logic too. Pair a Node.js server run under <code>nodemon</code> (which restarts on file changes) with a sidecar that loops <code>git pull; sleep 10</code> into a shared volume. Push code and it goes live, with no deploy pipeline written. Push a few commits and watch the timeline.</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="pSvg" viewBox="0 0 640 210" role="img" aria-label="Timeline of git pushes, sidecar pulls and server reloads"></svg></div>
+    <div class="row"><button class="btn primary" id="push">git push</button><button class="btn" id="pReset">Reset</button><span class="small" id="pTxt">Time runs at 10× speed. The sidecar pulls every 10 s.</span></div>
+  </div>
+</section>
+
+<section id="reuse" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Parameters, API and documentation</h2></div>
+  <p>A sidecar only pays off if many teams can reuse it. That takes three disciplines. First, <b>parameterize</b>: treat the container as a function whose arguments are environment variables (the book's preference) or flags, and translate them inside into the real config. Fill in the HTTPS sidecar's parameters:</p>
+  <div class="sheet">
+    <div class="envform"><label>Certificate path<input id="eCert" value="/certs/tls.crt"></label><label>Legacy port on localhost<input id="ePort" value="8080"></label></div>
+    <pre class="code" id="eOut"></pre>
+  </div>
+  <p>Second, remember that <b>everything is API</b>: parameter names, units, ports, the calls the container makes. Which of these changes to a config sidecar's <code>UPDATE_FREQUENCY</code> parameter break users?</p>
+  <div class="sheet"><div class="row between"><h3>Breaking or safe?</h3><span class="score" id="bScore"></span></div><div class="quiz" id="bQuiz"></div></div>
+  <p>Third, <b>document</b> in the place people look: the Dockerfile. Tap each line.</p>
+  <div class="df" id="df"></div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Four questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Designing Distributed Systems: Patterns and Paradigms for Scalable, Reliable Systems Using Kubernetes</i>, 2nd edition, by Brendan Burns (O'Reilly, 2025). Explanations, code snippets, diagrams and simulations are original summaries, not copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch01-02-foundations.html"><span>Previous · Chapters 1–2</span><b>Introduction and Core Concepts</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch04-ambassadors.html"><span>Next · Chapter 4</span><b>Ambassadors</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('dds:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('dds:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+
+/* resource isolation */
+let pk='one';
+function drawR(){const leak=+$('#leak').value;$('#leakV').textContent=leak+' GB';const s=$('#rSvg');s.innerHTML='';const W=560,X0=40,cap=16,u=W/cap;
+ s.appendChild(el('text',{x:X0,y:24,'font-size':12,fill:'var(--muted)',class:'t-mono'},'machine memory: 16 GB'));
+ const server=6,loader=1+leak,used=server+loader,oom=used>cap;
+ if(pk==='one'){s.appendChild(el('rect',{x:X0,y:40,width:W,height:60,rx:6,fill:'var(--paper)',stroke:'var(--line)'}));
+  s.appendChild(el('rect',{x:X0-6,y:34,width:Math.min(used,cap)*u+12,height:72,rx:8,fill:'none',stroke:oom?'var(--bad)':'var(--blue)','stroke-width':2,'stroke-dasharray':'6 4'}));
+  s.appendChild(el('rect',{x:X0,y:40,width:server*u,height:60,fill:oom?'var(--bad-soft)':'var(--blue-soft)',stroke:oom?'var(--bad)':'var(--blue)'}));s.appendChild(el('text',{x:X0+server*u/2,y:75,'text-anchor':'middle','font-size':13,'font-weight':600,fill:'var(--ink)'},oom?'server ✕':'server'));
+  s.appendChild(el('rect',{x:X0+server*u,y:40,width:Math.min(loader,cap-server)*u,height:60,fill:oom?'var(--bad-soft)':'var(--pencil-soft)',stroke:oom?'var(--bad)':'var(--pencil)'}));s.appendChild(el('text',{x:X0+server*u+Math.min(loader,cap-server)*u/2,y:75,'text-anchor':'middle','font-size':13,'font-weight':600,fill:'var(--ink)'},'loader'));
+  s.appendChild(el('text',{x:X0,y:130,'font-size':12,fill:'var(--muted)'},'one process group, one priority, one fate'));
+  $('#rTxt').innerHTML=oom?'<b class="badc">Out of memory.</b> The leak is in the loader, but the whole container is killed. Users see an outage caused by a best-effort background job.':'Fine for now. But the loader and the server share one budget: if either misbehaves, both suffer.'}
+ else{const sv=el('rect',{x:X0,y:40,width:server*u,height:60,rx:6,fill:'var(--blue-soft)',stroke:'var(--blue)','stroke-width':1.6});s.appendChild(sv);s.appendChild(el('text',{x:X0+server*u/2,y:68,'text-anchor':'middle','font-size':13,'font-weight':600,fill:'var(--ink)'},'server'));s.appendChild(el('text',{x:X0+server*u/2,y:86,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},'guaranteed, high priority'));
+  const lim=5,killed=loader>lim;s.appendChild(el('rect',{x:X0+server*u+10,y:40,width:lim*u,height:60,rx:6,fill:'none',stroke:'var(--pencil)','stroke-dasharray':'5 4'}));
+  s.appendChild(el('rect',{x:X0+server*u+10,y:40,width:Math.min(loader,lim)*u,height:60,rx:6,fill:killed?'var(--bad-soft)':'var(--pencil-soft)',stroke:killed?'var(--bad)':'var(--pencil)'}));
+  s.appendChild(el('text',{x:X0+server*u+10+lim*u/2,y:75,'text-anchor':'middle','font-size':13,'font-weight':600,fill:killed?'var(--bad)':'var(--ink)'},killed?'loader restarted ↻':'loader (best effort, ≤ 5 GB)'));
+  s.appendChild(el('text',{x:X0,y:130,'font-size':12,fill:'var(--muted)'},'separate limits and priorities; the loader may borrow idle CPU, but is evicted first'));
+  $('#rTxt').innerHTML=killed?'<b class="okc">Contained.</b> The loader hits its own limit and is restarted. The user-facing server never notices.':'Each container has its own budget and priority. The loader can soak up spare cycles when the server is quiet.'}}
+seg('[data-pk]',b=>{pk=b.dataset.pk;drawR()});$('#leak').addEventListener('input',drawR);drawR();
+cards('#whyCards',[{t:'Resource isolation',d:'Give the latency-critical part guaranteed resources and make the background part the first to go under pressure.',c:'blue'},{t:'Team ownership',d:'Teams of six to eight need small pieces to own. A git-sync container can be one team\'s product, reused by PHP, Python and JavaScript apps alike.',c:'pencil'},{t:'Separation of concerns',d:'Small images are easier to test and can be rolled out (and rolled back) independently, so each deployment is smaller and safer.',c:'ok'}]);
+
+/* namespaces */
+const NSL=[['net','Network','The sidecar can reach the app on localhost. This is how a proxy sidecar can sit in front of a server that listens only on 127.0.0.1.'],['fs','Volume','A shared directory. A config manager can write a file that the app reads; a git-sync container can update the code the server serves.'],['pid','PID','The sidecar can see the app\'s processes. A topz sidecar can list them and their resource use.'],['host','Hostname','Both report the same hostname, so logs and metrics line up under one identity.']];
+let nsOn='net';$("#ns").innerHTML=NSL.map(n=>`<button data-n="${n[0]}" aria-pressed="${n[0]===nsOn}">${n[1]}</button>`).join('');
+function drawNS(){const s=$('#shSvg');s.innerHTML='';const n=NSL.find(x=>x[0]===nsOn);
+ s.appendChild(el('rect',{x:60,y:20,width:520,height:170,rx:16,fill:'none',stroke:'var(--muted)','stroke-dasharray':'7 5'}));s.appendChild(el('text',{x:76,y:42,'font-size':12,class:'t-mono',fill:'var(--muted)'},'pod: scheduled together, on one machine'));
+ s.appendChild(el('rect',{x:90,y:58,width:200,height:80,rx:10,fill:'var(--blue-soft)',stroke:'var(--blue)','stroke-width':1.8}));s.appendChild(el('text',{x:190,y:96,'text-anchor':'middle','font-size':14,'font-weight':700,fill:'var(--ink)'},'application'));s.appendChild(el('text',{x:190,y:116,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},'core logic'));
+ s.appendChild(el('rect',{x:350,y:58,width:200,height:80,rx:10,fill:'var(--pencil-soft)',stroke:'var(--pencil)','stroke-width':1.8}));s.appendChild(el('text',{x:450,y:96,'text-anchor':'middle','font-size':14,'font-weight':700,fill:'var(--ink)'},'sidecar'));s.appendChild(el('text',{x:450,y:116,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},'augments, often unseen'));
+ s.appendChild(el('rect',{x:110,y:150,width:420,height:28,rx:14,fill:'var(--paper)',stroke:'var(--pencil)','stroke-width':1.5}));s.appendChild(el('text',{x:320,y:169,'text-anchor':'middle','font-size':12,'font-weight':600,fill:'var(--pencil)'},'shared '+n[1].toLowerCase()+' namespace'));
+ s.appendChild(el('line',{x1:190,y1:138,x2:190,y2:150,stroke:'var(--pencil)','stroke-width':2}));s.appendChild(el('line',{x1:450,y1:138,x2:450,y2:150,stroke:'var(--pencil)','stroke-width':2}));
+ s.appendChild(el('line',{x1:290,y1:98,x2:350,y2:98,stroke:'var(--pencil)','stroke-width':2,class:'flow'}));$('#shTxt').textContent=n[2]}
+seg('#ns button',b=>{nsOn=b.dataset.n;drawNS()});drawNS();
+
+/* https */
+let hs='after',hsT=null;
+function drawHS(stage){const s=$('#hsSvg');s.innerHTML='';
+ s.appendChild(el('rect',{x:20,y:70,width:100,height:50,rx:8,fill:'var(--surface)',stroke:'var(--ink)'}));s.appendChild(el('text',{x:70,y:100,'text-anchor':'middle','font-size':13,fill:'var(--ink)'},'browser'));
+ s.appendChild(el('rect',{x:190,y:20,width:430,height:160,rx:14,fill:'none',stroke:'var(--muted)','stroke-dasharray':'6 4'}));s.appendChild(el('text',{x:204,y:40,'font-size':11,class:'t-mono',fill:'var(--muted)'},'pod · external IP'));
+ s.appendChild(el('rect',{x:450,y:65,width:150,height:60,rx:8,fill:'var(--blue-soft)',stroke:'var(--blue)','stroke-width':1.6}));s.appendChild(el('text',{x:525,y:92,'text-anchor':'middle','font-size':13,'font-weight':600,fill:'var(--ink)'},'legacy app'));
+ s.appendChild(el('text',{x:525,y:110,'text-anchor':'middle','font-size':11,class:'t-mono',fill:'var(--muted)'},hs==='after'?'127.0.0.1:8080':'0.0.0.0:8080'));
+ if(hs==='after'){s.appendChild(el('rect',{x:240,y:65,width:130,height:60,rx:8,fill:'var(--pencil-soft)',stroke:'var(--pencil)','stroke-width':1.6}));s.appendChild(el('text',{x:305,y:92,'text-anchor':'middle','font-size':13,'font-weight':600,fill:'var(--ink)'},'nginx sidecar'));s.appendChild(el('text',{x:305,y:110,'text-anchor':'middle','font-size':11,class:'t-mono',fill:'var(--muted)'},':443 TLS'));
+  if(stage>=1){s.appendChild(el('line',{x1:120,y1:95,x2:240,y2:95,stroke:'var(--ok)','stroke-width':3,class:'flow'}));s.appendChild(el('text',{x:180,y:86,'text-anchor':'middle','font-size':11,fill:'var(--ok)'},'🔒 HTTPS'))}
+  if(stage>=2){s.appendChild(el('line',{x1:370,y1:95,x2:450,y2:95,stroke:'var(--blue)','stroke-width':3,class:'flow'}));s.appendChild(el('text',{x:410,y:86,'text-anchor':'middle','font-size':11,fill:'var(--blue)'},'loopback'));s.appendChild(el('text',{x:410,y:150,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},'plain HTTP, never leaves the pod'))}}
+ else{if(stage>=1){s.appendChild(el('line',{x1:120,y1:95,x2:450,y2:95,stroke:'var(--bad)','stroke-width':3,class:'flow'}));s.appendChild(el('text',{x:285,y:86,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--bad)'},'plain HTTP across the network'));
+  s.appendChild(el('text',{x:285,y:150,'text-anchor':'middle','font-size':20,fill:'var(--bad)',class:'pulse'},'👀'));s.appendChild(el('text',{x:285,y:170,'text-anchor':'middle','font-size':11,fill:'var(--bad)'},'anyone on the path can read it'))}}}
+seg('[data-hs]',b=>{hs=b.dataset.hs;drawHS(0);$('#hsTxt').textContent=''});
+$('#hsGo').addEventListener('click',()=>{clearTimeout(hsT);drawHS(1);hsT=setTimeout(()=>{drawHS(2);$('#hsTxt').innerHTML=hs==='after'?'<span class="okc">Encrypted on the wire; the legacy binary is untouched.</span>':'<span class="badc">Fails the HTTPS mandate.</span>'},600)});drawHS(0);
+
+/* config stepper */
+$('#cfStep').insertAdjacentHTML('beforeend',stepHTML());
+stepper('#cfStep',['At startup the ConfigMap is mounted as a volume, so the legacy app finds its file where it always has.',
+ 'An operator changes the configuration through the API. Nobody logs in to a server.',
+ 'The config manager sidecar notices the API and the local file differ.',
+ 'It writes the new file into the shared directory.',
+ 'It tells the app to reload. How depends on the app: some watch the file, some reload on <code>SIGHUP</code>.',
+ 'Worst case it sends <code>SIGKILL</code>. The orchestrator restarts the app, which reads the new file on boot.'],i=>{const s=$('#cfSvg');s.innerHTML='';
+ const box=(x,y,w,h,t,sub,c,on)=>{s.appendChild(el('rect',{x,y,width:w,height:h,rx:8,fill:on?`var(--${c}-soft)`:'var(--surface)',stroke:`var(--${c})`,'stroke-width':on?2.4:1.4}));s.appendChild(el('text',{x:x+w/2,y:y+h/2+(sub?-2:4),'text-anchor':'middle','font-size':13,'font-weight':600,fill:'var(--ink)'},t));if(sub)s.appendChild(el('text',{x:x+w/2,y:y+h/2+15,'text-anchor':'middle','font-size':11,class:'t-mono',fill:'var(--muted)'},sub))};
+ s.appendChild(el('rect',{x:170,y:10,width:460,height:200,rx:14,fill:'none',stroke:'var(--muted)','stroke-dasharray':'6 4'}));s.appendChild(el('text',{x:184,y:28,'font-size':11,class:'t-mono',fill:'var(--muted)'},'pod'));
+ box(10,80,130,60,'config API','ConfigMap','ok',i===1);box(200,50,160,60,'config manager','sidecar','pencil',i>=2&&i<=5);box(450,50,160,60,'legacy app',i===5?'restarting...':i===4?'reloading...':'','blue',i===0||i>=4);
+ box(320,150,160,46,'/etc/app/config','v'+(i>=3?2:1),'mid',i===0||i===3);
+ const ln=(x1,y1,x2,y2,c,on)=>s.appendChild(el('line',{x1,y1,x2,y2,stroke:`var(--${c})`,'stroke-width':on?3:1.2,class:on?'flow':'',opacity:on?1:.4}));
+ ln(140,110,200,85,'ok',i===2);ln(300,110,360,150,'pencil',i===3);ln(530,110,450,150,'blue',i===0);ln(360,72,450,72,'bad',i===4||i===5);
+ if(i===1)s.appendChild(el('text',{x:75,y:160,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--ok)'},'edited: v2'));
+ if(i===4||i===5)s.appendChild(el('text',{x:405,y:64,'text-anchor':'middle','font-size':11,'font-weight':700,fill:'var(--bad)',class:'t-mono'},i===4?'SIGHUP':'SIGKILL'))});
+
+/* languages */
+function drawLg(){const n=+$('#lg').value;$('#lgV').textContent=n;bars('#lgBars',[{l:'Library: implementations to build and keep in sync',v:n,c:'blue',txt:n},{l:'Sidecar: implementations',v:1,c:'pencil',txt:1}],10)}
+$('#lg').addEventListener('input',drawLg);drawLg();
+
+/* paas timeline */
+let pushes=[],t0=performance.now(),raf;
+function drawP(){const s=$('#pSvg');s.innerHTML='';const now=(performance.now()-t0)/1000*10,span=60,start=Math.max(0,now-span),X=t=>40+(t-start)/span*580;
+ [['git repo',40,'d5'],['sync sidecar',100,'pencil'],['node server',160,'blue']].forEach(([t,y,c])=>{s.appendChild(el('text',{x:4,y:y-12,'font-size':11,fill:`var(--${c})`,'font-weight':600},t));s.appendChild(el('line',{x1:40,y1:y,x2:620,y2:y,stroke:'var(--line)','stroke-width':2}))});
+ for(let k=Math.ceil(start/10)*10;k<=now;k+=10){s.appendChild(el('circle',{cx:X(k),cy:100,r:4,fill:'var(--pencil)'}));}
+ pushes.forEach((p,i)=>{if(p.t>=start-12){s.appendChild(el('rect',{x:X(p.t)-8,y:30,width:16,height:20,rx:3,fill:'var(--d5)'}));s.appendChild(el('text',{x:X(p.t),y:44,'text-anchor':'middle','font-size':10,fill:'var(--surface)'},i+1));
+  const pull=Math.ceil(p.t/10)*10;if(pull<=now){s.appendChild(el('line',{x1:X(p.t),y1:50,x2:X(pull),y2:96,stroke:'var(--pencil)','stroke-width':1.5}));
+   const re=pull+2;if(re<=now){s.appendChild(el('line',{x1:X(pull),y1:104,x2:X(re),y2:152,stroke:'var(--blue)','stroke-width':1.5}));s.appendChild(el('rect',{x:X(re)-8,y:152,width:16,height:16,rx:8,fill:'var(--ok)'}));s.appendChild(el('text',{x:X(re),y:164,'text-anchor':'middle','font-size':9,fill:'var(--surface)'},i+1))}}}});
+ s.appendChild(el('text',{x:40,y:196,'font-size':11,fill:'var(--muted)'},'dots: sidecar runs git pull every 10 s · green: nodemon reloaded with commit N'));
+ s.appendChild(el('line',{x1:X(now),y1:20,x2:X(now),y2:180,stroke:'var(--muted)','stroke-dasharray':'2 3'}));
+ const live=pushes.filter(p=>Math.ceil(p.t/10)*10+2<=now).length;$('#pTxt').textContent=pushes.length?`Live: commit ${live||'none yet'} of ${pushes.length} pushed. Worst-case delay ≈ one pull interval.`:'Time runs at 10× speed. The sidecar pulls every 10 s.';
+ raf=requestAnimationFrame(drawP)}
+$('#push').addEventListener('click',()=>pushes.push({t:(performance.now()-t0)/1000*10}));$('#pReset').addEventListener('click',()=>{pushes=[];t0=performance.now()});
+const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){if(!raf)drawP()}else{cancelAnimationFrame(raf);raf=null}}));io.observe($('#pSvg'));drawP();cancelAnimationFrame(raf);raf=null;
+
+/* env builder */
+function env(){const c=$('#eCert').value.replace(/[<>&]/g,''),p=$('#ePort').value.replace(/[<>&]/g,'');
+ $('#eOut').innerHTML=`<span class="c"># outside: the caller supplies parameters</span>\ndocker run -d \\\n  -e <span class="p">CERTIFICATE_PATH</span>=<span class="s">${c}</span> \\\n  -e <span class="p">PROXY_PORT</span>=<span class="s">${p}</span> \\\n  https-sidecar\n\n<span class="c"># inside: a start script turns them into real config</span>\nsed -e "s|@CERT@|$CERTIFICATE_PATH|" \\\n    -e "s|@PORT@|$PROXY_PORT|" nginx.tmpl > nginx.conf\n<span class="c"># → ssl_certificate ${c};  proxy_pass http://127.0.0.1:${p};</span>`}
+['#eCert','#ePort'].forEach(s=>$(s).addEventListener('input',env));env();
+
+quiz('#bQuiz','#bScore',[
+ {q:'Rename it to <code>UPDATE_PERIOD</code>',a:0,why:'Existing deployments still set the old name, which is now silently ignored.'},
+ {q:'Accept "10m" and "5s" strings; bare numbers no longer parse',a:0,why:'Old values like 10 now fail to parse.'},
+ {q:'Accept strings, and treat bare numbers as milliseconds instead of seconds',a:0,why:'No error, but checks now run 1,000× as often and hammer the config server. Subtle, still breaking.'},
+ {q:'Add a new optional parameter <code>JITTER</code> with a default of 0',a:1,why:'Existing users see no change in behaviour.'}],['Breaking','Safe']);
+
+const DF=[['# Main web server listens here\nEXPOSE 8080','EXPOSE is not required to run, but it records which ports matter. Add a comment saying what listens there.'],
+ ['# Port on localhost to proxy traffic to\nENV PROXY_PORT 8000','ENV sets a default for each parameter and, with a comment, documents it in the place people look first.'],
+ ['LABEL "org.opencontainers.image.version"="1.0.3"\nLABEL "org.opencontainers.image.url"="https://…"','Labels from the Open Containers Initiative\'s shared vocabulary (vendor, url, version...) let community tools read your metadata without changes.']];
+$('#df').innerHTML=DF.map(d=>`<button aria-expanded="false">${d[0]}<span class="why">${d[1]}</span></button>`).join('');
+$$('#df button').forEach(b=>b.addEventListener('click',()=>b.setAttribute('aria-expanded',b.getAttribute('aria-expanded')==='true'?'false':'true')));
+
+quiz('#qQuiz','#qScore',[
+ {q:'Two containers in a sidecar pattern must be...',o:['On the same machine','In the same region'],a:0,why:'Sidecars are co-scheduled in one pod so they can share network, volumes and process namespaces.'},
+ {q:'To add HTTPS to a legacy app with an nginx sidecar, the app should listen on...',o:['127.0.0.1','0.0.0.0'],a:0,why:'Binding to loopback means only containers in the pod can reach the unencrypted port.'},
+ {q:'A topz sidecar needs to share which namespace with the app?',o:['PID','Network'],a:0,why:'Sharing the process-ID namespace lets it see and report on the app\'s processes.'},
+ {q:'Which is the stronger reason to choose a sidecar over a per-language library?',o:['Peak performance','Consistency across languages'],a:1,why:'One implementation everywhere; a bespoke library wins only when you need extreme performance.'}]);
+
+})();
+</script>
+</body>
+</html>

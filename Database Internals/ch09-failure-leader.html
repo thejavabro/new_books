@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Failure Detection and Leader Election</title>
+<meta name="description" content="Two small chapters about two questions every cluster must answer: is that node dead, or just slow? And if the leader is gone, who takes over?">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<script>try{var t=localStorage.getItem('dbi:theme');if(t)document.documentElement.dataset.theme=JSON.parse(t)}catch(e){}</script>
+<style>
+/* Shared base for the Database Internals companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+button.tag{cursor:pointer}
+button.tag:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{font-family:var(--mono);font-size:.82rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:0;overflow-x:auto;white-space:pre;max-width:100%}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+pre.code code{border:0;padding:0;background:none}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;max-height:220px;overflow:auto;display:flex;flex-direction:column;gap:2px}
+.log div{white-space:pre-wrap;word-break:break-word}
+.cells{display:flex;flex-wrap:wrap;gap:4px}
+.cell{font-family:var(--mono);font-size:.8rem;min-width:2.4em;padding:4px 6px;text-align:center;border:1px solid var(--line);border-radius:4px;background:var(--paper);transition:background .3s,border-color .3s}
+.cell.hit{background:var(--blue-soft);border-color:var(--blue)}
+.cell.ok{background:var(--ok-soft);border-color:var(--ok)}
+.cell.bad{background:var(--bad-soft);border-color:var(--bad)}
+.cell.mid{background:var(--mid-soft);border-color:var(--mid)}
+.cell.dim{opacity:.35}
+input[type=text],input[type=number]{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+
+/* page */
+
+.gtab{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.gtab>div{border:1.5px solid var(--line);border-radius:8px;padding:6px 8px;background:var(--surface);font-family:var(--mono);font-size:.75rem;display:flex;flex-direction:column;gap:2px}
+.gtab>div.dead{border-color:var(--bad);background:var(--bad-soft)}
+.gtab>div b{font-size:.85rem}
+.gtab span.sus{color:var(--bad);font-weight:700}
+@media (max-width:560px){.gtab{grid-template-columns:1fr 1fr}}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Database Internals · visual companion</a><span class="tag">Part II · Chapter 9–10 of 14</span><button class="tag themebtn" type="button" aria-label="Toggle light and dark theme">Theme</button></div>
+  <h1>Failure Detection and Leader Election</h1>
+  <p class="lede">Two small chapters about two questions every cluster must answer: is that node dead, or just slow? And if the leader is gone, who takes over?</p>
+  <nav class="toc" aria-label="Sections"><a href="#why">The problem</a><a href="#swim">Pings and SWIM</a><a href="#phi">Phi accrual</a><a href="#gossipfd">Gossip detection</a><a href="#leaders">Why leaders</a><a href="#bully">Bully</a><a href="#ring">Ring</a><a href="#quiz">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="why" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Dead, or just slow?</h2></div>
+  <p>Without timing assumptions you can't tell a crashed process from a slow one (that's FLP again). A <b>failure detector</b> is a local component that decides which peers to <i>suspect</i>, so algorithms can exclude them and keep making progress. Two properties matter. <b>Liveness</b>: something good eventually happens (a real failure is eventually detected). <b>Safety</b>: nothing bad happens (a live process isn't declared dead). Detectors trade <b>efficiency</b> (how fast) for <b>accuracy</b> (how often right); you can't have both perfectly, so false positives are allowed. Tune a timeout and see.</p>
+  <div class="sheet">
+    <label class="rng"><span>Timeout: <b id="toV"></b></span><input type="range" id="to" min="110" max="400" value="180"></label>
+    <label class="rng"><span>Network jitter: <b id="jtV"></b></span><input type="range" id="jt" min="0" max="120" value="50"></label>
+    <div class="svgbox"><svg id="hbSvg" viewBox="0 0 660 150" role="img" aria-label="Heartbeat arrivals, timeout window and the moment of a real crash"></svg></div>
+    <div class="bars" id="hbBars"></div>
+    <p class="small">Heartbeats every 100 ms; the peer really crashes at t = 2000 ms.</p>
+  </div>
+</section>
+
+<section id="swim" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Heartbeats, pings and outsourced heartbeats</h2></div>
+  <p>A <b>ping</b> asks "are you alive?" and waits for a reply; a <b>heartbeat</b> is the peer announcing "I'm alive" on its own. Either way, a missed deadline marks the peer as suspected, as in Akka's deadline detector. One node's view is fragile: a bad link between P1 and P2 looks like P2 is dead. <b>SWIM</b> uses <b>outsourced heartbeats</b>: if P2 doesn't answer, P1 asks a few random members to ping P2 on its behalf and relay the result.</p>
+  <div class="sheet stepper" id="swStep">
+    <label class="small"><input type="checkbox" id="swDead"> P2 has really crashed (otherwise only the P1–P2 link is broken)</label>
+    <div class="svgbox"><svg id="swSvg" viewBox="0 0 660 230" role="img" aria-label="SWIM indirect probing through helpers"></svg></div>
+  </div>
+  <div class="callout blue"><b class="h">Without timeouts at all</b><span>The <b>Heartbeat</b> algorithm (a timeout-free detector) forwards heartbeats along paths: each process increments counters for everyone in the path and forwards to those not yet in it. Counters give a global, relative view, so a peer reachable only indirectly still looks alive. The hard part is choosing the threshold to interpret those counters.</span></div>
+</section>
+
+<section id="phi" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>The phi-accrual failure detector</h2></div>
+  <p>Instead of a yes/no timeout, <b>φ-accrual</b> (used by Cassandra and Akka) outputs a continuous <b>suspicion level</b>. It keeps a sliding window of recent heartbeat inter-arrival times, assumes they're roughly normal, and asks: how unlikely is it that the next heartbeat still hasn't arrived after this long? φ = −log₁₀(P(arrival later than now)). φ = 1 means about a 10% chance of being wrong, φ = 3 about 0.1%. Because the window tracks real conditions, a jittery network automatically gets more patience. It splits into <b>monitoring</b>, <b>interpretation</b> and <b>action</b>.</p>
+  <div class="sheet">
+    <label class="rng"><span>Std. dev. of recent intervals: <b id="sdV"></b></span><input type="range" id="sd" min="5" max="80" value="20"></label>
+    <label class="rng"><span>Threshold φ: <b id="thV"></b></span><input type="range" id="th" min="1" max="12" value="8"></label>
+    <div class="svgbox"><svg id="phiSvg" viewBox="0 0 660 200" role="img" aria-label="Phi rising with time since the last heartbeat"></svg></div>
+    <p class="small" id="phiTxt"></p>
+  </div>
+</section>
+
+<section id="gossipfd" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Gossip-style failure detection</h2></div>
+  <p>Each member keeps a table of every member's <b>heartbeat counter</b> and the local time it last increased. Periodically a member bumps its own counter and sends its table to a random peer, which merges it (keeping higher counters). A member whose counter stops rising for long enough is considered failed. The verdict is an aggregate of many views, so a single broken link doesn't cause a false alarm: news travels around it.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn primary" id="gTick">Gossip round</button><button class="btn" id="gLink">Break link P1–P3</button><button class="btn" id="gKill">Crash P3</button><button class="btn" id="gReset">Reset</button></div>
+    <div class="gtab" id="gtab"></div>
+    <p class="small" id="gTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout"><b class="h">FUSE: turn one failure into a group failure</b><span>FUSE arranges processes into groups that ping each other. When a member sees a failure, it <i>stops answering pings itself</i>, so silence spreads until every member knows the group has failed. Every member is guaranteed to learn of it, even across partitions; the flip side is that a single bad link also takes down the whole group.</span></div>
+</section>
+
+<section id="leaders" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Leader election: why and what it guarantees</h2></div>
+  <p>Coordinating every step with every peer is expensive. A <b>leader</b> (coordinator) can order messages, hold global state and drive the algorithm, cutting round trips. Leaders are long-lived but not permanent: when one fails, an election picks a successor. <b>Liveness</b>: there is a leader most of the time and elections finish. <b>Safety</b> would be "at most one leader", but most election algorithms can violate it in a partition, producing <b>split brain</b>. A single leader can become a bottleneck, so systems like Spanner partition data and give each replica set its own leader. Unlike a distributed lock, everyone must <i>know</i> who the leader is, and a long reign is a feature.</p>
+</section>
+
+<section id="bully" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>The bully algorithm</h2></div>
+  <p>Every process has a rank; the highest-ranked live process wins. A process that notices the leader is gone (1) sends <b>Election</b> to all higher-ranked processes, (2) if any answer <b>Alive</b>, hands over to the highest of them, (3) otherwise declares itself and broadcasts <b>Elected</b> to the lower ranks. Pick who notices, optionally cut the network, and run it.</p>
+  <div class="sheet">
+    <div class="row"><span class="small">Detector</span><div class="seg" role="group" aria-label="Initiator" id="bInit"></div><label class="small"><input type="checkbox" id="bPart"> partition {1,2,3} | {4,5}</label><button class="btn primary" id="bRun">Run election</button></div>
+    <div class="svgbox"><svg id="bSvg" viewBox="0 0 660 260" role="img" aria-label="Six processes running the bully election"></svg></div>
+    <div class="log" id="bLog" aria-live="polite"></div>
+  </div>
+  <div class="cardgrid" id="varCards"></div>
+</section>
+
+<section id="ring" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>The ring algorithm</h2></div>
+  <p>Nodes form a logical ring and know their successors. The detector sends an election message around the ring; each live node adds itself to the collected set, and unreachable nodes are skipped. When the message returns to the initiator, the highest rank in the set wins, and a second lap announces it. (A variant carries only the running maximum.) A partitioned ring can still elect two leaders.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn primary" id="rRun">Start election at 3</button><button class="btn" id="rKill">Crash another node</button><button class="btn" id="rReset">Reset</button></div>
+    <div class="svgbox fit"><svg id="rSvg" viewBox="0 0 360 300" role="img" aria-label="Election message travelling around a ring of nodes" style="max-width:380px;margin:0 auto"></svg></div>
+    <p class="small" id="rTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout ok"><b class="h">Electing a leader is consensus</b><span>All these algorithms can produce two leaders. To rule out split brain you need a cluster-wide <b>majority</b>, and agreeing on a leader is itself a consensus problem. Multi-Paxos and Raft therefore tolerate brief overlaps and resolve them: a proposer with an older ballot or term gets rejected and steps down. Leadership is a performance optimization; safety comes from the consensus protocol (chapter 14).</span></div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b>Trade-off</b><span>Fast detection means more false suspicions; patience means slower recovery.</span></div>
+    <div><b class="blue">SWIM</b><span>Indirect probes through random members separate link failures from node failures.</span></div>
+    <div><b>φ-accrual</b><span>Continuous suspicion from the observed distribution of heartbeat intervals.</span></div>
+    <div><b class="pencil">Gossip / FUSE</b><span>Aggregate views via gossip; or deliberately spread one failure to the whole group.</span></div>
+    <div><b>Bully and ring</b><span>Highest rank wins; simple, but unstable top nodes and partitions cause trouble.</span></div>
+    <div><b class="badc">Split brain</b><span>Only majority-based consensus prevents two leaders.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Database Internals: A Deep Dive into How Distributed Data Systems Work</i> by Alex Petrov (O'Reilly, 2019). Explanations, examples, code and drawings are original summaries, not copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch08-distributed-intro.html"><span>Previous · Chapter 8</span><b>Introduction and Overview</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch11-replication-consistency.html"><span>Next · Chapter 11</span><b>Replication and Consistency</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('dbi:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('dbi:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle */
+$$('.themebtn').forEach(b=>b.addEventListener('click',()=>{const r=document.documentElement;const dark=r.dataset.theme?r.dataset.theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches;r.dataset.theme=dark?'light':'dark';store.set('theme',r.dataset.theme)}));
+function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'})[c])}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
+
+
+/* ---- timeout trade-off ---- */
+function rngS(seed){return()=>{seed=(seed*1103515245+12345)%2147483648;return seed/2147483648}}
+function drawHb(){const to=+$('#to').value,jt=+$('#jt').value;$('#toV').textContent=to+' ms';$('#jtV').textContent=jt+' ms';const R=rngS(7);const arr=[];for(let t=100;t<2000;t+=100)arr.push(t+(R()-.2)*jt*(R()<.15?3:1));arr.sort((a,b)=>a-b);
+  let fp=0,last=0;const sus=[];arr.forEach(a=>{if(a-last>to){fp++;sus.push(last+to)}last=a});const detect=last+to;const s=$('#hbSvg');s.innerHTML='';const X=t=>20+t/2600*620;
+  s.appendChild(el('line',{x1:20,y1:80,x2:640,y2:80,stroke:'var(--line)','stroke-width':2}));arr.forEach(a=>s.appendChild(el('line',{x1:X(a),y1:62,x2:X(a),y2:98,stroke:'var(--ok)','stroke-width':2})));
+  sus.forEach(t=>{s.appendChild(el('circle',{cx:X(t),cy:80,r:7,fill:'var(--bad)'}));s.appendChild(el('text',{x:X(t),y:52,'text-anchor':'middle','font-size':10,fill:'var(--bad)'},'false alarm'))});
+  s.appendChild(el('rect',{x:X(2000),y:56,width:X(2600)-X(2000),height:48,fill:'var(--bad-soft)'}));s.appendChild(el('text',{x:X(2600)-4,y:50,'text-anchor':'end','font-size':10.5,fill:'var(--bad)'},'peer crashed'));
+  s.appendChild(el('line',{x1:X(detect),y1:40,x2:X(detect),y2:110,stroke:'var(--pencil)','stroke-width':2.5}));s.appendChild(el('text',{x:X(detect),y:136,'text-anchor':'middle','font-size':10.5,fill:'var(--pencil)'},'detected'));
+  bars('#hbBars',[{l:'False suspicions (safety)',v:Math.min(fp,6)/6,c:fp?'bad':'ok',txt:fp},{l:'Detection delay (liveness)',v:Math.min(1,(detect-2000)/500),c:detect-2000>300?'mid':'ok',txt:Math.round(detect-2000)+' ms'}],1)}
+['to','jt'].forEach(id=>$('#'+id).addEventListener('input',drawHb));drawHb();
+
+/* ---- SWIM ---- */
+const SWS=['P1 pings P2 directly.','No ack within the timeout. Instead of declaring P2 dead, P1 picks k random members (P3, P4) and sends them ping-req(P2).','P3 and P4 ping P2 over their own links.','RESULT'];
+let swDead=false;$('#swStep').insertAdjacentHTML('beforeend',stepHTML());
+function swInit(){const r=$('#swStep');r.querySelectorAll('.step-cap,.row.between').forEach(e=>e.remove());r.insertAdjacentHTML('beforeend',stepHTML());const steps=SWS.map(s=>s==='RESULT'?(swDead?'Nobody gets an answer. P1 now has independent confirmation and marks P2 as suspected (SWIM then gives it a grace period before declaring it dead).':'P2 answers the helpers, who relay the acks to P1. P2 is alive; only the P1–P2 link is bad. False positive avoided.'):s);
+  stepper('#swStep',steps,i=>{const s=$('#swSvg');s.innerHTML='';const P={P1:[90,115],P2:[570,115],P3:[330,35],P4:[330,195]};
+    const ar=(a,b,c,ok,lab)=>{const [x1,y1]=P[a],[x2,y2]=P[b];const dx=x2-x1,dy=y2-y1,L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;const sx=x1+ux*30,sy=y1+uy*30,ex=x2-ux*30,ey=y2-uy*30;s.appendChild(el('line',{x1:sx,y1:sy,x2:ex,y2:ey,stroke:c,'stroke-width':2.2,'stroke-dasharray':ok?'':'6 4'}));if(ok)s.appendChild(el('polygon',{points:`${ex},${ey} ${ex-ux*10-uy*5},${ey-uy*10+ux*5} ${ex-ux*10+uy*5},${ey-uy*10-ux*5}`,fill:c}));else s.appendChild(el('text',{x:(sx+ex)/2,y:(sy+ey)/2+4,'text-anchor':'middle','font-size':16,'font-weight':700,fill:'var(--bad)'},'✗'));if(lab)s.appendChild(el('text',{x:(sx+ex)/2,y:(sy+ey)/2-8,'text-anchor':'middle','font-size':10.5,fill:c},lab))};
+    if(i===0)ar('P1','P2','var(--blue)',false,'ping');if(i>=1){ar('P1','P3','var(--blue)',true,'ping-req');ar('P1','P4','var(--blue)',true,'ping-req')}
+    if(i>=2){ar('P3','P2','var(--pencil)',!swDead,'ping');ar('P4','P2','var(--pencil)',!swDead,'ping')}if(i>=3&&!swDead){ar('P3','P1','var(--ok)',true,'ack');ar('P4','P1','var(--ok)',true,'ack')}
+    Object.entries(P).forEach(([n,[x,y]])=>{const dead=n==='P2'&&swDead;s.appendChild(el('circle',{cx:x,cy:y,r:26,fill:dead?'var(--bad-soft)':'var(--surface)',stroke:dead?'var(--bad)':'var(--blue)','stroke-width':2}));s.appendChild(el('text',{x,y:y+5,'text-anchor':'middle','font-size':14,'font-weight':700,fill:'var(--ink)'},n))})})}
+$('#swDead').addEventListener('change',e=>{swDead=e.target.checked;swInit()});swInit();
+
+/* ---- phi ---- */
+function erfc(x){const t=1/(1+.5*Math.abs(x));const r=t*Math.exp(-x*x-1.26551223+t*(1.00002368+t*(.37409196+t*(.09678418+t*(-.18628806+t*(.27886807+t*(-1.13520398+t*(1.48851587+t*(-.82215223+t*.17087277)))))))));return x>=0?r:2-r}
+function phiAt(t,mu,sd){const p=.5*erfc((t-mu)/(sd*Math.SQRT2));return -Math.log10(Math.max(p,1e-12))}
+function drawPhi(){const sd=+$('#sd').value,th=+$('#th').value,mu=100;$('#sdV').textContent=sd+' ms';$('#thV').textContent=th;const s=$('#phiSvg');s.innerHTML='';const X=t=>40+t/400*600,Y=v=>180-v/12*165;
+  s.appendChild(el('line',{x1:40,y1:180,x2:640,y2:180,stroke:'var(--line)'}));s.appendChild(el('line',{x1:40,y1:15,x2:40,y2:180,stroke:'var(--line)'}));s.appendChild(el('text',{x:640,y:196,'text-anchor':'end','font-size':10.5,fill:'var(--muted)'},'ms since last heartbeat'));s.appendChild(el('text',{x:46,y:22,'font-size':10.5,fill:'var(--muted)'},'φ'));
+  let d='',cross=null;for(let t=0;t<=400;t+=2){const v=Math.min(12,phiAt(t,mu,sd));if(cross===null&&v>=th)cross=t;d+=(t?'L':'M')+X(t)+','+Y(v)}s.appendChild(el('path',{d,fill:'none',stroke:'var(--blue)','stroke-width':2.5}));
+  s.appendChild(el('line',{x1:40,y1:Y(th),x2:640,y2:Y(th),stroke:'var(--bad)','stroke-dasharray':'5 4'}));s.appendChild(el('text',{x:636,y:Y(th)-4,'text-anchor':'end','font-size':10.5,fill:'var(--bad)'},'threshold'));
+  s.appendChild(el('line',{x1:X(mu),y1:15,x2:X(mu),y2:180,stroke:'var(--ok)','stroke-dasharray':'3 3'}));s.appendChild(el('text',{x:X(mu)+4,y:30,'font-size':10,fill:'var(--ok)'},'mean interval'));
+  if(cross!=null){s.appendChild(el('circle',{cx:X(cross),cy:Y(th),r:6,fill:'var(--bad)'}))}
+  $('#phiTxt').textContent=cross!=null?`With σ = ${sd} ms, φ crosses ${th} after ${cross} ms of silence; a chance of roughly 1 in 10^${th} that a heartbeat would still have arrived. Raise σ (a noisier network) and the detector waits longer on its own.`:'Within this window φ never reaches the threshold.'}
+['sd','th'].forEach(id=>$('#'+id).addEventListener('input',drawPhi));drawPhi();
+
+/* ---- gossip ---- */
+let G;function gReset(){G={n:4,hb:[[1,1,1,1],[1,1,1,1],[1,1,1,1],[1,1,1,1]],seen:[[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]],round:0,dead:-1,cut:false};$('#gTxt').textContent='Each card is one member\'s view: heartbeat counter and rounds since it last increased.';gDraw()}
+function gDraw(){$('#gtab').innerHTML=G.hb.map((row,i)=>`<div class="${i===G.dead?'dead':''}"><b>P${i+1}'s view</b>${row.map((h,j)=>{const age=G.round-G.seen[i][j];return `<span class="${age>=4&&i!==j?'sus':''}">P${j+1}: hb ${h} · ${i===j?'self':age+' ago'}</span>`}).join('')}</div>`).join('')}
+$('#gTick').addEventListener('click',()=>{G.round++;for(let i=0;i<4;i++){if(i===G.dead)continue;G.hb[i][i]++;G.seen[i][i]=G.round}
+  const msgs=[];for(let i=0;i<4;i++){if(i===G.dead)continue;const opts=[0,1,2,3].filter(j=>j!==i&&j!==G.dead&&!(G.cut&&((i===0&&j===2)||(i===2&&j===0))));const j=opts[Math.floor(Math.random()*opts.length)];if(j==null)continue;
+    for(let k=0;k<4;k++){if(G.hb[i][k]>G.hb[j][k]){G.hb[j][k]=G.hb[i][k];G.seen[j][k]=G.round}}msgs.push(`P${i+1}→P${j+1}`)}
+  $('#gTxt').textContent=`Round ${G.round}: ${msgs.join(', ')}. Counters stale for 4+ rounds are marked red.${G.cut&&G.dead<0?' P1 and P3 can\'t talk directly, but their counters still reach each other via P2 and P4.':''}`;gDraw()});
+$('#gLink').addEventListener('click',()=>{G.cut=true;$('#gTxt').textContent='The P1–P3 link is down. Keep gossiping: neither will suspect the other.'});
+$('#gKill').addEventListener('click',()=>{G.dead=2;gDraw();$('#gTxt').textContent='P3 crashed and stops incrementing. After enough rounds every view marks it red.'});
+$('#gReset').addEventListener('click',gReset);gReset();
+
+/* ---- bully ---- */
+let bInit=3;$('#bInit').innerHTML=[1,2,3,4,5].map(n=>`<button data-bi="${n}" aria-pressed="${n===3}">${n}</button>`).join('');seg('[data-bi]',b=>{bInit=+b.dataset.bi;bDraw()});
+const BP=n=>{const a=-Math.PI/2+(n-1)*2*Math.PI/6;return[330+190*Math.cos(a),130+100*Math.sin(a)]};
+function bDraw(msgs,leaders){const s=$('#bSvg');s.innerHTML='';const part=$('#bPart').checked;if(part){s.appendChild(el('line',{x1:200,y1:20,x2:470,y2:250,stroke:'var(--bad)','stroke-width':3,'stroke-dasharray':'8 6'}));s.appendChild(el('text',{x:480,y:245,'font-size':11,fill:'var(--bad)'},'partition'))}
+  (msgs||[]).forEach(([a,b,c,lab])=>{const [x1,y1]=BP(a),[x2,y2]=BP(b);const dx=x2-x1,dy=y2-y1,L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;const ex=x2-ux*26,ey=y2-uy*26;s.appendChild(el('line',{x1:x1+ux*26,y1:y1+uy*26,x2:ex,y2:ey,stroke:c,'stroke-width':1.8}));s.appendChild(el('polygon',{points:`${ex},${ey} ${ex-ux*9-uy*4.5},${ey-uy*9+ux*4.5} ${ex-ux*9+uy*4.5},${ey-uy*9-ux*4.5}`,fill:c}))});
+  for(let n=1;n<=6;n++){const [x,y]=BP(n);const dead=n===6,lead=leaders&&leaders.includes(n),ini=n===bInit;s.appendChild(el('circle',{cx:x,cy:y,r:24,fill:dead?'var(--bad-soft)':lead?'var(--ok-soft)':'var(--surface)',stroke:dead?'var(--bad)':lead?'var(--ok)':ini?'var(--pencil)':'var(--blue)','stroke-width':lead||ini?3:2}));s.appendChild(el('text',{x,y:y+6,'text-anchor':'middle','font-size':16,'font-weight':700,fill:'var(--ink)'},n));if(dead)s.appendChild(el('text',{x,y:y+40,'text-anchor':'middle','font-size':10,fill:'var(--bad)'},'old leader, crashed'));if(lead)s.appendChild(el('text',{x,y:y-30,'text-anchor':'middle','font-size':10.5,'font-weight':700,fill:'var(--ok)'},'LEADER'))}}
+function reach(a,b){if(a===6||b===6)return false;if(!$('#bPart').checked)return true;const side=n=>n<=3?0:1;return side(a)===side(b)}
+$('#bRun').addEventListener('click',async()=>{const log=[];const leaders=[];const show=()=>{$('#bLog').innerHTML=log.map(x=>`<div>${esc(x)}</div>`).join('');$('#bLog').scrollTop=1e5};
+  async function elect(p){const hi=[];for(let q=p+1;q<=6;q++)hi.push(q);log.push(`${p}: Election → {${hi.join(', ')}}`);bDraw(hi.map(q=>[p,q,'var(--pencil)']),leaders);show();await sleep(800);
+    const alive=hi.filter(q=>reach(p,q));if(!alive.length){leaders.push(p);const lo=[];for(let q=1;q<p;q++)if(reach(p,q))lo.push(q);log.push(`${p}: no answer from higher ranks → I am leader, Elected → {${lo.join(', ')}}`);bDraw(lo.map(q=>[p,q,'var(--ok)']),leaders);show();await sleep(800);return}
+    log.push(`Alive from {${alive.join(', ')}} → ${p} hands over to ${Math.max(...alive)}`);bDraw(alive.map(q=>[q,p,'var(--blue)']),leaders);show();await sleep(800);await elect(Math.max(...alive))}
+  await elect(bInit);if($('#bPart').checked){const other=bInit<=3?4:1;log.push(`Meanwhile on the other side, ${other} also notices 6 is gone…`);show();await sleep(600);await elect(other)}
+  if(leaders.length>1)log.push(`SPLIT BRAIN: ${leaders.join(' and ')} both believe they lead.`);bDraw([],leaders);show()});
+$('#bPart').addEventListener('change',()=>bDraw());bDraw();
+cards('#varCards',[{t:'Unstable top node',c:'bad',d:'Bully always prefers the highest rank. If that node flaps, the cluster re-elects forever. Fix: factor host quality metrics into the ranking.'},{t:'Next-in-line failover',c:'d1',d:'Each leader publishes an ordered list of alternatives. On failure, contact the highest alternative directly; if it is alive it takes over without a full election.'},{t:'Candidate / ordinary',c:'d2',d:'Only a candidate subset can lead. An ordinary node that notices failure polls the candidates and announces the highest live one. A per-node delay δ (shorter for higher priority) breaks ties between simultaneous elections.'},{t:'Invitation algorithm',c:'d3',d:'Everyone starts as leader of a one-member group and invites others; groups merge, and the larger group\'s leader keeps the role so fewer nodes need notifying. Multiple leaders are allowed by design.'}]);
+
+/* ---- ring ---- */
+let RD;function rReset(){RD=new Set([6]);rDraw();$('#rTxt').textContent='Leader 6 has crashed. Node 3 starts the election.'}
+const RP=n=>{const a=-Math.PI/2+(n-1)*2*Math.PI/6;return[180+110*Math.cos(a),150+110*Math.sin(a)]};
+function rDraw(at,set,leader){const s=$('#rSvg');s.innerHTML='';s.appendChild(el('circle',{cx:180,cy:150,r:110,fill:'none',stroke:'var(--line)','stroke-width':2}));
+  for(let n=1;n<=6;n++){const [x,y]=RP(n);const d=RD.has(n);s.appendChild(el('circle',{cx:x,cy:y,r:22,fill:d?'var(--bad-soft)':n===leader?'var(--ok-soft)':n===at?'var(--pencil-soft)':'var(--surface)',stroke:d?'var(--bad)':n===leader?'var(--ok)':n===at?'var(--pencil)':'var(--blue)','stroke-width':2}));s.appendChild(el('text',{x,y:y+6,'text-anchor':'middle','font-size':15,'font-weight':700,fill:'var(--ink)'},n))}
+  if(set)s.appendChild(el('text',{x:180,y:155,'text-anchor':'middle','font-size':12,fill:'var(--ink)',class:'t-mono'},'{'+set.join(',')+'}'))}
+$('#rRun').addEventListener('click',async()=>{const set=[];let n=3;let hops=0;do{if(!RD.has(n)){set.push(n);rDraw(n,set);$('#rTxt').textContent=`At ${n}: live set {${set.join(', ')}}. ${RD.has(n%6+1)?`Successor ${n%6+1} is down, skip it.`:''}`;await sleep(650)}n=n%6+1;hops++}while(n!==3&&hops<7);
+  const L=Math.max(...set);rDraw(3,set,L);$('#rTxt').textContent=`Back at 3 with {${set.join(', ')}}. Highest rank: ${L}. A second lap tells everyone that ${L} is the leader.`});
+$('#rKill').addEventListener('click',()=>{const live=[1,2,4,5].filter(n=>!RD.has(n));if(live.length)RD.add(live[Math.floor(Math.random()*live.length)]);rDraw();$('#rTxt').textContent='Down: '+[...RD].join(', ')+'.'});
+$('#rReset').addEventListener('click',rReset);rReset();
+
+quiz('#qQuiz','#qScore',[
+ {q:'Shortening a fixed timeout mainly improves…',o:['accuracy','detection speed, at the cost of more false positives','both equally'],a:1,why:'Efficiency and accuracy pull in opposite directions.'},
+ {q:'What does SWIM do when a direct ping fails?',o:['Declares the node dead','Asks random members to probe it indirectly','Starts a leader election'],a:1,why:'Outsourced heartbeats distinguish a bad link from a dead node.'},
+ {q:'A φ-accrual detector on a noisy network will…',o:['suspect faster','wait longer before suspecting','stop working'],a:1,why:'A wider observed distribution means a long gap is less surprising, so φ rises more slowly.'},
+ {q:'Under the bully algorithm, which node wins?',o:['The one that noticed the failure','The highest-ranked reachable node','A random node'],a:1,why:'Higher ranks "bully" lower ones into accepting them.'},
+ {q:'What is required to rule out split brain?',o:['Faster failure detectors','A cluster-wide majority','A ring topology'],a:1,why:'Two disjoint majorities cannot exist, so two leaders can\'t both be elected.'}]);
+
+})();
+</script>
+</body>
+</html>

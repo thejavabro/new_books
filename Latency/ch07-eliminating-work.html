@@ -1,0 +1,537 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Eliminating Work</title>
+<meta name="description" content="The quickest code is code that does not run. This chapter hunts the hidden work: bad algorithms, serialization, allocation, page faults, context switches.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Latency companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:560px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+button.tag.themebtn{cursor:pointer}
+button.tag.themebtn:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-family:var(--mono);font-size:.82rem;line-height:1.5;overflow-x:auto;white-space:pre}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.svgbox svg text{font-family:var(--body)}
+.mtx{font-family:var(--mono)}
+.stat span.big{font-size:clamp(1.5rem,5vw,2.2rem);color:var(--ink)}
+.stat span.big.blue{color:var(--blue)} .stat span.big.pencil{color:var(--pencil)} .stat span.big.okc{color:var(--ok)} .stat span.big.badc{color:var(--bad)}
+
+/* page */
+
+.bytes{display:flex;flex-wrap:wrap;gap:4px}
+.bytes span{font-family:var(--mono);font-size:.85rem;padding:4px 7px;border-radius:5px;border:1px solid var(--line);background:var(--paper)}
+.bytes span.a{border-color:var(--blue);background:var(--blue-soft)}
+.bytes span.b{border-color:var(--pencil);background:var(--pencil-soft)}
+.heap{display:flex;height:42px;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--paper)}
+.heap i{display:block;height:100%;border-right:1px solid var(--surface);transition:background .25s}
+.heap i.u{background:var(--blue)} .heap i.f{background:var(--ok-soft)} .heap i.scan{background:var(--mid)}
+.flame{display:flex;flex-direction:column-reverse;gap:2px}
+.flame div{display:flex;gap:2px}
+.flame button{border:0;border-radius:3px;padding:3px 6px;font-family:var(--mono);font-size:.72rem;text-align:left;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:#3b1d00;min-width:0}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Latency · visual companion</a><span class="tag">Part 3 · Chapter 7 of 11</span><button class="tag themebtn" type="button" aria-label="Switch colour theme">Theme</button></div>
+  <h1>Eliminating Work</h1>
+  <p class="lede">The quickest code is code that does not run. This chapter hunts the hidden work: bad algorithms, serialization, allocation, page faults, context switches.</p>
+  <nav class="toc" aria-label="Sections"><a href="#ways">Ways</a><a href="#bigo">Complexity</a><a href="#serde">Serialization</a><a href="#alloc">Allocation</a><a href="#gc">Garbage collection</a><a href="#vm">Virtual memory</a><a href="#os">OS overhead</a><a href="#pre">Precomputation</a><a href="#lab">Criterion</a><a href="#quiz">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="ways" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>The fastest code is code that does not run</h2></div>
+  <p>Part 2 organised <i>data</i> for low latency. Part 3 turns to <i>computation</i>, starting with the oldest trick: don't do the work. The hard part is that much of the work is invisible: hidden in your algorithms, in serialization, in the allocator, in the garbage collector, in virtual memory and in the operating system. Profilers find it; knowing where to look helps you avoid writing it in the first place.</p>
+  <div class="cardgrid" id="wayCards"></div>
+</section>
+
+<section id="bigo" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Algorithmic complexity</h2></div>
+  <p>Big O describes how the number of steps grows with input size <i>n</i>, ignoring constants. For latency it predicts how response time grows as data grows. Slide <i>n</i> and assume one step costs 1 ns.</p>
+  <div class="sheet">
+    <label class="rng"><span>Input size n: <b id="nV"></b></span><input type="range" id="nR" min="0" max="100" value="40"></label>
+    <div class="bars" id="boBars"></div>
+    <p class="small">Bars use a log scale. A worse class can still win for small, known <i>n</i>, because constants matter there.</p>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>Pick a data structure for the hot path</h3><div class="seg" role="group" aria-label="Case"><button data-cx="avg" aria-pressed="true">Average</button><button data-cx="worst" aria-pressed="false">Worst</button></div></div>
+    <div class="tbl"><table class="t" id="dsT"></table></div>
+    <p class="small">Hash tables are O(1) on average but O(n) if keys collide, and their memory footprint can thrash caches. Binary search trees keep order, which you need for range queries.</p>
+  </div>
+</section>
+
+<section id="serde" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Serialization: transforming, copying, repeating</h2></div>
+  <p>Every hop can mean serialize, send, deserialize, and maybe re-serialize for the database. That is CPU time and memory copies. Here is a tiny order, <code>{ orderId: u32, quantity: f32 }</code>, as it sits in memory and as it travels.</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Endianness"><button data-en="le" aria-pressed="true">Little-endian (x86, ARM)</button><button data-en="be" aria-pressed="false">Big-endian ("network order")</button></div></div>
+    <div class="stack"><span class="small">In memory, 8 bytes: <b class="blue">orderId = 1001</b>, <b class="pencil">quantity = 12.34</b></span><div class="bytes" id="memB"></div></div>
+    <div class="seg" role="group" aria-label="Format"><button data-fm="json" aria-pressed="true">JSON</button><button data-fm="pb" aria-pressed="false">Protocol Buffers</button><button data-fm="fb" aria-pressed="false">FlatBuffers-style</button></div>
+    <div class="stack"><span class="small" id="wireCap"></span><div class="bytes" id="wireB"></div></div>
+    <div class="bars" id="fmBars"></div>
+    <p id="fmTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="alloc" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Dynamic memory allocation is not deterministic</h2></div>
+  <p>A heap allocator carves blocks from a big region and tracks free blocks, in the simplest design a linked <b>free list</b> it must walk to find a fit. As blocks are freed in random order, the heap fragments: many small holes, longer walks, and sometimes no hole big enough. Freeing can be slow too, when the allocator coalesces neighbours. Multithreaded heaps add locking. Some languages also allocate behind your back (autoboxing in Java and C#).</p>
+  <div class="sheet">
+    <div class="heap" id="heap" aria-label="Heap blocks"></div>
+    <div class="row"><button class="btn primary" id="aOne">malloc(random size)</button><button class="btn" id="aFree">free(random)</button><button class="btn" id="aChurn">Churn ×40</button><button class="btn" id="aReset">Reset</button></div>
+    <div class="three"><div class="stat"><span class="big blue" id="aSteps">0</span><span>free-list nodes scanned, last malloc</span></div><div class="stat"><span class="big pencil" id="aHoles">1</span><span>free blocks (fragments)</span></div><div class="stat"><span class="big badc" id="aFail">0</span><span>failed allocations</span></div></div>
+    <p class="small"><b class="blue">■</b> used &nbsp; <b class="okc">■</b> free &nbsp; <b class="midc">■</b> scanned by the last malloc (first-fit)</p>
+  </div>
+</section>
+
+<section id="gc" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Garbage collection: safe, but when?</h2></div>
+  <p>GC removes leaks, dangling pointers and double frees, but the runtime decides when to collect, and a collection can take milliseconds to seconds. Generational collectors allocate young objects with a <b>bump pointer</b> (no free list: just move a pointer forward) and collect the young region when it fills, copying survivors out. Allocation rate therefore sets how often you pause.</p>
+  <div class="sheet">
+    <div class="two">
+      <label class="rng"><span>Allocation in the hot path: <b id="gcV"></b></span><input type="range" id="gcR" min="1" max="100" value="40"></label>
+      <label class="small row"><input type="checkbox" id="gcPool"> reuse objects from a pool</label>
+    </div>
+    <div class="svgbox"><svg id="gcSvg" viewBox="0 0 640 160" role="img" aria-label="Latency over time with GC pauses"></svg></div>
+    <p class="small" id="gcTxt"></p>
+  </div>
+  <p class="small">Mitigations: incremental, concurrent or pauseless collectors; tuning heap size, generation ratios and thresholds; and, above all, not allocating in latency-sensitive paths.</p>
+</section>
+
+<section id="vm" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Virtual memory, demand paging and the TLB</h2></div>
+  <p>Your program sees a contiguous <b>virtual</b> address space (text, data, BSS, heap growing up, memory-mapped region, stack growing down). The CPU translates virtual pages (usually 4 KiB) to physical ones through the <b>page table</b>, caching recent translations in the <b>TLB</b>. The OS maps physical pages lazily: the first touch of a page triggers a <b>page fault</b>; under memory pressure pages are swapped to disk and fault back in later. Touch some pages.</p>
+  <div class="sheet">
+    <div class="row"><label class="small row"><input type="checkbox" id="vmLock"> pre-fault and lock memory (mlock)</label><label class="small row"><input type="checkbox" id="vmHuge"> large pages (2 MiB)</label><button class="btn" id="vmPress">Memory pressure: swap some out</button></div>
+    <div class="row" id="vmBtns"></div>
+    <div class="svgbox"><svg id="vmSvg" viewBox="0 0 640 170" role="img" aria-label="Virtual pages, TLB and physical memory"></svg></div>
+    <p class="log" id="vmLog" aria-live="polite"></p>
+  </div>
+  <p>Large pages cover more memory per TLB entry, easing TLB pressure, but every fault moves more data. Beyond paging, physical placement still matters: fit hot data in caches, walk big datasets in cache-sized batches, and on NUMA bind memory near the cores that use it (for example with <code>mbind</code>, discovering topology with hwloc).</p>
+</section>
+
+<section id="os" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Operating system overhead</h2></div>
+  <p>The OS time-slices threads onto cores. If you have more runnable threads than cores, a ready thread waits: <b>scheduling delay</b>. Each switch saves and restores state, costs microseconds and evicts your data from caches; system calls pay a similar privilege-switch cost. Add background daemons, kernel threads and interrupts landing on your cores.</p>
+  <div class="sheet">
+    <label class="rng"><span>Busy application threads on 4 cores: <b id="thV"></b></span><input type="range" id="thR" min="1" max="32" value="8"></label>
+    <div class="svgbox"><svg id="thSvg" viewBox="0 0 640 170" role="img" aria-label="Threads time-sliced on cores"></svg></div>
+    <p class="small" id="thTxt"></p>
+  </div>
+  <div class="cardgrid" id="osCards"></div>
+</section>
+
+<section id="pre" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Precomputation: do it before anyone asks</h2></div>
+  <p>Move expensive work off the request path: compute at build time, at start-up, or periodically, and serve a lookup. The book's example is a storage usage page: usage, quota (depends on plan and discounts) and a forecast of when you will run out can take seconds to compute, but can be refreshed in the background often enough that nobody notices. Incremental precomputation updates the result as data changes; materialized views are the database version.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Mode"><button data-pc="req" aria-pressed="true">Compute on request</button><button data-pc="pre" aria-pressed="false">Precompute every 60 s</button><button data-pc="inc" aria-pressed="false">Incremental</button></div>
+    <div class="three"><div class="stat"><span class="big blue" id="pcL">-</span><span>user-facing latency</span></div><div class="stat"><span class="big pencil" id="pcS">-</span><span>worst-case staleness</span></div><div class="stat"><span class="big okc" id="pcW">-</span><span>background work</span></div></div>
+  </div>
+</section>
+
+<section id="lab" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Putting it together: benchmark, profile, eliminate</h2></div>
+  <p>The chapter ends by measuring instead of guessing. A Rust microbenchmark (the Criterion library) times three ways to compute the 10th Fibonacci number, and a flame graph shows where the time goes.</p>
+  <div class="sheet">
+    <div class="bars" id="fibBars"></div>
+    <p class="small">The book's measurements: plain recursion is exponential, O(2ⁿ). Memoization makes it O(n) and 3.5× faster. The flame graph then showed the memoized version spending much of its time in <code>calloc</code> and <code>free</code> for the per-call cache. An iterative loop, still O(n) but with no allocation and no recursion, is about 30× faster than the original.</p>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>A flame graph, redrawn</h3><span class="small">width = share of samples · tap a frame</span></div>
+    <div class="flame" id="flame"></div>
+    <p class="small" id="flTxt" aria-live="polite">Look for the widest frames near the top: that is where time is spent.</p>
+  </div>
+  <pre class="code"><span class="k">fn</span> fib_iter(n: u64) -> u64 {          <span class="c">// no heap, no recursion</span>
+    <span class="k">let</span> (<span class="k">mut</span> a, <span class="k">mut</span> b) = (0, 1);
+    <span class="k">for</span> _ <span class="k">in</span> 0..n { (a, b) = (b, a + b); }
+    a
+}</pre>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">10</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">11</span><h2>Recap</h2></div>
+  <div class="recap">
+    <div><b>Complexity</b><span>Swap O(n) and worse for O(1) or O(log n) where n can grow.</span></div>
+    <div><b>Serialization</b><span>JSON is costly; binary is cheaper; zero-copy formats skip the work.</span></div>
+    <div><b>Allocation and GC</b><span>Allocate outside hot paths, pool objects, tune collectors.</span></div>
+    <div><b>Virtual memory</b><span>Page faults and TLB misses are hidden latency. Pre-fault, lock, use large pages.</span></div>
+    <div><b>OS</b><span>Few threads, pinned; isolate background work and interrupts; consider polling.</span></div>
+    <div><b>Precompute and measure</b><span>Move work off the request path; benchmark and profile to find the rest.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Latency: Reduce delay in software systems</i> by Pekka Enberg (Manning, 2026). Explanations, examples, code snippets and drawings are original summaries, not text or figures from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch06-caching.html"><span>Previous · Chapter 6</span><b>Caching</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch08-wait-free-sync.html"><span>Next · Chapter 8</span><b>Wait-Free Synchronization</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page (Latency companion). */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){if(!group)return;group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('lat:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('lat:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: cycles auto -> light -> dark; remembered per viewer when storage works */
+(function(){const r=document.documentElement;const t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+ const b=document.querySelector('.themebtn');if(!b)return;
+ const lab=()=>{const v=r.getAttribute('data-theme');b.textContent=v==='dark'?'Dark':v==='light'?'Light':'Auto theme'};lab();
+ b.addEventListener('click',()=>{const v=r.getAttribute('data-theme');const n=v==null?'light':v==='light'?'dark':null;
+  if(n)r.setAttribute('data-theme',n);else r.removeAttribute('data-theme');store.set('theme',n);lab()})})();
+
+
+cards('#wayCards',[
+ {t:'Application logic',c:'d1',d:'Where you have most control and usually the biggest wins: algorithms, data structures, serialization.'},
+ {t:'Memory management',c:'d2',d:'Allocation, garbage collection, virtual memory and memory topology. Pervasive and easy to overlook.'},
+ {t:'Operating system',c:'d3',d:'Scheduling, context switches, background tasks, interrupts and the network stack.'},
+ {t:'Precomputation',c:'d4',d:'Do expensive work before it is needed and turn it into a lookup.'}]);
+
+/* big O */
+(function(){const F=[['O(1)',n=>1,'ok'],['O(log n)',n=>Math.max(1,Math.log2(n)),'ok'],['O(n)',n=>n,'blue'],['O(n log n)',n=>n*Math.max(1,Math.log2(n)),'mid'],['O(n²)',n=>n*n,'pencil'],['O(2ⁿ)',n=>Math.pow(2,Math.min(n,1000)),'bad']];
+ function t(ns){if(!isFinite(ns)||ns>3.15e16*1e3)return 'longer than the universe';if(ns<1e3)return Math.round(ns)+' ns';if(ns<1e6)return +(ns/1e3).toPrecision(3)+' µs';if(ns<1e9)return +(ns/1e6).toPrecision(3)+' ms';if(ns<6e10)return +(ns/1e9).toPrecision(3)+' s';if(ns<8.64e13)return +(ns/3.6e12).toPrecision(3)+' h';if(ns<3.15e16)return +(ns/8.64e13).toPrecision(3)+' days';return +(ns/3.15e16).toPrecision(2)+' years'}
+ function upd(){const n=Math.round(Math.pow(10,+$('#nR').value/100*6));$('#nV').textContent=n.toLocaleString();
+  bars('#boBars',F.map(([l,f,c])=>{const v=f(n);return {l,v:Math.min(18,Math.log10(Math.max(1,v))),c,txt:t(v)}}),18)}
+ $('#nR').addEventListener('input',upd);upd();
+ const DS=[['Array','n','n','n','n','n','n'],['Stack / queue','1','1','n','1','1','n'],['Linked list','n','n','n','n','n','n'],['Hash table','1','1','1','n','n','n'],['Binary search tree','log n','log n','log n','n','n','n']];
+ function tbl(w){const o=w==='avg'?0:3;$('#dsT').innerHTML='<tr><th>Structure</th><th>Insert</th><th>Delete</th><th>Search</th></tr>'+DS.map(r=>`<tr><td>${r[0]}</td>${[1,2,3].map(i=>{const v=r[i+o];const c=v==='1'?'okc':v==='log n'?'blue':'badc';return `<td class="mono ${c}">O(${v})</td>`}).join('')}</tr>`).join('')}
+ seg('[data-cx]',b=>tbl(b.dataset.cx));tbl('avg')})();
+
+/* serialization */
+(function(){let en='le',fm='json';function bytes(){const b=new ArrayBuffer(8),d=new DataView(b);d.setUint32(0,1001,en==='le');d.setFloat32(4,12.34,en==='le');return [...new Uint8Array(b)]}
+ const hx=x=>x.toString(16).padStart(2,'0');
+ function draw(){const m=bytes();$('#memB').innerHTML=m.map((x,i)=>`<span class="${i<4?'a':'b'}">${hx(x)}</span>`).join('');
+  let wire,cap,txt,cost;if(fm==='json'){const s='{"orderId":1001,"quantity":12.34}';wire=[...s].map(c=>`<span>${c==='"'?'"':c}</span>`).join('');cap=`${s.length} bytes of text`;cost=[s.length,9,'Human-readable and maps straight to JavaScript objects, but four times bigger than the data, and turning floats into decimal text and back costs real CPU.']}
+  else if(fm==='pb'){const p=[0x08,0xe9,0x07,0x15,...bytes().slice(4)];const le=new DataView(new ArrayBuffer(4));le.setFloat32(0,12.34,true);const fb=[...new Uint8Array(le.buffer)];const pb=[0x08,0xe9,0x07,0x15,...fb];wire=pb.map((x,i)=>`<span class="${i<3?'a':i>3?'b':''}">${hx(x)}</span>`).join('');cap=`${pb.length} bytes: field tags plus a variable-length integer`;cost=[pb.length,4,'Binary and compact (1001 shrinks to two bytes as a varint), cheaper to encode than JSON, but still a transform on each side.']}
+  else{const le=new ArrayBuffer(8),d=new DataView(le);d.setUint32(0,1001,true);d.setFloat32(4,12.34,true);const w=[...new Uint8Array(le)];wire=w.map((x,i)=>`<span class="${i<4?'a':'b'}">${hx(x)}</span>`).join('')+'<span>+ small header/offsets</span>';cap='the in-memory little-endian bytes themselves';cost=[16,en==='le'?0.3:2,en==='le'?'No transformation: the receiver reads fields straight out of the buffer. Messages are a bit larger than protobuf because fields keep their full width.':'On a big-endian machine every field must be byte-swapped before use, which costs some CPU.']}
+  $('#wireB').innerHTML=wire;$('#wireCap').textContent='On the wire: '+cap;
+  bars('#fmBars',[{l:'Size on the wire',v:cost[0],c:'blue',txt:cost[0]+' B'},{l:'Relative CPU to encode + decode',v:cost[1],c:'pencil',txt:cost[1]<1?'≈ none':'×'+cost[1]}],34);$('#fmTxt').textContent=cost[2]}
+ seg('[data-en]',b=>{en=b.dataset.en;draw()});seg('[data-fm]',b=>{fm=b.dataset.fm;draw()});draw()})();
+
+/* allocator */
+(function(){const SIZE=128;let blocks,steps=0,fails=0;const id=()=>Math.random().toString(36).slice(2,7);
+ function reset(){blocks=[{s:SIZE,u:false}];steps=0;fails=0;render([])}
+ function render(scan){$('#heap').innerHTML=blocks.map((b,i)=>`<i class="${b.u?'u':scan.includes(i)?'scan':'f'}" style="width:${b.s/SIZE*100}%" title="${b.s} units ${b.u?'used':'free'}"></i>`).join('');
+  $('#aSteps').textContent=steps;$('#aHoles').textContent=blocks.filter(b=>!b.u).length;$('#aFail').textContent=fails}
+ function malloc(n){steps=0;const scan=[];for(let i=0;i<blocks.length;i++){if(blocks[i].u)continue;steps++;scan.push(i);if(blocks[i].s>=n){const b=blocks[i];if(b.s>n)blocks.splice(i+1,0,{s:b.s-n,u:false});b.s=n;b.u=true;return scan}}fails++;return scan}
+ function free(){const us=blocks.map((b,i)=>b.u?i:-1).filter(i=>i>=0);if(!us.length)return;const i=us[Math.floor(Math.random()*us.length)];blocks[i].u=false;
+  /* coalesce occasionally, like a lazy allocator */ if(Math.random()<.3){for(let k=blocks.length-1;k>0;k--){if(!blocks[k].u&&!blocks[k-1].u){blocks[k-1].s+=blocks[k].s;blocks.splice(k,1)}}}}
+ const sz=()=>[1,2,3,4,6,8][Math.floor(Math.random()*6)];
+ $('#aOne').addEventListener('click',()=>render(malloc(sz())));$('#aFree').addEventListener('click',()=>{free();render([])});
+ $('#aChurn').addEventListener('click',()=>{let sc=[];for(let k=0;k<40;k++){if(Math.random()<.55)sc=malloc(sz());else free()}render(sc)});$('#aReset').addEventListener('click',reset);reset()})();
+
+/* GC */
+(function(){const s=$('#gcSvg');function draw(){const r=+$('#gcR').value,pool=$('#gcPool').checked;const eff=pool?r*0.15:r;$('#gcV').textContent=eff<5?'very low':eff<30?'moderate':eff<70?'high':'extreme';
+ s.innerHTML='';s.appendChild(el('line',{x1:40,x2:630,y1:140,y2:140,stroke:'var(--muted)'}));s.appendChild(el('text',{x:335,y:156,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},'time →'));
+ const every=Math.max(6,600/eff);let pauses=0;const pts=[];for(let x=0;x<=590;x+=2){let y=125-Math.random()*6;const ph=x%every;if(x>0&&ph<4){y=30;}pts.push([40+x,y])}
+ for(let x=every;x<590;x+=every)pauses++;
+ s.appendChild(el('path',{d:pts.map((p,i)=>(i?'L':'M')+p[0]+','+p[1].toFixed(1)).join(''),stroke:'var(--blue)','stroke-width':1.6,fill:'none'}));
+ s.appendChild(el('text',{x:44,y:22,'font-size':11,fill:'var(--bad)'},'spikes = young-generation collections'));
+ $('#gcTxt').textContent=`${pauses} collection pauses in this window. `+(pool?'Pooling recycles objects, so the young region fills far more slowly.':'Each one stops (or slows) the application while live objects are found and copied.')}
+ $('#gcR').addEventListener('input',draw);$('#gcPool').addEventListener('change',draw);draw()})();
+
+/* virtual memory */
+(function(){const N=8;let st,tlb,log='';function reset(){st=Array(N).fill('none');tlb=[];draw('Pages are reserved but not backed by physical memory yet.')}
+ function access(p){const lock=$('#vmLock').checked,huge=$('#vmHuge').checked;const key=huge?Math.floor(p/4):p;let cost,msg;
+  if(lock&&st[p]==='none'){for(let i=0;i<N;i++)st[i]='res'}
+  if(st[p]==='none'){st[p]='res';cost=huge?'~100 µs':'~2 µs';msg=`page fault: first touch, OS allocates a ${huge?'2 MiB':'4 KiB'} page`}
+  else if(st[p]==='swap'){st[p]='res';cost='~100 µs+';msg='major fault: page was swapped out, read back from disk'}
+  else if(tlb.includes(key)){cost='~1 ns';msg='TLB hit: translation cached'}
+  else{cost='~10s of ns';msg='TLB miss: walk the page table'}
+  tlb=tlb.filter(k=>k!==key);tlb.unshift(key);tlb=tlb.slice(0,huge?2:3);draw(`touch page ${p}: ${msg} (${cost})`,p)}
+ function draw(msg,hi){const s=$('#vmSvg');s.innerHTML='';const huge=$('#vmHuge').checked;
+  s.appendChild(el('text',{x:20,y:20,'font-size':11,fill:'var(--muted)'},'virtual pages'));s.appendChild(el('text',{x:20,y:150,'font-size':11,fill:'var(--muted)'},'TLB (cached translations): '+(tlb.length?tlb.map(k=>huge?'2 MiB #'+k:'page '+k).join(', '):'empty')));
+  for(let i=0;i<N;i++){const x=20+i*76;const c=st[i]==='res'?'var(--ok)':st[i]==='swap'?'var(--mid)':'var(--line)';s.appendChild(el('rect',{x,y:30,width:66,height:44,rx:6,fill:st[i]==='res'?'var(--ok-soft)':st[i]==='swap'?'var(--mid-soft)':'var(--paper)',stroke:i===hi?'var(--pencil)':c,'stroke-width':i===hi?3:1.5}));
+   s.appendChild(el('text',{x:x+33,y:50,'text-anchor':'middle','font-size':11.5,fill:'var(--ink)'},'page '+i));s.appendChild(el('text',{x:x+33,y:66,'text-anchor':'middle','font-size':10,fill:'var(--muted)'},st[i]==='res'?'in RAM':st[i]==='swap'?'on disk':'unmapped'))}
+  if(huge){s.appendChild(el('rect',{x:16,y:26,width:302,height:52,rx:8,fill:'none',stroke:'var(--blue)','stroke-dasharray':'5 4'}));s.appendChild(el('rect',{x:320,y:26,width:302,height:52,rx:8,fill:'none',stroke:'var(--blue)','stroke-dasharray':'5 4'}));s.appendChild(el('text',{x:320,y:100,'text-anchor':'middle','font-size':11,fill:'var(--blue)'},'each dashed box = one large page, one TLB entry'))}
+  $('#vmLog').textContent=msg}
+ $('#vmBtns').innerHTML=Array.from({length:N},(_,i)=>`<button class="btn" data-pg="${i}">touch ${i}</button>`).join('');
+ $$('[data-pg]').forEach(b=>b.addEventListener('click',()=>access(+b.dataset.pg)));
+ $('#vmPress').addEventListener('click',()=>{if($('#vmLock').checked){draw('Locked pages cannot be swapped out: memory pressure does not touch them.');return}st=st.map(x=>x==='res'&&Math.random()<.5?'swap':x);tlb=[];draw('Memory pressure: the OS swapped some pages to disk.')});
+ $('#vmLock').addEventListener('change',()=>{if($('#vmLock').checked){st=st.map(()=> 'res');draw('All pages pre-faulted and locked: no page faults on the hot path.')}else draw('Unlocked.')});$('#vmHuge').addEventListener('change',()=>{tlb=[];draw($('#vmHuge').checked?'Large pages: fewer, bigger translations.':'Back to 4 KiB pages.')});reset()})();
+
+/* OS threads */
+(function(){const s=$('#thSvg');function draw(){const t=+$('#thR').value;$('#thV').textContent=t;s.innerHTML='';const cols=['d1','d2','d3','d4','d5'];
+ for(let c=0;c<4;c++){s.appendChild(el('text',{x:8,y:30+c*34,'font-size':11,fill:'var(--muted)'},'core '+c));let x=60;let k=c;while(x<630){const w=t<=4?570:Math.max(12,40);const th=t<=4?c:(k%t);s.appendChild(el('rect',{x,y:16+c*34,width:Math.min(w,630-x)-2,height:24,rx:3,fill:`var(--${cols[th%5]})`,opacity:t<=4&&c>=t?0.1:.85}));if(t>4){s.appendChild(el('rect',{x:x+w-4,y:16+c*34,width:3,height:24,fill:'var(--bad)'}))}x+=w;k+=4}}
+ const wait=t<=4?0:(t/4-1)*4;$('#thTxt').textContent=t<=4?'Every thread owns a core: no scheduling delay, no context switches. This is the thread-per-core shape.':`${t} runnable threads share 4 cores: a thread that becomes ready waits on average ~${wait.toFixed(0)} ms (with 4 ms slices) and every red tick is a context switch that also cools the caches.`}
+ $('#thR').addEventListener('input',draw);draw()})();
+cards('#osCards',[
+ {t:'Thread affinity',c:'d1',d:'Pin latency-critical threads to reserved cores (pthread_setaffinity_np) and raise their priority.'},
+ {t:'Thread-per-core',c:'d2',d:'At most one thread per core, pinned, with concurrency done in user space (coroutines, futures). Complex, but it sidesteps the scheduler.'},
+ {t:'Background tasks',c:'d3',d:'Daemons and kernel threads can land on your cores. Keep them off the reserved ones and leave headroom.'},
+ {t:'Interrupts vs polling',c:'d4',d:'Interrupts arrive whenever; their deferred work runs like a background task. Route them to other cores (interrupt affinity) or poll on your own schedule.'},
+ {t:'Network stack work',c:'d5',d:'Even after sendmsg returns, the kernel still transmits in the background, and receive processing handles all traffic. Dedicate cores, use flow steering, or bypass the kernel.'}]);
+
+/* precompute */
+(function(){const M={req:['3 s','none','only on request'],pre:['< 10 ms','≤ 60 s','full recompute every minute'],inc:['< 10 ms','seconds','one full compute, then small deltas']};
+ seg('[data-pc]',b=>{const m=M[b.dataset.pc];$('#pcL').textContent=m[0];$('#pcS').textContent=m[1];$('#pcW').textContent=m[2]});const m=M.req;$('#pcL').textContent=m[0];$('#pcS').textContent=m[1];$('#pcW').textContent=m[2]})();
+
+/* lab */
+bars('#fibBars',[{l:'Recursive O(2ⁿ)',v:157.7,c:'bad',txt:'157.7 ns'},{l:'Memoized O(n)',v:44.2,c:'mid',txt:'44.2 ns'},{l:'Iterative O(n)',v:5.07,c:'ok',txt:'5.07 ns'}],160);
+(function(){const R=[[['main',100,'d1']],[['criterion::bench_function',100,'d1']],[['warmup',38,'d3'],['measure',62,'d3']],[['fib_memoization',36,'d4'],['fib_memoization',60,'d4']],[['calloc',12,'d5'],['fib',16,'d2'],['free',7,'d5'],['calloc',20,'d5'],['fib',27,'d2'],['free',12,'d5']]];
+ const D={main:'The process entry point: 100% of samples sit on top of it, as expected.','criterion::bench_function':'The benchmark harness calling your code.',warmup:'Criterion warms caches and the OS before measuring; ignore this tower.',measure:'The measured runs: focus here.',fib_memoization:'Your function. Its children reveal where its time goes.',calloc:'Allocating the memo vector on every call: dynamic memory management dominates.',free:'And freeing it again. Remove the allocation and both disappear.',fib:'The actual recursion, each level a little narrower. Recursion has overhead of its own.'};
+ $('#flame').innerHTML=R.map(r=>`<div>${r.map(([n,w,c])=>`<button style="flex:${w} 1 0;background:var(--${c})" data-f="${n}" title="${n}">${n}</button>`).join('')}</div>`).join('');
+ $$('#flame button').forEach(b=>b.addEventListener('click',()=>{$('#flTxt').innerHTML=`<b>${b.dataset.f}</b>: ${D[b.dataset.f]}`}))})();
+
+quiz('#qQuiz','#qScore',[
+ {q:'You need range queries over keys on the hot path. Hash table or binary search tree?',o:['Hash table','Search tree'],a:1,why:'Trees keep order; hash tables do not.'},
+ {q:'Which format avoids (de)serialization work almost entirely on x86?',o:['JSON','Protocol Buffers','FlatBuffers'],a:2,why:'It ships the little-endian in-memory layout.'},
+ {q:'Why can malloc latency vary from call to call?',o:['Free-list walks and fragmentation','It is always constant'],a:0,why:'A fragmented heap means longer searches, and frees may coalesce.'},
+ {q:'A latency-critical service locks its memory with mlock. What does that avoid?',o:['Page faults and swapping on the hot path','TLB misses entirely'],a:0,why:'Pages are resident and cannot be evicted; TLB misses still happen.'},
+ {q:'The flame graph shows calloc and free under your function. Next step?',o:['Remove the allocation from the hot path','Add more threads'],a:0,why:'That is exactly what took Fibonacci from 44 ns to 5 ns.'}]);
+
+})();
+</script>
+</body>
+</html>

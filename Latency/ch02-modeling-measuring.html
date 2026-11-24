@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Modeling and Measuring Latency</title>
+<meta name="description" content="Two simple laws tell you what latency to expect. Then the hard truths: latency is a distribution, the tail finds your users, delays compound, and naive benchmarks lie.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Latency companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:560px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+button.tag.themebtn{cursor:pointer}
+button.tag.themebtn:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-family:var(--mono);font-size:.82rem;line-height:1.5;overflow-x:auto;white-space:pre}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.svgbox svg text{font-family:var(--body)}
+.mtx{font-family:var(--mono)}
+.stat span.big{font-size:clamp(1.5rem,5vw,2.2rem);color:var(--ink)}
+.stat span.big.blue{color:var(--blue)} .stat span.big.pencil{color:var(--pencil)} .stat span.big.okc{color:var(--ok)} .stat span.big.badc{color:var(--bad)}
+
+/* page */
+
+.eq{font-family:var(--mono);font-size:1.05rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 14px;display:inline-block}
+.qlane{display:flex;gap:4px;flex-wrap:wrap;min-height:30px;align-items:center}
+.qlane i{width:18px;height:18px;border-radius:4px;background:var(--pencil);display:inline-block}
+.qlane i.srv{background:var(--blue)}
+.comp{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.comp div{border:1px solid var(--line);border-radius:8px;padding:8px;text-align:center;font-family:var(--mono);font-size:.85rem;background:var(--paper);transition:background .3s,border-color .3s}
+.comp div.hot{border-color:var(--bad);background:var(--bad-soft);color:var(--bad)}
+.comp div.used{border-color:var(--blue);background:var(--blue-soft)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Latency · visual companion</a><span class="tag">Part 1 · Chapter 2 of 11</span><button class="tag themebtn" type="button" aria-label="Switch colour theme">Theme</button></div>
+  <h1>Modeling and Measuring Latency</h1>
+  <p class="lede">Two simple laws tell you what latency to expect. Then the hard truths: latency is a distribution, the tail finds your users, delays compound, and naive benchmarks lie.</p>
+  <nav class="toc" aria-label="Sections"><a href="#little">Little's law</a><a href="#amdahl">Amdahl's law</a><a href="#tail">Tail latency</a><a href="#sources">Sources</a><a href="#compound">Compounding</a><a href="#measure">Measuring</a><a href="#plots">Histogram vs eCDF</a><a href="#quiz">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="little" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Little's law: concurrency = throughput × latency</h2></div>
+  <p>Before measuring anything, ask what latency you can reasonably expect. Little's law, borrowed from queueing theory, links three averages:</p>
+  <p><span class="eq">C = T × L</span> &nbsp; so &nbsp; <span class="eq">L = C ÷ T</span></p>
+  <p>C is concurrency (requests in the system at once), T is throughput, L is average latency. A service doing 1,000 requests per second at 50 ms average latency has about 50 requests in flight. Turn it around: if you let 200 requests pile up and you can only process 1,000 per second, each waits about 200 ms on average. Halve the queue, or double throughput, and latency halves.</p>
+  <div class="sheet">
+    <div class="two">
+      <div class="stack">
+        <label class="rng"><span>Concurrency C (requests in flight): <b id="lcV"></b></span><input type="range" id="lc" min="1" max="400" value="200"></label>
+        <label class="rng"><span>Throughput T (requests per second): <b id="ltV"></b></span><input type="range" id="lt" min="100" max="4000" step="100" value="1000"></label>
+      </div>
+      <div class="stat"><span class="big blue" id="lL">-</span><span>average latency L = C ÷ T</span></div>
+    </div>
+    <div class="svgbox"><svg id="lSvg" viewBox="0 0 640 220" role="img" aria-label="Latency against concurrency for several throughputs"></svg></div>
+  </div>
+  <p>The same idea as a queue: work arrives at some rate, servers drain it. If arrivals outpace what the servers can complete, the queue, and with it latency, grows without bound.</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Servers"><button data-sv="1" aria-pressed="true">1 processor</button><button data-sv="2" aria-pressed="false">2 processors</button></div><span class="small">2 tasks arrive per step, each takes 1 step</span></div>
+    <div class="qlane" id="qLane" aria-live="polite"></div>
+    <div class="row"><button class="btn primary" id="qStep">Next time step</button><button class="btn" id="qReset">Reset</button><span class="small mono" id="qInfo"></span></div>
+  </div>
+  <div class="callout"><b class="h">Where it breaks</b><span>Little's law assumes latency does not depend on load. Real systems slow down as concurrency rises (context switches, lock contention, algorithmic effects), so treat the law as a sizing tool and always measure.</span></div>
+</section>
+
+<section id="amdahl" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Amdahl's law: the serial part wins</h2></div>
+  <p>Single cores stopped getting much faster, so we parallelize. Amdahl's law says how far that goes for a fixed-size job: if a fraction <b>P</b> can run in parallel on <b>N</b> units,</p>
+  <p><span class="eq">speedup = 1 ÷ ((1 − P) + P ÷ N)</span></p>
+  <p>The ceiling is 1 ÷ (1 − P), no matter how many cores. Half-parallel code never gets more than 2×.</p>
+  <div class="sheet">
+    <div class="two">
+      <div class="stack">
+        <label class="rng"><span>Parallel fraction P: <b id="apV"></b></span><input type="range" id="ap" min="0" max="99" value="30"></label>
+        <label class="rng"><span>Cores N: <b id="anV"></b></span><input type="range" id="an" min="0" max="10" value="3"></label>
+      </div>
+      <div class="three" style="grid-template-columns:1fr 1fr"><div class="stat"><span class="big blue" id="aS">-</span><span>speedup</span></div><div class="stat"><span class="big pencil" id="aMax">-</span><span>ceiling with infinite cores</span></div></div>
+    </div>
+    <div class="svgbox"><svg id="aSvg" viewBox="0 0 640 230" role="img" aria-label="Amdahl speedup curve"></svg></div>
+    <p class="small" id="aTxt"></p>
+  </div>
+  <div class="callout blue"><b class="h">The order endpoint</b><span>Parse and validate (5 ms), look up shipping and prices (15 ms), calculate and insert the order (30 ms). Only the lookups can fan out, so P = 15/50 = 0.3. Two cores give about 1.2×, eight about 1.35×, and the curve flattens near 1.4×. Set P to 30% above to see it.</span></div>
+</section>
+
+<section id="tail" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Latency is a distribution, and the tail finds you</h2></div>
+  <p>"The request takes 10 ms" is almost always an average, and the average hides the shape. Minimum and maximum mislead too. Look at <b>percentiles</b>: p95, p99, p99.9 are the <b>tail latency</b>. It is tempting to dismiss them as noise, but users hit them more often than intuition says, especially when one request fans out to many servers and must wait for the slowest.</p>
+  <p>Following Dean and Barroso's "The Tail at Scale": each sub-request is usually 10 ms but occasionally takes 1 s. If a user request fans out to N servers, the chance that <i>at least one</i> is slow is 1 − (1 − p)<sup>N</sup>.</p>
+  <div class="sheet">
+    <div class="two">
+      <div class="stack">
+        <label class="rng"><span>Fan-out count N: <b id="fnV"></b></span><input type="range" id="fn" min="1" max="2000" value="100"></label>
+        <div class="seg" role="group" aria-label="Probability"><button data-p="0.01" aria-pressed="true">1 in 100 slow</button><button data-p="0.001" aria-pressed="false">1 in 1,000</button><button data-p="0.0001" aria-pressed="false">1 in 10,000</button></div>
+      </div>
+      <div class="stat"><span class="big bad badc" id="fP">-</span><span>of user requests take over 1 s</span></div>
+    </div>
+    <div class="svgbox"><svg id="fSvg" viewBox="0 0 640 220" role="img" aria-label="Probability of a slow request against fan-out"></svg></div>
+  </div>
+</section>
+
+<section id="sources" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Where latency variance comes from</h2></div>
+  <p>Tail latency comes from variability, and variability hides at every layer. Tap a layer to open it.</p>
+  <div class="cardgrid" id="srcCards"></div>
+</section>
+
+<section id="compound" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Latency compounds</h2></div>
+  <p>A request's latency is built from parts: <b>propagation</b> (distance ÷ signal speed), <b>transmission</b> (packet length ÷ link rate), <b>processing</b> (actually doing the work) and <b>queuing</b> (waiting for a CPU, a lock, a database). How the parts combine depends on structure. Roll five components with random latencies and compare.</p>
+  <div class="sheet">
+    <div class="comp" id="comp"></div>
+    <div class="row"><button class="btn primary" id="cRoll">Roll again</button><span class="small">each component: usually 5 to 15 ms, sometimes 80 ms</span></div>
+    <div class="bars" id="cBars"></div>
+    <p class="small">Serial: sum of all. Parallel: the slowest one. Quorum (3 of 5, as in Raft or Paxos): the third fastest, which shrugs off one or two stragglers.</p>
+  </div>
+</section>
+
+<section id="measure" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Measuring without fooling yourself</h2></div>
+  <p>First decide what to measure from whose point of view: the user's, or another service calling your API. Then control the environment. The <b>observer effect</b> bites when the load generator shares a machine with the system under test. The sneakier trap is <b>coordinated omission</b>: a benchmark that sends a request, waits for the reply, then sends the next one slows down exactly when the server stalls, so it records one slow request where real users would have seen dozens.</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Benchmark"><button data-co="closed" aria-pressed="true">Wait for reply, then send</button><button data-co="open" aria-pressed="false">Send every 10 ms regardless</button></div><span class="small">server pauses 200 ms for GC at t = 300 ms</span></div>
+    <div class="svgbox"><svg id="coSvg" viewBox="0 0 640 200" role="img" aria-label="Requests over time during a pause"></svg></div>
+    <div class="three"><div class="stat"><span class="big blue" id="coN">-</span><span>requests recorded</span></div><div class="stat"><span class="big pencil" id="coSlow">-</span><span>recorded as slow (&gt; 20 ms)</span></div><div class="stat"><span class="big" id="coP99">-</span><span>measured p99</span></div></div>
+  </div>
+  <p class="small">Fixes: send at a fixed rate and collect replies asynchronously, or use a tool such as HdrHistogram that can correct for the expected interval.</p>
+</section>
+
+<section id="plots" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Plotting a latency distribution</h2></div>
+  <p>The book's hands-on part pings a host once a second (fixed intervals avoid coordinated omission), stores samples, and only writes the file at the end so disk I/O does not disturb the measurement. Then it plots three ways. Here is a simulated ping run.</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Plot"><button data-pl="hist" aria-pressed="true">Histogram</button><button data-pl="pct" aria-pressed="false">Percentile plot</button><button data-pl="ecdf" aria-pressed="false">eCDF</button></div><button class="btn" id="plNew">New sample</button></div>
+    <div class="svgbox"><svg id="plSvg" viewBox="0 0 640 260" role="img" aria-label="Latency distribution plot"></svg></div>
+    <p class="small" id="plTxt"></p>
+  </div>
+  <pre class="code"><span class="c"># the gist of a fixed-interval sampler (illustrative)</span>
+<span class="k">for</span> _ <span class="k">in</span> range(samples):
+    rtt = ping(host, timeout=1.0)
+    <span class="k">if</span> rtt <span class="k">is</span> None: warn(<span class="s">"timeout, outlier lost"</span>); <span class="k">continue</span>
+    values.append(rtt)
+    sleep(1.0 - rtt)          <span class="c"># keep a steady 1 s cadence</span>
+save_csv(values)              <span class="c"># write only after measuring</span></pre>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Recap</h2></div>
+  <div class="recap">
+    <div><b>Little's law</b><span>C = T × L. Bound the queue or raise throughput to cut average latency.</span></div>
+    <div><b>Amdahl's law</b><span>Speedup caps at 1 ÷ (1 − P). Parallelism has diminishing returns.</span></div>
+    <div><b>Distribution</b><span>Report percentiles, not averages. Fan-out multiplies tail exposure.</span></div>
+    <div><b>Sources</b><span>Physics, CPU caches and speculation, power saving, virtualization, OS, firmware, runtimes, your code.</span></div>
+    <div><b>Compounding</b><span>Serial adds, parallel waits for the slowest, quorum waits for the majority.</span></div>
+    <div><b>Measure honestly</b><span>Isolate the load generator, avoid coordinated omission, plot histograms or eCDFs.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Latency: Reduce delay in software systems</i> by Pekka Enberg (Manning, 2026). Explanations, examples, code snippets and drawings are original summaries, not text or figures from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch01-introduction.html"><span>Previous · Chapter 1</span><b>Introduction</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch03-colocation.html"><span>Next · Chapter 3</span><b>Colocation</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page (Latency companion). */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){if(!group)return;group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('lat:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('lat:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: cycles auto -> light -> dark; remembered per viewer when storage works */
+(function(){const r=document.documentElement;const t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+ const b=document.querySelector('.themebtn');if(!b)return;
+ const lab=()=>{const v=r.getAttribute('data-theme');b.textContent=v==='dark'?'Dark':v==='light'?'Light':'Auto theme'};lab();
+ b.addEventListener('click',()=>{const v=r.getAttribute('data-theme');const n=v==null?'light':v==='light'?'dark':null;
+  if(n)r.setAttribute('data-theme',n);else r.removeAttribute('data-theme');store.set('theme',n);lab()})})();
+
+
+function axes(s,W,H,m,xl,yl){s.appendChild(el('line',{x1:m,y1:H-30,x2:W-10,y2:H-30,stroke:'var(--muted)'}));s.appendChild(el('line',{x1:m,y1:10,x2:m,y2:H-30,stroke:'var(--muted)'}));
+ s.appendChild(el('text',{x:(W+m)/2,y:H-4,'text-anchor':'middle','font-size':12,fill:'var(--muted)'},xl));const t=el('text',{x:14,y:(H-30)/2,'text-anchor':'middle','font-size':12,fill:'var(--muted)',transform:`rotate(-90 14 ${(H-30)/2})`},yl);s.appendChild(t)}
+function path(pts){return pts.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+','+p[1].toFixed(1)).join('')}
+
+/* Little */
+(function(){const s=$('#lSvg');function upd(){const C=+$('#lc').value,T=+$('#lt').value;$('#lcV').textContent=C;$('#ltV').textContent=T.toLocaleString();$('#lL').textContent=Math.round(C/T*1000)+' ms';
+ s.innerHTML='';axes(s,640,220,50,'concurrency (requests in flight)','latency (ms)');const X=c=>50+c/400*570,Y=l=>190-l/400*175;
+ [[500,'d3'],[1000,'d1'],[2000,'d2']].forEach(([t,c])=>{const ce=Math.min(400,400*t/1000),le=ce/t*1000;s.appendChild(el('path',{d:path([[X(0),Y(0)],[X(ce),Y(le)]]),stroke:`var(--${c})`,'stroke-width':2,fill:'none'}));s.appendChild(el('text',{x:X(ce)-6,y:Y(le)+(t===2000?-8:14),'text-anchor':'end','font-size':11,fill:`var(--${c})`},t+' req/s'))});
+ [0,100,200,300,400].forEach(v=>{s.appendChild(el('text',{x:44,y:Y(v)+4,'text-anchor':'end','font-size':10,fill:'var(--muted)'},v));s.appendChild(el('text',{x:X(v),y:204,'text-anchor':'middle','font-size':10,fill:'var(--muted)'},v))});
+ const L=C/T*1000;if(L<=400){s.appendChild(el('circle',{cx:X(C),cy:Y(L),r:6,fill:'var(--pencil)'}))}}
+ ['lc','lt'].forEach(i=>$('#'+i).addEventListener('input',upd));upd()})();
+(function(){let sv=1,step=0,q=[],done=0;function render(){$('#qLane').innerHTML=q.map((x,i)=>`<i class="${i<sv?'srv':''}" title="task ${x}"></i>`).join('')||'<span class="small">queue empty</span>';$('#qInfo').textContent=`step ${step} · in system ${q.length} · done ${done}`}
+ function tick(){step++;done+=Math.min(sv,q.length);q=q.slice(sv);if(step<=6){q.push(step*2-1,step*2)}render()}
+ function reset(){step=0;q=[];done=0;render()}
+ seg('[data-sv]',b=>{sv=+b.dataset.sv;reset()});$('#qStep').addEventListener('click',tick);$('#qReset').addEventListener('click',reset);reset()})();
+
+/* Amdahl */
+(function(){const s=$('#aSvg');const Ns=[1,2,4,8,16,32,64,128,256,512,1024];function sp(P,N){return 1/((1-P)+P/N)}
+ function upd(){const P=+$('#ap').value/100,N=Ns[+$('#an').value];$('#apV').textContent=Math.round(P*100)+'%';$('#anV').textContent=N;$('#aS').textContent=sp(P,N).toFixed(2)+'×';$('#aMax').textContent=(1/(1-P)).toFixed(1)+'×';
+  s.innerHTML='';axes(s,640,230,50,'cores (log scale)','speedup');const mx=Math.max(2,1/(1-P)*1.1);const X=i=>50+i/10*570,Y=v=>200-(v-1)/(mx-1)*185;
+  Ns.forEach((n,i)=>s.appendChild(el('text',{x:X(i),y:214,'text-anchor':'middle','font-size':10,fill:'var(--muted)'},n)));
+  [0.5,0.95].forEach(pp=>{s.appendChild(el('path',{d:path(Ns.map((n,i)=>[X(i),Y(Math.min(mx,sp(pp,n)))])),stroke:'var(--line)','stroke-width':1.5,fill:'none','stroke-dasharray':'4 3'}))});
+  s.appendChild(el('path',{d:path(Ns.map((n,i)=>[X(i),Y(sp(P,n))])),stroke:'var(--blue)','stroke-width':2.5,fill:'none'}));
+  s.appendChild(el('line',{x1:50,x2:630,y1:Y(1/(1-P)),y2:Y(1/(1-P)),stroke:'var(--pencil)','stroke-dasharray':'5 4'}));
+  s.appendChild(el('circle',{cx:X(+$('#an').value),cy:Y(sp(P,N)),r:6,fill:'var(--pencil)'}));
+  [1,(1+mx)/2,mx].forEach(v=>s.appendChild(el('text',{x:44,y:Y(v)+4,'text-anchor':'end','font-size':10,fill:'var(--muted)'},v.toFixed(1)+'×')));s.appendChild(el('text',{x:56,y:22,'font-size':11,fill:'var(--muted)'},'dashed grey: P = 50% and 95% for comparison'));
+  $('#aTxt').textContent=`Doubling from ${N} to ${N*2} cores would add only ${((sp(P,N*2)/sp(P,N)-1)*100).toFixed(1)}% more speedup.`}
+ ['ap','an'].forEach(i=>$('#'+i).addEventListener('input',upd));upd()})();
+
+/* tail at scale */
+(function(){let p=0.01;const s=$('#fSvg');function upd(){const N=+$('#fn').value;$('#fnV').textContent=N;const f=1-Math.pow(1-p,N);$('#fP').textContent=(f*100).toFixed(f<0.1?1:0)+'%';
+ s.innerHTML='';axes(s,640,220,50,'fan-out count','P(request > 1 s)');const X=n=>50+n/2000*570,Y=v=>190-v*175;const pts=[];for(let n=1;n<=2000;n+=10)pts.push([X(n),Y(1-Math.pow(1-p,n))]);
+ s.appendChild(el('path',{d:path(pts),stroke:'var(--bad)','stroke-width':2.5,fill:'none'}));s.appendChild(el('circle',{cx:X(N),cy:Y(f),r:6,fill:'var(--pencil)'}));
+ [0,0.5,1].forEach(v=>s.appendChild(el('text',{x:44,y:Y(v)+4,'text-anchor':'end','font-size':10,fill:'var(--muted)'},v*100+'%')));[0,500,1000,1500,2000].forEach(v=>s.appendChild(el('text',{x:X(v),y:204,'text-anchor':'middle','font-size':10,fill:'var(--muted)'},v)))}
+ $('#fn').addEventListener('input',upd);seg('[data-p]',b=>{p=+b.dataset.p;upd()});upd()})();
+
+cards('#srcCards',[
+ {t:'Physics',c:'d1',d:'Distance between user, compute and database. A database parked in one US region is slow for everyone far from it.'},
+ {t:'CPU caches',c:'d2',d:'L1 is about 1 ns, the last-level cache 10 ns or more, DRAM about 100 ns. Whether your working set fits decides which you pay, request by request.'},
+ {t:'Speculation',c:'d2',d:'CPUs guess branches and run ahead. A wrong guess throws work away and can cost more than waiting would have.'},
+ {t:'Frequency scaling and SMT',c:'d2',d:'Power-saving clocks slow you down; turbo speeds you up briefly. Hyperthreads share execution units, so a sibling thread can stall yours. Ultra-low-latency setups often disable SMT.'},
+ {t:'Virtualization',c:'d3',d:'Hypervisor overhead, noisy neighbours competing for CPU, memory and I/O, and virtual network or storage devices that add queues.'},
+ {t:'OS and drivers',c:'d4',d:'Context switches cost microseconds and pollute caches. Interrupts arrive at random. Drivers batch and reorder I/O for throughput at the expense of individual requests.'},
+ {t:'Firmware',c:'d4',d:'CPU firmware can interrupt you; SSD firmware runs its own garbage collection and stalls I/O.'},
+ {t:'Managed runtimes',c:'d5',d:'JIT compilation pauses while it optimizes a hot path; garbage collection pauses to free memory. AOT compilation and allocation-free fast paths help.'},
+ {t:'Your application',c:'pencil',d:'Usually the biggest opportunity, and the subject of the rest of the book.'}]);
+
+/* compounding */
+(function(){function roll(){const v=Array.from({length:5},()=>Math.random()<0.15?80:Math.round(5+Math.random()*10));const sorted=[...v].sort((a,b)=>a-b);
+ const ser=v.reduce((a,b)=>a+b,0),par=sorted[4],quo=sorted[2];
+ $('#comp').innerHTML=v.map(x=>`<div class="${x>=80?'hot':''}">${x} ms</div>`).join('');
+ bars('#cBars',[{l:'Serial',v:ser,c:'bad',txt:ser+' ms'},{l:'Parallel (all)',v:par,c:'mid',txt:par+' ms'},{l:'Quorum (3 of 5)',v:quo,c:'ok',txt:quo+' ms'}],Math.max(ser,100))}
+ $('#cRoll').addEventListener('click',roll);roll()})();
+
+/* coordinated omission */
+(function(){const s=$('#coSvg');function svc(t){return (t>=300&&t<500)?(500-t)+5:5} /* request arriving at t finishes after svc */
+ function run(mode){const rec=[];if(mode==='closed'){let t=0;while(t<1000){const l=svc(t);rec.push([t,l]);t+=Math.max(10,l)}}else{for(let t=0;t<1000;t+=10)rec.push([t,svc(t)])}
+  s.innerHTML='';axes(s,640,200,50,'time (ms)','latency');const X=t=>50+t/1000*570,Y=l=>170-Math.min(l,210)/210*155;
+  s.appendChild(el('rect',{x:X(300),y:10,width:X(500)-X(300),height:160,fill:'var(--bad-soft)'}));s.appendChild(el('text',{x:X(400),y:26,'text-anchor':'middle','font-size':11,fill:'var(--bad)'},'GC pause'));
+  rec.forEach(([t,l])=>s.appendChild(el('line',{x1:X(t),x2:X(t),y1:170,y2:Y(l),stroke:l>20?'var(--bad)':'var(--blue)','stroke-width':2})));
+  const ls=rec.map(r=>r[1]).sort((a,b)=>a-b);const p99=ls[Math.min(ls.length-1,Math.ceil(ls.length*0.99)-1)];
+  $('#coN').textContent=rec.length;$('#coSlow').textContent=rec.filter(r=>r[1]>20).length;$('#coP99').textContent=p99+' ms';$('#coP99').style.color=mode==='closed'?'var(--bad)':'var(--ok)'}
+ seg('[data-co]',b=>run(b.dataset.co));run('closed')})();
+
+/* plots */
+(function(){const s=$('#plSvg');let mode='hist',data=[];function gen(){data=[];for(let i=0;i<300;i++){let v=38+Math.abs(gauss())*2.5;if(Math.random()<0.04)v+=4+Math.random()*12;data.push(v)}data.sort((a,b)=>a-b)}
+ function gauss(){return Math.sqrt(-2*Math.log(Math.random()||1e-9))*Math.cos(2*Math.PI*Math.random())}
+ function pct(p){return data[Math.min(data.length-1,Math.floor(p*data.length))]}
+ function draw(){s.innerHTML='';const lo=Math.floor(data[0]),hi=Math.ceil(data[data.length-1]);
+  if(mode==='hist'){axes(s,640,260,50,'latency (ms)','count');const nb=30,w=(hi-lo)/nb;const c=Array(nb).fill(0);data.forEach(v=>c[Math.min(nb-1,Math.floor((v-lo)/w))]++);const m=Math.max(...c);
+   c.forEach((k,i)=>s.appendChild(el('rect',{x:52+i*19,y:230-k/m*210,width:17,height:k/m*210,fill:'var(--blue)'})));[0,10,20,29].forEach(i=>s.appendChild(el('text',{x:52+i*19+8,y:244,'text-anchor':'middle','font-size':10,fill:'var(--muted)'},(lo+i*w).toFixed(0))));
+   $('#plTxt').textContent='Most samples cluster near the left. The long sparse stretch to the right is the tail: rare, but real.'}
+  else if(mode==='pct'){axes(s,640,260,50,'percentile (logit-like spacing)','latency (ms)');const ps=[0.25,0.5,0.9,0.99,0.999];const X=i=>70+i*130,Y=v=>230-(v-lo)/(hi-lo)*210;
+   s.appendChild(el('path',{d:path(ps.map((p,i)=>[X(i),Y(pct(p))])),stroke:'var(--blue)','stroke-width':2.5,fill:'none'}));ps.forEach((p,i)=>{s.appendChild(el('circle',{cx:X(i),cy:Y(pct(p)),r:4,fill:'var(--pencil)'}));s.appendChild(el('text',{x:X(i),y:244,'text-anchor':'middle','font-size':10,fill:'var(--muted)'},(p*100)+'%'));s.appendChild(el('text',{x:X(i),y:Y(pct(p))-10,'text-anchor':'middle','font-size':10.5,fill:'var(--ink)'},pct(p).toFixed(1)))});
+   $('#plTxt').textContent='The HdrHistogram-style view stretches the high percentiles so the tail gets the space it deserves.'}
+  else{axes(s,640,260,50,'latency (ms)','cumulative fraction');const X=v=>50+(v-lo)/(hi-lo)*570,Y=f=>230-f*210;s.appendChild(el('path',{d:path(data.map((v,i)=>[X(v),Y((i+1)/data.length)])),stroke:'var(--ok)','stroke-width':2.5,fill:'none'}));
+   [0.5,0.9].forEach(f=>{s.appendChild(el('line',{x1:50,x2:X(pct(f)),y1:Y(f),y2:Y(f),stroke:'var(--line)','stroke-dasharray':'4 3'}));s.appendChild(el('text',{x:X(pct(f))+6,y:Y(f)+4,'font-size':10.5,fill:'var(--ink)'},`${f*100}% ≤ ${pct(f).toFixed(1)} ms`))});
+   [0,0.5,1].forEach(v=>s.appendChild(el('text',{x:44,y:Y(v)+4,'text-anchor':'end','font-size':10,fill:'var(--muted)'},v)));
+   $('#plTxt').textContent='The eCDF answers SLA questions directly: what fraction finished within 40 ms? Read up from the x axis.'}}
+ seg('[data-pl]',b=>{mode=b.dataset.pl;draw()});$('#plNew').addEventListener('click',()=>{gen();draw()});gen();draw()})();
+
+quiz('#qQuiz','#qScore',[
+ {q:'2,000 req/s with 100 requests in flight. Average latency?',o:['20 ms','50 ms','200 ms'],a:1,why:'L = C ÷ T = 100 ÷ 2000 s = 50 ms.'},
+ {q:'40% of a job is parallel. Max speedup with unlimited cores?',o:['1.67×','2.5×','40×'],a:0,why:'1 ÷ (1 − 0.4) ≈ 1.67.'},
+ {q:'A request waits for 100 backends, each slow 1% of the time. Roughly how often is it slow?',o:['1%','10%','63%'],a:2,why:'1 − 0.99^100 ≈ 0.63.'},
+ {q:'Raft commits once a majority acknowledges. That is…',o:['serial','parallel','quorum'],a:2,why:'Quorum compounding: wait for the majority, not the slowest.'},
+ {q:'Your benchmark waits for each reply before sending the next. Its p99 is probably…',o:['too optimistic','too pessimistic'],a:0,why:'Coordinated omission hides the requests that would have queued during stalls.'}]);
+
+})();
+</script>
+</body>
+</html>

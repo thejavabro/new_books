@@ -1,0 +1,512 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Buffer Management and Recovery</title>
+<meta name="description" content="Transactions need two things from the storage engine below them: a cache that keeps hot pages in memory, and a log that lets the database put everything back together after a crash.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<script>try{var t=localStorage.getItem('dbi:theme');if(t)document.documentElement.dataset.theme=JSON.parse(t)}catch(e){}</script>
+<style>
+/* Shared base for the Database Internals companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+button.tag{cursor:pointer}
+button.tag:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{font-family:var(--mono);font-size:.82rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:0;overflow-x:auto;white-space:pre;max-width:100%}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+pre.code code{border:0;padding:0;background:none}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;max-height:220px;overflow:auto;display:flex;flex-direction:column;gap:2px}
+.log div{white-space:pre-wrap;word-break:break-word}
+.cells{display:flex;flex-wrap:wrap;gap:4px}
+.cell{font-family:var(--mono);font-size:.8rem;min-width:2.4em;padding:4px 6px;text-align:center;border:1px solid var(--line);border-radius:4px;background:var(--paper);transition:background .3s,border-color .3s}
+.cell.hit{background:var(--blue-soft);border-color:var(--blue)}
+.cell.ok{background:var(--ok-soft);border-color:var(--ok)}
+.cell.bad{background:var(--bad-soft);border-color:var(--bad)}
+.cell.mid{background:var(--mid-soft);border-color:var(--mid)}
+.cell.dim{opacity:.35}
+input[type=text],input[type=number]{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+
+/* page */
+
+.slots{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px}
+.slot{border:1.5px solid var(--line);border-radius:8px;padding:8px 4px;text-align:center;font-family:var(--mono);font-size:.85rem;background:var(--paper);display:flex;flex-direction:column;gap:2px;min-height:62px;justify-content:center;transition:all .3s}
+.slot small{font-size:.65rem;color:var(--muted)}
+.slot.hit{border-color:var(--ok);background:var(--ok-soft)}
+.slot.miss{border-color:var(--pencil);background:var(--pencil-soft)}
+.slot.ev{border-color:var(--bad);background:var(--bad-soft)}
+.trace{display:flex;flex-wrap:wrap;gap:3px}
+.trace span{font-family:var(--mono);font-size:.78rem;padding:3px 6px;border-radius:4px;border:1px solid var(--line);background:var(--paper)}
+.trace span.cur{border-color:var(--blue);background:var(--blue-soft);font-weight:700}
+.trace span.h{color:var(--ok)} .trace span.m{color:var(--bad)}
+.pol{display:grid;grid-template-columns:auto repeat(2,minmax(0,1fr));gap:0;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.pol>*{padding:10px 12px;border-bottom:1px solid var(--line);border-right:1px solid var(--line);font-size:.9rem}
+.pol button{border:0;background:var(--surface);text-align:left;display:flex;flex-direction:column;gap:3px;cursor:pointer}
+.pol button[aria-pressed="true"]{background:var(--blue-soft);outline:2px solid var(--blue);outline-offset:-2px}
+.pol .h{font-family:var(--mono);font-size:.7rem;text-transform:uppercase;color:var(--muted);background:var(--paper)}
+.wal{display:flex;flex-wrap:wrap;gap:4px}
+.rec{font-family:var(--mono);font-size:.74rem;padding:5px 7px;border-radius:5px;border:1.5px solid var(--line);background:var(--surface);display:flex;flex-direction:column;gap:1px;min-width:4.6em;transition:all .3s}
+.rec small{color:var(--muted);font-size:.62rem}
+.rec.T1{border-color:var(--d1)} .rec.T2{border-color:var(--d4)} .rec.T3{border-color:var(--d2)}
+.rec.flushed{background:var(--paper)}
+.rec.act{outline:3px solid var(--pencil);outline-offset:1px}
+.rec.clr{border-style:dashed;background:var(--bad-soft)}
+.pgs{display:flex;flex-wrap:wrap;gap:8px}
+.pgx{border:1.5px solid var(--line);border-radius:8px;padding:6px 10px;font-family:var(--mono);font-size:.8rem;background:var(--surface)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Database Internals · visual companion</a><span class="tag">Part I · Chapter 5a of 14</span><button class="tag themebtn" type="button" aria-label="Toggle light and dark theme">Theme</button></div>
+  <h1>Buffer Management and Recovery</h1>
+  <p class="lede">Transactions need two things from the storage engine below them: a cache that keeps hot pages in memory, and a log that lets the database put everything back together after a crash.</p>
+  <nav class="toc" aria-label="Sections"><a href="#acid">ACID</a><a href="#cache">Page cache</a><a href="#clock">CLOCK</a><a href="#wal">Write-ahead log</a><a href="#logkinds">Log kinds</a><a href="#stealforce">Steal and force</a><a href="#aries">ARIES</a><a href="#quiz">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="acid" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>What a transaction promises</h2></div>
+  <p>A <b>transaction</b> is an indivisible unit of work: several reads and writes that behave as one step. The guarantees are summed up as <b>ACID</b>. Inside a single node, they come from four cooperating parts: the <b>transaction manager</b> schedules and tracks transactions, the <b>lock manager</b> guards resources, the <b>page cache</b> stages changes in memory, and the <b>log manager</b> records history so it can be replayed or undone. This page covers the cache and the log; the next covers concurrency.</p>
+  <div class="cardgrid" id="acidCards"></div>
+</section>
+
+<section id="cache" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>The page cache</h2></div>
+  <p>Databases keep a two-level hierarchy: slow disk, fast RAM. The <b>page cache</b> (or buffer pool) holds copies of disk pages. A requested page is returned from memory if present, otherwise <b>paged in</b>. A modified page is <b>dirty</b> until flushed. A page in use is <b>referenced</b> and can't be evicted; a page the engine wants to keep around can be <b>pinned</b>. Because each B-Tree level has far fewer nodes than the one below, the top levels are cheap to keep in memory permanently, so a lookup only touches disk for the lower levels.</p>
+  <div class="sheet">
+    <div class="row"><span class="small">Workload:</span><div class="seg" role="group" aria-label="Workload"><button data-wl="tree" aria-pressed="true">B-Tree lookups</button><button data-wl="scan" aria-pressed="false">Big scan + lookups</button><button data-wl="belady" aria-pressed="false">Bélády trace</button></div></div>
+    <div class="row"><span class="small">Policy:</span><div class="seg" role="group" aria-label="Policy"><button data-po="FIFO" aria-pressed="false">FIFO</button><button data-po="LRU" aria-pressed="true">LRU</button><button data-po="CLOCK" aria-pressed="false">CLOCK</button><button data-po="LFU" aria-pressed="false">LFU</button></div>
+      <label class="small">Slots <select id="cap"><option>3</option><option>4</option><option selected>5</option></select></label></div>
+    <div class="trace" id="trace"></div>
+    <div class="slots" id="slots"></div>
+    <div class="row between"><div class="row"><button class="btn" id="cStep">Next access</button><button class="btn primary" id="cRun">Run all</button><button class="btn" id="cReset">Reset</button></div><span class="score" id="cScore"></span></div>
+    <p class="small" id="cTxt" aria-live="polite"></p>
+    <h3>All four policies on this trace</h3>
+    <div class="bars" id="cBars"></div>
+  </div>
+  <div class="cardgrid" id="polCards"></div>
+</section>
+
+<section id="clock" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>CLOCK: LRU's cheaper cousin</h2></div>
+  <p>Relinking a list on every access is expensive under concurrency. CLOCK keeps pages in a <b>circular buffer</b> with an <b>access bit</b> each. Accessing a page sets its bit. To evict, the hand sweeps: a bit of 1 gets a second chance (reset to 0, move on); a bit of 0 means evict. Referenced pages are skipped. The hand and bits can be updated with compare-and-swap, no lock needed. Linux uses a variant.</p>
+  <div class="sheet">
+    <div class="svgbox fit"><svg id="clkSvg" viewBox="0 0 360 300" role="img" aria-label="Circular buffer of pages with access bits and a clock hand" style="max-width:380px;margin:0 auto"></svg></div>
+    <div class="row"><button class="btn" data-acc="C">Access C</button><button class="btn" data-acc="F">Access F</button><button class="btn" id="clkRef">Toggle E referenced</button><button class="btn primary" id="clkEv">Need a free slot</button></div>
+    <p id="clkTxt" aria-live="polite" class="small"></p>
+  </div>
+  <div class="callout"><b class="h">Bypassing the kernel</b><span>The OS has its own page cache. Many databases open files with <code>O_DIRECT</code> to skip it and manage memory themselves, which some kernel developers dislike. <code>fadvise</code> only offers hints, and <code>mmap</code> saves syscalls but surrenders control over caching.</span></div>
+</section>
+
+<section id="wal" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>The write-ahead log</h2></div>
+  <p>Dirty pages in the cache are lost on a crash. The <b>write-ahead log</b> (WAL, or commit log) is an append-only, immutable file that records every change <i>before</i> the page is modified. Each record gets a monotonically increasing <b>log sequence number</b> (LSN). Records collect in a log buffer and are <b>forced</b> to disk in LSN order; a transaction counts as committed only once the log is forced past its commit record. A <b>checkpoint</b> marks the point up to which pages are safely on disk so the log before it can be trimmed. Real systems use <b>fuzzy checkpoints</b>: write <code>begin_checkpoint</code>, flush the listed dirty pages in the background, write <code>end_checkpoint</code>, then advance <code>last_checkpoint</code>.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn" data-w="T1">T1 writes</button><button class="btn" data-w="T2">T2 writes</button><button class="btn" id="wCommit1">T1 commits</button><button class="btn" id="wFlush">Flush a dirty page</button><button class="btn" id="wCkpt">Checkpoint</button><button class="btn" id="wReset">Reset</button></div>
+    <div><span class="eyebrow">Log on disk</span><div class="wal" id="wLog"></div></div>
+    <div><span class="eyebrow">Log buffer (memory)</span><div class="wal" id="wBuf"></div></div>
+    <div><span class="eyebrow">Pages</span><div class="pgs" id="wPages"></div></div>
+    <p class="small" id="wTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout"><b class="h">Even fsync can lie</b><span>PostgreSQL's checkpointer relied on <code>fsync()</code> reporting errors. On Linux, a failed flush could clear the dirty flag anyway, and errors only reach descriptors that were open at the time. The checkpointer could believe data was on disk when it wasn't. Recovery code must assume every layer below can fail in surprising ways.</span></div>
+</section>
+
+<section id="logkinds" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Physical, logical, and shadow paging</h2></div>
+  <p>Any change can be described as a before-image and after-image, or as a redo and an undo operation. A <b>physical</b> log stores page images or byte diffs; a <b>logical</b> log stores operations like "insert X under key Y" with an inverse "remove Y". Many systems use logical undo (good for concurrency) and physical redo (fast recovery). System R used <b>shadow paging</b> instead: write changes to an unpublished copy of the page and make them visible with a single pointer flip.</p>
+  <div class="cardgrid" id="logCards"></div>
+</section>
+
+<section id="stealforce" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Steal and force policies</h2></div>
+  <p>Two questions decide what recovery must do. <b>Steal</b>: may the cache flush a page with <i>uncommitted</i> changes (to make room)? <b>Force</b>: must every page a transaction touched be flushed <i>before</i> it commits? Pick a cell.</p>
+  <div class="sheet">
+    <div class="pol" id="pol"></div>
+    <div class="detail" id="polInfo" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="aries" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>ARIES recovery, step by step</h2></div>
+  <p>ARIES is a <b>steal / no-force</b> algorithm: flexible for the cache, so recovery must both redo and undo. It uses LSNs, a <b>dirty page table</b>, physical redo, logical undo and fuzzy checkpoints. After a crash it runs three phases: <b>analysis</b>, <b>redo</b> (repeat history exactly, even for losers), and <b>undo</b> (roll back in-flight transactions in reverse order, writing <b>compensation log records</b> so that a crash during recovery never undoes the same thing twice).</p>
+  <div class="sheet stepper" id="arStep">
+    <div><span class="eyebrow">Log</span><div class="wal" id="arLog"></div></div>
+    <div class="two"><div><span class="eyebrow">Transaction table</span><div class="pgs" id="arTx"></div></div><div><span class="eyebrow">Page state (value · pageLSN)</span><div class="pgs" id="arPg"></div></div></div>
+  </div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b>ACID</b><span>Atomicity, consistency (application-defined), isolation, durability.</span></div>
+    <div><b class="blue">Page cache</b><span>Paged in on demand, dirty until flushed, pinned if hot, referenced while in use.</span></div>
+    <div><b>Eviction</b><span>FIFO is naive; LRU tracks recency; CLOCK approximates it cheaply; LFU and TinyLFU track frequency. Bigger is not always better (Bélády).</span></div>
+    <div><b class="pencil">WAL</b><span>Append-only, LSN-ordered, forced at commit, trimmed at checkpoints.</span></div>
+    <div><b>Steal / force</b><span>Steal needs undo; no-force needs redo.</span></div>
+    <div><b class="okc">ARIES</b><span>Analysis, redo (repeat history), undo with CLRs.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Database Internals: A Deep Dive into How Distributed Data Systems Work</i> by Alex Petrov (O'Reilly, 2019). Explanations, examples, code and drawings are original summaries, not copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch04-implementing-btrees.html"><span>Previous · Chapter 4</span><b>Implementing B-Trees</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch05b-concurrency.html"><span>Next · Chapter 5b</span><b>Concurrency Control</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('dbi:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('dbi:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle */
+$$('.themebtn').forEach(b=>b.addEventListener('click',()=>{const r=document.documentElement;const dark=r.dataset.theme?r.dataset.theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches;r.dataset.theme=dark?'light':'dark';store.set('theme',r.dataset.theme)}));
+function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'})[c])}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
+
+
+cards('#acidCards',[{t:'Atomicity',c:'d1',d:'All steps apply or none do. A transaction ends in commit (final) or abort (roll back, maybe retry).'},{t:'Consistency',c:'d2',d:'Each transaction moves the database between valid states, respecting constraints and invariants. The loosest property, partly the application\'s responsibility.'},{t:'Isolation',c:'d3',d:'Concurrent transactions behave as if alone. In practice databases offer weaker isolation levels for speed.'},{t:'Durability',c:'d4',d:'After commit, changes survive crashes and power loss.'}]);
+
+/* ---- cache sim ---- */
+const WL={tree:'R A1 L3 R A1 L4 R A2 L7 R A1 L3 R A2 L8 R A1 L4 R A2 L7'.split(' '),
+ scan:'R A1 L3 R A1 L4 S1 S2 S3 S4 S5 S6 R A1 L3 R A1 L4 R A1 L3'.split(' '),
+ belady:'1 2 3 4 1 2 5 1 2 3 4 5'.split(' ')};
+let wl='tree',po='LRU',cap=5,st;
+function sim(trace,pol,cap,upto){let slots=[],q=[],bits={},freq={},hand=0,hits=0,ev=null,last=null;
+  for(let i=0;i<upto;i++){const p=trace[i];ev=null;freq[p]=(freq[p]||0)+1;
+    if(slots.includes(p)){hits++;last='hit';if(pol==='LRU'){q.splice(q.indexOf(p),1);q.push(p)}bits[p]=1}
+    else{last='miss';if(slots.length<cap){slots.push(p)}else{let victim;
+        if(pol==='FIFO'||pol==='LRU')victim=q.shift();
+        else if(pol==='CLOCK'){while(true){const c=slots[hand];if(bits[c]){bits[c]=0;hand=(hand+1)%cap}else{victim=c;break}}}
+        else{victim=[...slots].sort((a,b)=>freq[a]-freq[b]||q.indexOf(a)-q.indexOf(b))[0];q.splice(q.indexOf(victim),1)}
+        if(pol==='FIFO'||pol==='LRU'){} ev=victim;const idx=slots.indexOf(victim);slots[idx]=p;if(pol==='CLOCK')hand=(idx+1)%cap}
+      if(pol!=='CLOCK')q.push(p);bits[p]=1}}
+  return{slots,hits,ev,last,bits,hand,freq}}
+function cReset(){st=0;cDraw()}
+function cDraw(){const tr=WL[wl];const r=sim(tr,po,cap,st);
+  $('#trace').innerHTML=tr.map((p,i)=>{let c='';if(i<st){const pr=sim(tr,po,cap,i+1);c=pr.last==='hit'?'h':'m'}return `<span class="${i===st-1?'cur ':''}${c}">${p}</span>`}).join('');
+  $('#slots').style.gridTemplateColumns=`repeat(${cap},minmax(0,1fr))`;
+  $('#slots').innerHTML=Array.from({length:cap},(_,i)=>{const p=r.slots[i];const cur=st&&p===tr[st-1];return `<div class="slot ${cur?r.last:''}">${p||'·'}<small>${p?(po==='CLOCK'?'bit '+(r.bits[p]||0)+(i===r.hand?' ◀':''):po==='LFU'?'freq '+r.freq[p]:''):'free'}</small></div>`}).join('');
+  $('#cScore').textContent=`${r.hits} hits / ${st-r.hits} misses`;
+  $('#cTxt').textContent=st?(r.last==='hit'?`${tr[st-1]} was cached: served from memory.`:`${tr[st-1]} missed: paged in from disk${r.ev?`, evicting ${r.ev}`:''}.`):'R is the root, A* internal pages, L* leaves, S* pages of a one-off scan.';
+  const res=['FIFO','LRU','CLOCK','LFU'].map(p=>({l:p,v:sim(tr,p,cap,tr.length).hits}));bars('#cBars',res.map(x=>({l:x.l,v:x.v,c:x.l===po?'blue':'line',txt:`${x.v} hits`})),tr.length);
+  if(wl==='belady'){const a=12-sim(tr,'FIFO',3,12).hits,b=12-sim(tr,'FIFO',4,12).hits;$('#cTxt').textContent+=` Bélády's anomaly: FIFO with 3 slots misses ${a} times, with 4 slots ${b} times. More memory, more misses.`}}
+seg('[data-wl]',b=>{wl=b.dataset.wl;cReset()});seg('[data-po]',b=>{po=b.dataset.po;cDraw()});$('#cap').addEventListener('change',e=>{cap=+e.target.value;cReset()});
+$('#cStep').addEventListener('click',()=>{if(st<WL[wl].length){st++;cDraw()}});$('#cRun').addEventListener('click',()=>{st=WL[wl].length;cDraw()});$('#cReset').addEventListener('click',cReset);cReset();
+cards('#polCards',[{t:'FIFO',c:'d1',d:'Evicts whatever was paged in earliest. Ignores later accesses, so it happily evicts the root. PostgreSQL still uses a FIFO ring buffer for big sequential scans, so they don\'t flush the useful cache.'},{t:'LRU',c:'d2',d:'Moves a page to the tail on every access. Good predictor, but relinking on each access is costly under concurrency. Variants: 2Q (separate queues for first and repeat access) and LRU-K (last K access times).'},{t:'CLOCK',c:'d3',d:'Approximates LRU with one bit per page and a sweeping hand. Compact and lock-free friendly.'},{t:'LFU / TinyLFU',c:'d4',d:'Uses frequency, not recency. TinyLFU (in Java\'s Caffeine) keeps a compact frequency histogram and three queues: admission, probation, protected. It decides whom to promote rather than whom to evict.'}]);
+
+/* ---- CLOCK visual ---- */
+let ck={pages:['A','B','C','D','E','F','G','H'],bits:[1,0,1,1,0,1,0,1],ref:[0,0,0,0,0,0,0,0],hand:0,next:'I'};
+function drawClk(hl){const s=$('#clkSvg');s.innerHTML='';const cx=180,cy=150,R=110;
+  ck.pages.forEach((p,i)=>{const a=-Math.PI/2+i*2*Math.PI/8;const x=cx+R*Math.cos(a),y=cy+R*Math.sin(a);const isH=hl===i;
+    s.appendChild(el('circle',{cx:x,cy:y,r:26,fill:isH?'var(--bad-soft)':ck.ref[i]?'var(--mid-soft)':ck.bits[i]?'var(--blue-soft)':'var(--surface)',stroke:isH?'var(--bad)':ck.ref[i]?'var(--mid)':'var(--blue)','stroke-width':2}));
+    s.appendChild(el('text',{x,y:y+1,'text-anchor':'middle','font-size':15,'font-weight':700,fill:'var(--ink)'},p));s.appendChild(el('text',{x,y:y+15,'text-anchor':'middle','font-size':10,fill:'var(--muted)',class:'t-mono'},ck.ref[i]?'ref':'bit '+ck.bits[i]))});
+  const a=-Math.PI/2+ck.hand*2*Math.PI/8;s.appendChild(el('line',{x1:cx,y1:cy,x2:cx+(R-34)*Math.cos(a),y2:cy+(R-34)*Math.sin(a),stroke:'var(--pencil)','stroke-width':4,'stroke-linecap':'round'}));s.appendChild(el('circle',{cx,cy,r:6,fill:'var(--pencil)'}))}
+$$('[data-acc]').forEach(b=>b.addEventListener('click',()=>{const i=ck.pages.indexOf(b.dataset.acc);if(i>=0){ck.bits[i]=1;$('#clkTxt').textContent=`${b.dataset.acc} accessed: access bit set to 1.`}else $('#clkTxt').textContent=`${b.dataset.acc} is no longer cached.`;drawClk()}));
+$('#clkRef').addEventListener('click',()=>{const i=ck.pages.indexOf('E');if(i<0)return;ck.ref[i]^=1;$('#clkTxt').textContent=ck.ref[i]?'E is now referenced by a running operation: the hand will skip it.':'E released.';drawClk()});
+$('#clkEv').addEventListener('click',async()=>{const log=[];let guard=0;while(guard++<20){const i=ck.hand;drawClk(i);await sleep(260);
+    if(ck.ref[i]){log.push(`${ck.pages[i]} referenced → skip`);ck.hand=(i+1)%8;continue}
+    if(ck.bits[i]){ck.bits[i]=0;log.push(`${ck.pages[i]} bit 1 → 0`);ck.hand=(i+1)%8;drawClk();continue}
+    log.push(`${ck.pages[i]} bit 0 → evict, load ${ck.next}`);ck.pages[i]=ck.next;ck.bits[i]=1;ck.next=String.fromCharCode(ck.next.charCodeAt(0)+1);ck.hand=(i+1)%8;break}
+  drawClk();$('#clkTxt').textContent=log.join(' · ')});drawClk();
+
+/* ---- WAL sim ---- */
+let W;function wReset(){W={lsn:1,disk:[],buf:[],pages:{P1:{v:0,lsn:0,dirty:false},P2:{v:0,lsn:0,dirty:false},P3:{v:0,lsn:0,dirty:false}},ck:0,cnt:{T1:0,T2:0}};wMsg('Empty log. Make some writes.');wDraw()}
+function wMsg(t){$('#wTxt').textContent=t}
+function recHTML(r){return `<div class="rec ${r.tx}${r.fl?' flushed':''}"><b>${r.lsn}</b><small>${r.txt}</small></div>`}
+function wDraw(){$('#wLog').innerHTML=W.disk.map(r=>r.lsn<=W.ck?recHTML(r).replace('class="rec','style="opacity:.35" class="rec'):recHTML(r)).join('')||'<span class="small">empty</span>';$('#wBuf').innerHTML=W.buf.map(recHTML).join('')||'<span class="small">empty</span>';
+  $('#wPages').innerHTML=Object.entries(W.pages).map(([k,p])=>`<div class="pgx" style="${p.dirty?'border-color:var(--pencil);background:var(--pencil-soft)':''}">${k} = ${p.v}<br><span class="small">pageLSN ${p.lsn}${p.dirty?' · dirty':''}</span></div>`).join('')}
+$$('[data-w]').forEach(b=>b.addEventListener('click',()=>{const tx=b.dataset.w;const pg=['P1','P2','P3'][Math.floor(Math.random()*3)];const r={lsn:W.lsn++,tx,txt:`${tx} ${pg}+1`};W.buf.push(r);W.pages[pg].v++;W.pages[pg].lsn=r.lsn;W.pages[pg].dirty=true;W.cnt[tx]++;wMsg(`LSN ${r.lsn}: log record goes to the buffer first, then the cached page ${pg} changes and becomes dirty.`);wDraw()}));
+$('#wCommit1').addEventListener('click',()=>{const r={lsn:W.lsn++,tx:'T1',txt:'T1 commit'};W.buf.push(r);W.disk.push(...W.buf);W.buf=[];wMsg(`Commit record LSN ${r.lsn} written and the log is forced to disk up to it (sequential write). T1 is now durable, even though its pages may still be dirty in memory: that's no-force.`);wDraw()});
+$('#wFlush').addEventListener('click',()=>{const d=Object.entries(W.pages).find(([k,p])=>p.dirty);if(!d)return wMsg('No dirty pages.');const [k,p]=d;
+  if(W.buf.some(r=>r.lsn<=p.lsn)){W.disk.push(...W.buf.filter(r=>r.lsn<=p.lsn));W.buf=W.buf.filter(r=>r.lsn>p.lsn);wMsg(`Before flushing ${k} (pageLSN ${p.lsn}) the log must be on disk up to LSN ${p.lsn}: that's the write-ahead rule. Log forced, then ${k} written.`)}else wMsg(`${k} flushed; its log records were already on disk.`);p.dirty=false;wDraw()});
+$('#wCkpt').addEventListener('click',()=>{const dirty=Object.entries(W.pages).filter(([k,p])=>p.dirty).map(([k])=>k);const b={lsn:W.lsn++,tx:'T3',txt:'begin_ckpt'};W.buf.push(b);W.disk.push(...W.buf);W.buf=[];
+  Object.values(W.pages).forEach(p=>p.dirty=false);const e={lsn:W.lsn++,tx:'T3',txt:'end_ckpt'};W.disk.push(e);const oldest=W.disk.filter(r=>!/commit|ckpt/.test(r.txt)).map(r=>r.lsn);W.ck=b.lsn-1;
+  wMsg(`Fuzzy checkpoint: begin at LSN ${b.lsn}, dirty pages {${dirty.join(', ')||'none'}} flushed in the background, end at ${e.lsn}. last_checkpoint → ${b.lsn}. Greyed records are no longer needed for page recovery (a real system also keeps records of still-running transactions for undo).`);wDraw()});
+$('#wReset').addEventListener('click',wReset);wReset();
+
+cards('#logCards',[{t:'Physical log',c:'d1',d:'Before and after images of pages, or byte-level diffs. Redo is a fast copy; records are bigger.'},{t:'Logical log',c:'d2',d:'Operations and their inverses: "insert X for key Y" / "remove Y". Compact, and undo can run while other operations change the page.'},{t:'Shadow paging',c:'d3',d:'Copy-on-write: build the new page off to the side, then flip one pointer to publish it. Atomic, but scatters pages.'},{t:'Compensation log records',c:'d4',d:'Written during undo so that undoing is itself logged and never repeated after another crash.'}]);
+
+/* ---- steal/force ---- */
+const P={ 'steal|force':['Undo only','Uncommitted pages may be on disk, so undo is needed. Committed pages are always on disk, so no redo. Commit is slow: it waits for page flushes.','bad'],
+ 'steal|noforce':['Undo and redo (ARIES)','Most flexible for the cache and fastest commit: only the log is forced. Recovery must both redo committed work and undo uncommitted work. The common choice.','ok'],
+ 'nosteal|force':['Neither','Disk never has uncommitted data and always has committed data, but commits are slow and every transaction\'s pages must fit in memory. Rarely used.','mid'],
+ 'nosteal|noforce':['Redo only','The disk copy is always a clean before-image; the log holds the changes. Commits are fast, but uncommitted pages pin the cache, so it may need to be large.','mid']};
+let pk='steal|noforce';
+function drawPol(){$('#pol').innerHTML='<div class="h"></div><div class="h">Force (flush at commit)</div><div class="h">No-force</div>'+['steal','nosteal'].map(s=>`<div class="h">${s==='steal'?'Steal (may flush uncommitted)':'No-steal'}</div>`+['force','noforce'].map(f=>{const k=s+'|'+f;return `<button data-k="${k}" aria-pressed="${k===pk}"><b class="${P[k][2]==='ok'?'okc':P[k][2]==='bad'?'badc':'midc'}">${P[k][0]}</b><span class="small">${s==='steal'?'steal':'no-steal'} / ${f==='force'?'force':'no-force'}</span></button>`}).join('')).join('');
+  $$('#pol button').forEach(b=>b.addEventListener('click',()=>{pk=b.dataset.k;drawPol()}));$('#polInfo').innerHTML=`<h3>${P[pk][0]}</h3><p>${P[pk][1]}</p>`}
+drawPol();
+
+/* ---- ARIES stepper ---- */
+const AL=[{lsn:10,tx:'T1',txt:'T1 P1:5→6'},{lsn:20,tx:'T2',txt:'T2 P2:3→4'},{lsn:30,tx:'T3',txt:'begin_ckpt'},{lsn:40,tx:'T1',txt:'T1 P3:1→9'},{lsn:50,tx:'T1',txt:'T1 commit'},{lsn:60,tx:'T2',txt:'T2 P1:6→7'},{lsn:70,tx:'T3',txt:'end_ckpt'},{lsn:80,tx:'T2',txt:'T2 P2:4→0'}];
+const AS=[
+ {t:'Before the crash: T1 committed at LSN 50, T2 is still running. The cache stole P1 (flushed with T2\'s uncommitted 7). P2 and P3 were never flushed. Then: power loss.',act:[],tx:{},pg:{P1:'7 · 60',P2:'3 · 0',P3:'1 · 0'}},
+ {t:'<b>Analysis.</b> Start from the last checkpoint (LSN 30). Its end record lists active transactions and dirty pages; scan forward to update both tables. Result: T1 committed (winner), T2 active (loser). Redo will start at the oldest recLSN in the dirty page table.',act:[2,3,4,5,6,7],tx:{T1:'committed',T2:'active → loser'},pg:{P1:'7 · 60',P2:'3 · 0',P3:'1 · 0'}},
+ {t:'<b>Redo.</b> Repeat history from the start point for <i>every</i> logged change, winners and losers alike, skipping any record whose LSN ≤ the page\'s pageLSN (already applied). LSN 60 on P1 is skipped; the others are reapplied.',act:[0,1,3,5,7],tx:{T1:'committed',T2:'loser'},pg:{P1:'7 · 60',P2:'0 · 80',P3:'9 · 40'}},
+ {t:'<b>Undo.</b> Roll back losers in reverse LSN order. Undo LSN 80 (P2: 0→4) and write CLR 90; undo LSN 60 (P1: 7→6) and CLR 100; undo LSN 20 (P2: 4→3) and CLR 110. Each CLR points to the next record to undo, so a second crash resumes where it left off.',act:[7,5,1],tx:{T1:'committed',T2:'rolled back'},pg:{P1:'6 · 100',P2:'3 · 110',P3:'9 · 40'},clr:true},
+ {t:'Done. T1\'s writes survived (durability) and T2 left no trace (atomicity), even though the disk held a mix of both when power failed.',act:[],tx:{T1:'committed',T2:'aborted'},pg:{P1:'6',P2:'3',P3:'9'},clr:true}];
+$('#arStep').insertAdjacentHTML('beforeend',stepHTML());
+stepper('#arStep',AS.map(s=>s.t),i=>{const S=AS[i];let log=AL.map((r,k)=>`<div class="rec ${r.tx}${S.act.includes(k)?' act':''}"><b>${r.lsn}</b><small>${r.txt}</small></div>`).join('');
+  if(S.clr)log+=['CLR P2→4','CLR P1→6','CLR P2→3'].map((t,k)=>`<div class="rec T2 clr"><b>${90+k*10}</b><small>${t}</small></div>`).join('');
+  $('#arLog').innerHTML=log;$('#arTx').innerHTML=Object.entries(S.tx).map(([k,v])=>`<div class="pgx">${k}: ${v}</div>`).join('')||'<span class="small">lost in crash</span>';$('#arPg').innerHTML=Object.entries(S.pg).map(([k,v])=>`<div class="pgx">${k} = ${v}</div>`).join('')});
+
+quiz('#qQuiz','#qScore',[
+ {q:'A dirty page is one that…',o:['is corrupt','differs from its on-disk copy','is pinned'],a:1,why:'It has in-memory changes that must be flushed before eviction.'},
+ {q:'Why is FIFO a poor fit for B-Tree pages?',o:['It is slow','It evicts the root, which was paged in first','It needs locks'],a:1,why:'FIFO ignores repeated access; the earliest-loaded pages are usually the hottest.'},
+ {q:'When does a transaction count as committed?',o:['When its pages are flushed','When the log is forced past its commit record','When the checkpoint ends'],a:1,why:'Durability comes from the log. With no-force, data pages can be flushed later.'},
+ {q:'A steal policy means recovery needs…',o:['redo','undo','neither'],a:1,why:'Uncommitted changes may reach disk, so they must be undoable.'},
+ {q:'In ARIES, the redo phase replays…',o:['only committed transactions','all logged changes, then undo removes losers','only the last checkpoint'],a:1,why:'Repeating history restores the exact pre-crash state before undo runs.'}]);
+
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Implementing Queries</title>
+<meta name="description" content="Data is private to each service, so a screen that shows an order with its ticket, delivery and bill has to gather it from several places. Two patterns do the job: compose API calls, or keep a dedicated read model up to date with events.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Microservices Patterns companion. Blueprint grid paper: blue = services and structure, orange = messages and data in flight, green = success, red = failure.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+button.theme{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted)}
+button.theme:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-family:var(--mono);font-size:.8rem;line-height:1.5;overflow-x:auto;white-space:pre;max-width:100%}
+.code .k{color:var(--d5)} .code .s{color:var(--d2)} .code .c{color:var(--muted);font-style:italic}
+.pattern{border:1px solid var(--line);border-left:4px solid var(--d2);background:var(--surface);border-radius:0 10px 10px 0;padding:12px 16px;display:flex;flex-direction:column;gap:4px}
+.pattern .eyebrow{color:var(--d2)}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:5em;max-height:14em;overflow:auto;display:flex;flex-direction:column;gap:2px}
+.chip.on{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+button.chip{cursor:pointer}
+
+/* page */
+
+.od{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+@media (max-width:520px){.od{grid-template-columns:1fr}}
+.od>div{border:1.5px solid var(--line);border-radius:8px;padding:8px 10px;font-size:.9rem;background:var(--surface)}
+.od>div.miss{border-style:dashed;color:var(--muted);background:var(--paper)}
+.od b{font-family:var(--mono);font-size:.75rem;display:block;color:var(--muted)}
+.ui{border:1px solid var(--line);border-radius:10px;padding:12px;background:var(--paper);display:flex;flex-direction:column;gap:6px;font-size:.92rem}
+.ui .rowi{display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding:4px 0;gap:8px}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Microservices Patterns · visual companion</a><span class="tag">Chapter 7 of 13 · Business logic and data</span><button class="theme" type="button">Dark theme</button></div>
+  <h1>Implementing Queries</h1>
+  <p class="lede">Data is private to each service, so a screen that shows an order with its ticket, delivery and bill has to gather it from several places. Two patterns do the job: compose API calls, or keep a dedicated read model up to date with events.</p>
+  <nav class="toc" aria-label="Sections"><a href="#problem">The problem</a><a href="#composition">API composition</a><a href="#drawbacks">Drawbacks</a><a href="#cqrs">CQRS</a><a href="#lag">Replication lag</a><a href="#design">Designing views</a><a href="#dynamo">DynamoDB view</a><a href="#check">Quick check</a></nav>
+</header>
+
+<section id="problem" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Queries across private databases</h2></div>
+  <p>Chapter 4 handled updates that span services. Queries have the same problem. FTGO's <code>findOrder(orderId)</code> powers the order-status screen of the mobile app: it needs the order (Order Service), the kitchen ticket status (Kitchen Service), the delivery status and courier location (Delivery Service), and the payment status (Accounting Service). No service has it all, and no one may join across their databases.</p>
+  <div class="cardgrid" id="two"></div>
+</section>
+
+<section id="composition" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>The API composition pattern</h2></div>
+  <p>An <b>API composer</b> calls the <b>provider services</b> that own the data and combines the results in memory. Step through, and compare calling the providers one after another with calling them in parallel.</p>
+  <div class="sheet stepper" id="acStep">
+    <div class="svgbox"><svg id="acSvg" viewBox="0 0 640 260" role="img" aria-label="API composer calling four provider services"></svg></div>
+  </div>
+  <div class="sheet">
+    <label class="rng"><span>Latency of each provider call: <b id="latV"></b></span><input type="range" id="lat" min="10" max="300" value="80"></label>
+    <div class="bars" id="latBars"></div>
+    <p class="small">A composer should call independent providers concurrently, typically with a reactive style (CompletableFuture, RxJava, Project Reactor). Sometimes one call depends on another's result, which forces some sequencing.</p>
+  </div>
+  <div class="cardgrid" id="whoComposes"></div>
+</section>
+
+<section id="drawbacks" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>When composition hurts</h2></div>
+  <p>API composition is simple and should be your default. But it has drawbacks: <b>increased overhead</b> (many requests and database queries per query), <b>reduced availability</b> (every provider must answer) and <b>no transactional consistency</b> (providers answer at slightly different moments). For availability, a composer can return cached data or a partial result. Take a service down.</p>
+  <div class="sheet">
+    <div class="row" id="downBtns"></div>
+    <div class="od" id="od"></div>
+    <p class="small" id="odTxt" aria-live="polite"></p>
+  </div>
+  <p>The worst case is a query that filters on data owned by several services. <code>findOrderHistory(consumerId, filter)</code> lets a consumer search past orders by keyword, and the keyword may match a menu item (Order Service) or the restaurant name (Restaurant Service). The composer must pull everything and do an <b>in-memory join</b>.</p>
+  <div class="sheet">
+    <label class="rng"><span>Consumer's past orders: <b id="hV"></b></span><input type="range" id="h" min="10" max="5000" value="800"></label>
+    <div class="bars" id="hBars"></div>
+  </div>
+</section>
+
+<section id="cqrs" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Command query responsibility segregation</h2></div>
+  <p><b>CQRS</b> splits the persistent model in two. The <b>command side</b> handles create, update and delete with its own database and publishes domain events. The <b>query side</b> keeps one or more <b>views</b>, read-only databases shaped for particular queries and kept up to date by subscribing to events. A query side can live inside the service, or be a separate <b>query-only service</b>, such as an Order History Service that subscribes to events from several services. Run the flow.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn primary" id="cqCmd">Consumer cancels order 7</button><button class="btn" id="cqQ">Query order history</button><label class="rng" style="flex:1;min-width:180px"><span>Event delivery lag: <b id="lagV"></b></span><input type="range" id="lagMs" min="0" max="3000" step="250" value="1500"></label></div>
+    <div class="svgbox"><svg id="cqSvg" viewBox="0 0 640 200" role="img" aria-label="Command side, event broker and query-side view"></svg></div>
+    <div class="ui" id="cqUi"></div>
+    <div class="log" id="cqLog" aria-live="polite"></div>
+  </div>
+  <div class="cardgrid" id="cqCards"></div>
+</section>
+
+<section id="lag" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Living with eventual consistency</h2></div>
+  <p>The view always trails the command side a little. A client that updates and then immediately reads may not see its own change. Two remedies from the book: the command returns a token (for example, the ID of the published event), and the client polls the view until the view has caught up to that token; or the client updates its own local model optimistically from the command's response, and refreshes later.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Client strategy"><button data-cl="naive" aria-pressed="true">Read right away</button><button data-cl="token" aria-pressed="false">Wait for token</button><button data-cl="opt" aria-pressed="false">Optimistic UI</button></div>
+    <div class="svgbox"><svg id="clSvg" viewBox="0 0 640 170" role="img" aria-label="Timeline of client, command side and view"></svg></div>
+    <p id="clTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="design" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Designing CQRS views</h2></div>
+  <p>A view module has a database, a data access object (DAO), event handlers, and a query API. First, pick the store that matches the query.</p>
+  <div class="sheet">
+    <div class="row"><span>The query needs...</span><select id="dsSel" aria-label="Query need"><option value="pk">lookup by primary key, JSON-shaped result</option><option value="text">text search over orders</option><option value="geo">restaurants near a point</option><option value="graph">social graph queries</option><option value="sql">reporting with joins and SQL</option></select></div>
+    <div class="detail" id="dsInfo" aria-live="polite"></div>
+  </div>
+  <div class="cardgrid" id="dao"></div>
+  <div class="sheet">
+    <div class="row between"><h3>Idempotent view updates</h3><span class="small">event IDs increase per aggregate</span></div>
+    <div class="row"><button class="btn" data-ev="1">Deliver Order7 event #1</button><button class="btn" data-ev="2">Deliver #2</button><button class="btn" data-ev="3">Deliver #3</button><button class="btn" id="evR">Reset</button></div>
+    <div class="ui" id="viewRow"></div>
+    <div class="log" id="evLog" aria-live="polite"></div>
+  </div>
+  <p class="small">Adding a new view, or changing one, means building it from scratch by replaying events. Brokers don't keep messages forever, so older events come from an archive (for example, in S3) processed with a big data tool such as Spark, combined with snapshots, then the view catches up with live events.</p>
+</section>
+
+<section id="dynamo" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Example: an order history view in DynamoDB</h2></div>
+  <p>The book implements <code>findOrderHistory()</code> in an Order History Service that stores a view in AWS DynamoDB. <b>OrderHistoryEventHandlers</b> subscribe to events and call <b>OrderHistoryDao</b>. The table <code>ftgo-order-history</code> has one item per order, keyed by orderId. A <b>global secondary index</b> keyed by consumerId with creation time as the sort key serves the query, newest first, with pagination and a filter expression for keywords and status. Updates are conditional so duplicate or old events are ignored. Query it.</p>
+  <div class="sheet">
+    <div class="row"><select id="dyC" aria-label="Consumer"><option>consumer-1</option><option>consumer-2</option></select><select id="dyS" aria-label="Status"><option value="">any status</option><option>DELIVERED</option><option>CANCELLED</option></select><input id="dyK" aria-label="Keyword" placeholder="keyword, e.g. curry" style="font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%"></div>
+    <div class="tbl"><table class="t" id="dyT"><thead><tr><th>orderId</th><th>consumerId (GSI hash)</th><th>orderCreationTime (GSI range)</th><th>status</th><th>keywords</th></tr></thead><tbody></tbody></table></div>
+    <p class="small mono" id="dyQ"></p>
+  </div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="quiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Microservices Patterns: With examples in Java</i> by Chris Richardson (Manning, 2019). Explanations, code snippets, diagrams and simulations are original summaries written for this companion; nothing is copied from the book's figures or listings.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch06-event-sourcing.html"><span>Previous · Chapter 6</span><b>Event Sourcing</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch08-external-apis.html"><span>Next · Chapter 8</span><b>External API Patterns</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('mp:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('mp:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: button.theme switches light/dark, remembered per viewer */
+(function(){const r=document.documentElement;const t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+  const cur=()=>r.getAttribute('data-theme')||(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+  const lab=()=>$$('button.theme').forEach(x=>x.textContent=cur()==='dark'?'Light theme':'Dark theme');lab();
+  $$('button.theme').forEach(b=>b.addEventListener('click',()=>{const n=cur()==='dark'?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n);lab()}))})();
+/* drawing helpers */
+function box(svg,x,y,w,h,t,c,o){o=o||{};const g=el('g',{class:o.cls||''});c=c||'blue';
+  g.appendChild(el('rect',{x,y,width:w,height:h,rx:o.rx!=null?o.rx:8,fill:o.fill||'var(--surface)',stroke:`var(--${c})`,'stroke-width':o.sw||1.8,'stroke-dasharray':o.dash||''}));
+  const L=String(t).split('\n');const fs=o.fs||12.5;L.forEach((l,i)=>g.appendChild(el('text',{x:x+w/2,y:y+h/2+(i-(L.length-1)/2)*(fs+3)+fs*.36,'text-anchor':'middle','font-size':fs,'font-weight':o.fw||600,fill:o.tc||'var(--ink)'},l)));
+  svg.appendChild(g);return g}
+function arrow(svg,x1,y1,x2,y2,c,o){o=o||{};c=c||'muted';const g=el('g',{class:o.cls||''});const dx=x2-x1,dy=y2-y1,L=Math.hypot(dx,dy)||1,ux=dx/L,uy=dy/L,px=-uy,py=ux;
+  g.appendChild(el('line',{x1,y1,x2:x2-ux*8,y2:y2-uy*8,stroke:`var(--${c})`,'stroke-width':o.sw||2,'stroke-dasharray':o.dash||'',class:o.flow?'flow':''}));
+  g.appendChild(el('polygon',{points:`${x2},${y2} ${x2-ux*10+px*5},${y2-uy*10+py*5} ${x2-ux*10-px*5},${y2-uy*10-py*5}`,fill:`var(--${c})`}));
+  if(o.t)g.appendChild(el('text',{x:(x1+x2)/2+(o.dx||0),y:(y1+y2)/2-6+(o.dy||0),'text-anchor':'middle','font-size':o.fs||11,fill:`var(--${o.tcol||c})`,class:o.mono?'t-mono':''},o.t));
+  svg.appendChild(g);return g}
+function txt(svg,x,y,t,o){o=o||{};const e=el('text',{x,y,'text-anchor':o.a||'middle','font-size':o.fs||11,'font-weight':o.fw||400,fill:`var(--${o.c||'muted'})`,class:o.mono?'t-mono':''},t);svg.appendChild(e);return e}
+/* sequence diagram: lanes [{t,c}], msgs [{f,t,l,c,dash}] (f===t draws a self-call); returns apply(i) showing messages 0..i */
+function seqDiagram(svgSel,lanes,msgs,opt){opt=opt||{};const svg=typeof svgSel==='string'?$(svgSel):svgSel;const W=opt.w||640;const n=lanes.length;const gap=W/n;const top=opt.top||50,dy=opt.dy||30;
+  const H=top+msgs.length*dy+14;svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.innerHTML='';
+  const X=i=>gap/2+i*gap;
+  lanes.forEach((l,i)=>{svg.appendChild(el('line',{x1:X(i),y1:38,x2:X(i),y2:H-4,stroke:'var(--line)','stroke-dasharray':'4 4'}));const w=Math.min(gap-8,140);box(svg,X(i)-w/2,4,w,32,l.t,l.c||'blue',{fs:11})});
+  const rows=msgs.map((m,k)=>{const y=top+10+k*dy;const g=el('g',{class:'fade'});const c=`var(--${m.c||'blue'})`;
+    if(m.f===m.t){const x=X(m.f);g.appendChild(el('path',{d:`M${x},${y-7} h22 v12 h-14`,fill:'none',stroke:c,'stroke-width':1.8}));g.appendChild(el('polygon',{points:`${x},${y+5} ${x+9},${y+1} ${x+9},${y+9}`,fill:c}));
+      g.appendChild(el('text',{x:x+(m.f===n-1?-6:28),y:y+3,'text-anchor':m.f===n-1?'end':'start','font-size':10.5,fill:'var(--ink)'},m.l))}
+    else{const a=X(m.f),b=X(m.t),d=b>a?1:-1;g.appendChild(el('line',{x1:a,y1:y,x2:b-d*8,y2:y,stroke:c,'stroke-width':1.8,'stroke-dasharray':m.dash?'5 4':''}));
+      g.appendChild(el('polygon',{points:`${b},${y} ${b-d*9},${y-4.5} ${b-d*9},${y+4.5}`,fill:c}));
+      g.appendChild(el('text',{x:(a+b)/2,y:y-5,'text-anchor':'middle','font-size':10.5,fill:'var(--ink)'},m.l))}
+    svg.appendChild(g);return g});
+  return function(i){rows.forEach((g,k)=>g.classList.toggle('off',k>i))}}
+/* simple tabs: buttons [data-tab] inside .seg, panels [data-panel] */
+function tabs(rootSel){const r=$(rootSel);const bs=r.querySelectorAll('[data-tab]');bs.forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);r.querySelectorAll('[data-panel]').forEach(p=>p.hidden=p.dataset.panel!==b.dataset.tab)}))}
+function logLine(sel,html,c){const r=$(sel);const d=document.createElement('div');d.innerHTML=html;if(c)d.style.color=`var(--${c})`;r.appendChild(d);r.scrollTop=r.scrollHeight}
+
+
+cards('#two',[{t:'API composition',c:'d1',d:'Call the services that own the data and join the results in memory. Simple; use it whenever you can.'},{t:'CQRS',c:'d2',d:'Keep one or more read-only views, replicas updated from events, designed for the query. More powerful, more complex.'}]);
+
+/* composition stepper */
+const PROV=[['Order Service','order','d1'],['Kitchen Service','ticket','d2'],['Delivery Service','delivery','d4'],['Accounting Service','bill','d3']];
+$('#acStep').insertAdjacentHTML('beforeend',stepHTML());
+stepper('#acStep',['The mobile app calls findOrder(7) on the API composer.','The composer sends requests to the four providers, concurrently.','Each provider answers with the part it owns.','The composer joins the parts into one OrderDetails and returns it.'],i=>{const s=$('#acSvg');s.innerHTML='';box(s,10,105,100,50,'Mobile app','muted');box(s,190,95,130,70,'API\ncomposer','d5');arrow(s,110,130,190,130,'pencil',{t:'findOrder(7)',fs:10});
+  PROV.forEach((p,k)=>{const y=10+k*62;box(s,440,y,170,46,p[0],i>=1?p[2]:'line',{fs:11.5});if(i>=1)arrow(s,320,130,440,y+23,'blue',{flow:i===1});if(i>=2)txt(s,380,y+12+(k<2?0:40),p[1],{mono:1,fs:10,c:p[2]})});
+  if(i>=3)arrow(s,190,150,110,150,'ok',{t:'OrderDetails',fs:10,dy:24})});
+function lat(){const l=+$('#lat').value;$('#latV').textContent=l+' ms';bars('#latBars',[{l:'Sequential',v:l*4,c:'bad',txt:l*4+' ms'},{l:'Parallel',v:l,c:'ok',txt:l+' ms'}],1200)}
+$('#lat').addEventListener('input',lat);lat();
+cards('#whoComposes',[{t:'The client',c:'d1',d:'A web app in the same data center can compose. A mobile app over a slow network shouldn\'t: too many round trips.'},{t:'The API gateway',c:'d5',d:'Natural when the query is part of the external API. One round trip for the client (chapter 8).'},{t:'A standalone service',c:'d2',d:'For queries used by several services, or logic too complex for the gateway.'}]);
+
+/* partial data */
+let down=new Set();$('#downBtns').innerHTML=PROV.map((p,i)=>`<button class="btn" data-i="${i}" aria-pressed="false">${p[0].split(' ')[0]} down</button>`).join('');
+const ODV=['Order 7 · 2 × Pad thai · APPROVED','Ticket: PREPARING, ready by 18:40','Courier Ana, 1.2 km away','Card authorized: $28'];
+function od(){$('#od').innerHTML=PROV.map((p,i)=>down.has(i)?`<div class="miss"><b>${p[1]}</b>${i===0?'unavailable: cannot build a response':'unavailable: omitted (or cached)'}</div>`:`<div style="border-color:var(--${p[2]})"><b>${p[1]}</b>${ODV[i]}</div>`).join('');
+  $('#odTxt').textContent=down.has(0)?'Without the order itself there is nothing useful to return: the composer returns an error.':down.size?'The composer returns a partial response; the app hides what is missing. Or it uses cached data, if it has some.':'All providers up: full OrderDetails.'}
+$$('#downBtns button').forEach(b=>b.addEventListener('click',()=>{const i=+b.dataset.i;down.has(i)?down.delete(i):down.add(i);b.setAttribute('aria-pressed',down.has(i));b.style.background=down.has(i)?'var(--bad-soft)':'';od()}));od();
+function hj(){const n=+$('#h').value;$('#hV').textContent=n;bars('#hBars',[{l:'Rows the composer fetches',v:n*2,c:'bad',txt:(n*2)+' rows'},{l:'Rows the user sees (page)',v:10,c:'ok',txt:'10 rows'},{l:'CQRS view reads',v:10,c:'ok',txt:'~10 rows'}],10000)}
+$('#h').addEventListener('input',hj);hj();
+
+/* CQRS flow */
+let view={7:'DELIVERED'},src={7:'DELIVERED'},pend=null;
+function cqDraw(st){const s=$('#cqSvg');s.innerHTML='';box(s,10,20,130,50,'Order Service\n(command side)','d1',{fs:11});s.appendChild(el('ellipse',{cx:75,cy:130,rx:55,ry:18,fill:'var(--paper)',stroke:'var(--d1)'}));txt(s,75,134,'orders DB',{fs:10});arrow(s,75,70,75,110,'d1');
+  box(s,240,60,140,46,'Message broker','pencil',{fs:11.5});arrow(s,140,45,240,75,st>=1?'pencil':'line',{t:'OrderCancelled',fs:10,flow:st===1});
+  box(s,470,20,160,50,'Order History\nService (query side)','d2',{fs:11});s.appendChild(el('ellipse',{cx:550,cy:130,rx:70,ry:18,fill:'var(--paper)',stroke:'var(--d2)'}));txt(s,550,134,'view: Dynamo / Mongo',{fs:10});arrow(s,550,70,550,110,'d2');
+  arrow(s,380,85,470,50,st>=2?'pencil':'line',{t:st>=2?'applied':'',fs:10});txt(s,320,185,st===1?'event in flight...':st===2?'view updated':'',{fs:11,c:st===1?'mid':'ok'})}
+function ui(){$('#cqUi').innerHTML=`<span class="eyebrow">Mobile app · order history (from the view)</span><div class="rowi"><span>Order 7 · Thai Palace</span><b class="mono">${view[7]}</b></div><div class="rowi"><span>Order 6 · Burger Barn</span><b class="mono">DELIVERED</b></div>`}
+$("#lagMs").addEventListener('input',()=>$('#lagV').textContent=$("#lagMs").value+' ms');$('#lagV').textContent='1500 ms';
+$('#cqCmd').addEventListener('click',()=>{src[7]='CANCELLED';cqDraw(1);logLine('#cqLog','Command side: order 7 CANCELLED, OrderCancelled published.','d1');clearTimeout(pend);pend=setTimeout(()=>{view[7]='CANCELLED';cqDraw(2);logLine('#cqLog','View handler applied OrderCancelled.','ok');ui()},+$("#lagMs").value)});
+$('#cqQ').addEventListener('click',()=>{ui();logLine('#cqLog',`Query read the view: order 7 is ${view[7]}`+(view[7]!==src[7]?' — stale! the event hasn\'t arrived yet':''),view[7]!==src[7]?'bad':'ok')});cqDraw(0);ui();
+cards('#cqCards',[{t:'Efficient, diverse queries',c:'ok',d:'Each view uses the store and shape that suit its query: text search, geospatial, key-value, and so on.'},{t:'Queries in event-sourced apps',c:'ok',d:'The event store only supports lookup by key; CQRS views fill the gap.'},{t:'Separation of concerns',c:'ok',d:'The query side can live in the service that needs it, not the one that owns the data (e.g. a restaurant search view).'},{t:'More complex',c:'bad',d:'More code, more databases to run, maybe different technologies.'},{t:'Replication lag',c:'bad',d:'The view is eventually consistent; clients must cope.'}]);
+
+/* client strategies */
+const CL={naive:'The client reads right after the command. The view hasn\'t received the event, so it shows the old status. Confusing.',token:'The command returns a token (the event ID). The client polls the view until the view reports it has processed that event, then reads.',opt:'The client updates its local model with the command\'s result at once, so the user sees the change, and refreshes from the view later, when it has caught up.'};
+function cl(k){const s=$('#clSvg');s.innerHTML='';['Client','Command side','View'].forEach((t,i)=>{txt(s,10,40+i*50,t,{a:'start',fs:11.5,c:'ink',fw:600});s.appendChild(el('line',{x1:110,y1:36+i*50,x2:630,y2:36+i*50,stroke:'var(--line)'}))});
+  arrow(s,140,36,140,86,'blue',{t:'cancel',fs:10,dx:24});arrow(s,160,86,400,136,'pencil',{t:'event (lag)',fs:10,dash:'4 3'});box(s,400,122,90,28,'updated','ok',{fs:10});
+  if(k==='naive'){arrow(s,200,136,200,36,'bad',{t:'',dash:'3 3'});txt(s,200,160,'read: stale',{c:'bad',fs:10})}
+  if(k==='token'){[220,300,380].forEach(x=>arrow(s,x,136,x,36,'mid',{dash:'3 3'}));arrow(s,460,136,460,36,'ok');txt(s,300,160,'poll: not yet…',{c:'mid',fs:10});txt(s,520,26,'caught up ✓',{c:'ok',fs:10})}
+  if(k==='opt'){box(s,170,10,150,24,'show CANCELLED now','ok',{fs:10});arrow(s,520,136,520,36,'ok',{dash:'3 3'});txt(s,560,160,'refresh later',{c:'ok',fs:10})}
+  $('#clTxt').textContent=CL[k]}
+seg('[data-cl]',b=>cl(b.dataset.cl));cl('naive');
+
+/* datastore chooser */
+const DS={pk:['Document store (MongoDB) or key-value (Redis, DynamoDB)','A JSON object per record, fetched by key: a document is a natural fit.'],text:['Text search engine (Elasticsearch)','Full-text matching over order line items and restaurant names.'],geo:['A store with geospatial indexes (MongoDB, or PostGIS)','findAvailableRestaurants() needs "within N km of here" queries.'],graph:['Graph database (Neo4j)','Friends-of-friends and other traversals.'],sql:['SQL / relational','Reporting, BI tools and SQL queries. Relational is often still the right answer.']};
+function ds(){const v=DS[$('#dsSel').value];$('#dsInfo').innerHTML=`<span class="eyebrow">Suggested view store</span><h3 class="blue">${v[0]}</h3><p>${v[1]}</p>`}
+$('#dsSel').addEventListener('change',ds);ds();
+cards('#dao',[{t:'Handle concurrent updates',c:'d1',d:'Several handlers may update the same view record at once (e.g. events for the same order from different services). Use atomic update operations or optimistic locking, never read-modify-write blindly.'},{t:'Update by primary key or by foreign key',c:'d2',d:'Some events identify the record directly; others (e.g. a restaurant renamed) must update all records referencing it. Most NoSQL stores make the second harder.'},{t:'Be idempotent',c:'d3',d:'Record processed event IDs. If IDs increase monotonically per aggregate, store the max ID seen per aggregate in the view record itself.'},{t:'Tell clients how fresh it is',c:'d4',d:'Expose the processed event IDs so a client can wait for its update to show up.'}]);
+let vr={status:'—',max:0};function vrDraw(){$('#viewRow').innerHTML=`<div class="rowi"><span>order 7 view record</span><b class="mono">status ${vr.status} · maxEventId(Order7)=${vr.max}</b></div>`}
+$$('[data-ev]').forEach(b=>b.addEventListener('click',()=>{const n=+b.dataset.ev;if(n<=vr.max){logLine('#evLog',`event #${n}: ${n}≤${vr.max}, already applied → ignored`,'mid');return}vr={status:['CREATED','APPROVED','DELIVERED'][n-1],max:n};logLine('#evLog',`event #${n} applied; maxEventId=${n} (conditional update)`,'ok');vrDraw()}));
+$('#evR').addEventListener('click',()=>{vr={status:'—',max:0};$('#evLog').innerHTML='';vrDraw()});vrDraw();
+
+/* dynamo */
+const DY=[['o-101','consumer-1','2018-06-02','DELIVERED','pad thai, thai palace'],['o-117','consumer-1','2018-06-09','CANCELLED','burger, burger barn'],['o-130','consumer-2','2018-06-10','DELIVERED','green curry, thai palace'],['o-142','consumer-1','2018-06-15','DELIVERED','green curry, siam house'],['o-150','consumer-2','2018-06-20','APPROVED','ramen, noodle bar']];
+function dy(){const c=$('#dyC').value,st=$('#dyS').value,k=$('#dyK').value.toLowerCase().trim();const rows=DY.filter(r=>r[1]===c).sort((a,b)=>b[2].localeCompare(a[2]));
+  $('#dyT tbody').innerHTML=rows.map(r=>{const hit=(!st||r[3]===st)&&(!k||r[4].includes(k));return `<tr style="opacity:${hit?1:.3}">${r.map(x=>`<td class="mono">${x}</td>`).join('')}</tr>`}).join('');
+  $('#dyQ').textContent=`query(index: ftgo-order-history-by-consumer-id-and-creation-time, consumerId = "${c}", ScanIndexForward=false${st||k?', filter: ':''}${st?'status = '+st:''}${st&&k?' AND ':''}${k?'contains(keywords, "'+k+'")':''}, Limit=page size). Faded rows are read by the index but dropped by the filter.`}
+['dyC','dyS'].forEach(id=>$('#'+id).addEventListener('change',dy));$('#dyK').addEventListener('input',dy);dy();
+
+quiz('#quiz','#qScore',[
+ {q:'Which pattern should you try first for a cross-service query?',o:['API composition','CQRS'],a:0,why:'It\'s the simplest. Move to CQRS when composition is inefficient or impossible.'},
+ {q:'Why is findOrderHistory() hard with API composition?',o:['It needs an in-memory join of large datasets','It needs 2PC'],a:0,why:'The filter spans data owned by different services.'},
+ {q:'How is a CQRS view kept up to date?',o:['Polling the other databases','Subscribing to domain events'],a:1,why:'Event handlers update the view.'},
+ {q:'A user updates then reads and sees old data. This is...',o:['A lost update','Replication lag'],a:1,why:'The view is eventually consistent.'},
+ {q:'How does a view handler ignore a duplicate event cheaply?',o:['Compare with the max event ID stored for that aggregate','Lock the whole table'],a:0,why:'If event IDs increase per aggregate, store the highest one processed.'}]);
+
+})();
+</script>
+</body>
+</html>

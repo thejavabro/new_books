@@ -1,0 +1,516 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>File Formats</title>
+<meta name="description" content="A B-Tree node on disk is just a page of bytes. This chapter is about how to lay those bytes out so that variable-size records fit, keys stay sorted and nothing has to be shuffled more than necessary.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<script>try{var t=localStorage.getItem('dbi:theme');if(t)document.documentElement.dataset.theme=JSON.parse(t)}catch(e){}</script>
+<style>
+/* Shared base for the Database Internals companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+button.tag{cursor:pointer}
+button.tag:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{font-family:var(--mono);font-size:.82rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:0;overflow-x:auto;white-space:pre;max-width:100%}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+pre.code code{border:0;padding:0;background:none}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;max-height:220px;overflow:auto;display:flex;flex-direction:column;gap:2px}
+.log div{white-space:pre-wrap;word-break:break-word}
+.cells{display:flex;flex-wrap:wrap;gap:4px}
+.cell{font-family:var(--mono);font-size:.8rem;min-width:2.4em;padding:4px 6px;text-align:center;border:1px solid var(--line);border-radius:4px;background:var(--paper);transition:background .3s,border-color .3s}
+.cell.hit{background:var(--blue-soft);border-color:var(--blue)}
+.cell.ok{background:var(--ok-soft);border-color:var(--ok)}
+.cell.bad{background:var(--bad-soft);border-color:var(--bad)}
+.cell.mid{background:var(--mid-soft);border-color:var(--mid)}
+.cell.dim{opacity:.35}
+input[type=text],input[type=number]{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+
+/* page */
+
+.bytes{display:flex;flex-wrap:wrap;gap:4px}
+.byte{font-family:var(--mono);font-size:.82rem;padding:6px 8px;border-radius:5px;border:1.5px solid var(--line);background:var(--paper);display:flex;flex-direction:column;align-items:center;gap:1px;min-width:3.2em}
+.byte small{font-size:.62rem;color:var(--muted)}
+.byte.msb{border-color:var(--pencil);background:var(--pencil-soft)}
+.byte.len{border-color:var(--d5);background:var(--blue-soft)}
+.byte.flip{border-color:var(--bad);background:var(--bad-soft)}
+.bits{display:flex;flex-wrap:wrap;gap:2px;font-family:var(--mono);font-size:.8rem}
+.bits span{width:1.35em;text-align:center;padding:3px 0;border-radius:3px}
+.bits .s{background:var(--bad-soft);color:var(--bad)} .bits .e{background:var(--mid-soft);color:var(--mid)} .bits .f{background:var(--blue-soft);color:var(--blue)}
+.flags{display:flex;flex-direction:column;gap:6px}
+.flags label{display:flex;gap:10px;align-items:center;font-size:.92rem;cursor:pointer}
+.flags input{width:18px;height:18px;accent-color:var(--blue)}
+.page{display:flex;flex-direction:column;gap:8px}
+.pagebar{position:relative;height:74px;border:2px solid var(--ink);border-radius:6px;background:var(--surface);overflow:hidden}
+.pagebar>div{position:absolute;top:0;bottom:0;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:.7rem;overflow:hidden;white-space:nowrap;border-right:1px solid var(--surface);transition:left .35s,width .35s}
+.pagebar .hd{background:var(--line);color:var(--ink)}
+.pagebar .ptr{background:var(--blue);color:var(--surface)}
+.pagebar .cl{background:var(--ok-soft);color:var(--ok);border-left:1px solid var(--ok)}
+.pagebar .fr{background:repeating-linear-gradient(45deg,var(--bad-soft),var(--bad-soft) 4px,transparent 4px,transparent 8px);color:var(--bad)}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:.82rem;color:var(--muted)}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:4px;vertical-align:-2px}
+.ptrlist{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-family:var(--mono);font-size:.8rem}
+.ptrlist span{padding:3px 8px;border-radius:4px;background:var(--blue-soft);border:1px solid var(--blue)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Database Internals · visual companion</a><span class="tag">Part I · Chapter 3 of 14</span><button class="tag themebtn" type="button" aria-label="Toggle light and dark theme">Theme</button></div>
+  <h1>File Formats</h1>
+  <p class="lede">A B-Tree node on disk is just a page of bytes. This chapter is about how to lay those bytes out so that variable-size records fit, keys stay sorted and nothing has to be shuffled more than necessary.</p>
+  <nav class="toc" aria-label="Sections"><a href="#why">Why binary</a><a href="#endian">Endianness</a><a href="#floats">Floats and strings</a><a href="#bitflags">Bit flags</a><a href="#record">Record layout</a><a href="#slotted">Slotted pages</a><a href="#versions">Versions and checksums</a><a href="#quiz">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="why" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Why storage formats are hard</h2></div>
+  <p>In memory you call <code>malloc</code>, follow pointers and let the allocator worry about fragmentation. On disk there is no allocator and no garbage collector: you get a file of bytes, accessed block by block, and you decide where every field goes. A storage format has to be <b>compact</b>, <b>easy to traverse</b> and <b>cheap to update</b>. Everything starts with encoding primitive values, then grows into a hierarchy: <b>fields → cells → pages → files</b>.</p>
+  <div class="svgbox"><svg id="hierSvg" viewBox="0 0 660 150" role="img" aria-label="Hierarchy from primitive fields to cells to pages to a file with header and trailer"></svg></div>
+</section>
+
+<section id="endian" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Integers and byte order</h2></div>
+  <p>Fixed-size integers take 1, 2, 4 or 8 bytes. Which byte comes first is the <b>byte order</b>: <b>big-endian</b> writes the most significant byte (MSB) first, <b>little-endian</b> writes the least significant first. Encoder and decoder must agree, so formats pick one and convert explicitly. Type a number.</p>
+  <div class="sheet">
+    <div class="row"><label for="eNum">32-bit value</label><input type="number" id="eNum" value="3735928559" style="width:12em"></div>
+    <div><span class="eyebrow">Big-endian</span><div class="bytes" id="eBig"></div></div>
+    <div><span class="eyebrow">Little-endian</span><div class="bytes" id="eLit"></div></div>
+    <p class="small">Orange marks the most significant byte. Decode little-endian bytes as if they were big-endian and you get a completely different number: <b id="eWrong"></b>.</p>
+  </div>
+</section>
+
+<section id="floats" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Floats, strings and variable-size data</h2></div>
+  <p>Floating-point numbers follow <b>IEEE 754</b>: a sign bit, an exponent and a fraction. A 32-bit float has 1 + 8 + 23 bits, and most decimals can only be approximated. Strings and byte arrays have variable size, so the usual trick is to write the <b>length first</b>, then the bytes (a "Pascal string"). The reader knows exactly how far to slice without scanning for a terminator.</p>
+  <div class="two">
+    <div class="sheet">
+      <div class="row"><label for="fNum">Float</label><input type="number" id="fNum" value="0.1" step="any" style="width:9em"></div>
+      <div class="bits" id="fBits"></div>
+      <p class="small" id="fTxt"></p>
+    </div>
+    <div class="sheet">
+      <div class="row"><label for="sTxt">String</label><input type="text" id="sTxt" value="Leslie" maxlength="20" style="width:10em"></div>
+      <div class="bytes" id="sBytes"></div>
+      <p class="small">Purple: a 2-byte length prefix, then UTF-8 bytes. To skip this field, read the size and jump.</p>
+    </div>
+  </div>
+</section>
+
+<section id="bitflags" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Booleans, enums and flags</h2></div>
+  <p>A boolean only needs one bit, so formats pack eight of them into a byte. <b>Enums</b> become small integers (a node type: root, internal, leaf). <b>Flags</b> are non-exclusive booleans, each owning one bit, set with <code>|</code>, cleared with <code>&amp; ~</code> and tested with <code>&amp;</code>. Toggle the flags of a page header.</p>
+  <div class="two">
+    <div class="sheet">
+      <div class="flags" id="flags"></div>
+      <div class="bits" id="flagBits"></div>
+      <p class="small mono" id="flagVal"></p>
+    </div>
+    <pre class="code" id="flagCode"></pre>
+  </div>
+</section>
+
+<section id="record" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Fixed fields first, variable fields after</h2></div>
+  <p>With a fixed schema there is no need to store field names: position identifies the field. A practical layout puts all <b>fixed-size fields first</b> (they sit at precomputed offsets), followed by the variable-size ones. To find a variable field, you add up the lengths stored in the fixed part. Edit the employee record and watch the offsets.</p>
+  <div class="sheet">
+    <div class="row"><label>First name <input type="text" id="rFirst" value="Ada" maxlength="16" style="width:8em"></label><label>Last name <input type="text" id="rLast" value="Lovelace" maxlength="16" style="width:9em"></label></div>
+    <div class="svgbox"><svg id="rSvg" viewBox="0 0 660 130" role="img" aria-label="Byte layout of an employee record"></svg></div>
+    <p class="small" id="rTxt"></p>
+  </div>
+</section>
+
+<section id="slotted" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Slotted pages</h2></div>
+  <p>The original B-Tree paper stored fixed-size key/value/pointer triplets back to back. That breaks with variable-size records: inserting in the middle shifts everything, and freed holes rarely match new records. The <b>slotted page</b> (used by PostgreSQL, SQLite and many others) splits the page in two: a <b>pointer array</b> grows from the left after the header, <b>cells</b> grow from the right. Cells are appended in arrival order; only the small pointers are kept <b>sorted</b>, so binary search still works. Outside the page, records are referred to by slot ID, so cells can move inside without breaking anything.</p>
+  <div class="sheet">
+    <div class="row"><input type="text" id="spName" value="Ron" maxlength="14" style="width:8em" aria-label="Name to insert"><button class="btn primary" id="spIns">Insert</button><button class="btn" id="spDel">Delete</button><button class="btn" id="spDefrag">Defragment</button><button class="btn" id="spReset">Reset</button></div>
+    <div class="row"><span class="small">Reuse freed space by</span><div class="seg" role="group" aria-label="Fit strategy"><button data-fit="first" aria-pressed="true">First fit</button><button data-fit="best" aria-pressed="false">Best fit</button></div></div>
+    <div class="page">
+      <div class="pagebar" id="spBar"></div>
+      <div class="legend"><span><i style="background:var(--line)"></i>header</span><span><i style="background:var(--blue)"></i>cell pointers</span><span><i style="background:var(--ok-soft);border:1px solid var(--ok)"></i>cells (insertion order)</span><span><i style="background:var(--bad-soft)"></i>freed, on availability list</span></div>
+      <div class="ptrlist" id="spPtrs"></div>
+    </div>
+    <div class="log" id="spLog" aria-live="polite"></div>
+  </div>
+  <div class="cardgrid" id="cellCards"></div>
+</section>
+
+<section id="versions" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Versioning and checksums</h2></div>
+  <p>Formats change, and a new engine must still read old files. The version can live in the <b>file name</b> (Cassandra prefixes data files, e.g. <code>na-1-big-Data.db</code>), in a <b>separate file</b> (PostgreSQL's <code>PG_VERSION</code>) or in the <b>file header</b>, possibly as a magic number. Disks and software also corrupt data, so each page carries a <b>checksum</b> in its header: compute on write, recompute on read, refuse to use the page on mismatch. A plain additive checksum is the weakest; a <b>CRC</b> catches burst errors where several neighbouring bits flip. Neither protects against deliberate tampering: that needs a cryptographic hash.</p>
+  <div class="sheet">
+    <div class="bytes" id="ckBytes"></div>
+    <div class="row"><button class="btn" id="ckFlip">Flip one bit</button><button class="btn" id="ckSwap">Swap two bytes</button><button class="btn" id="ckBurst">Burst: zero 3 bytes</button><button class="btn" id="ckReset">Restore page</button></div>
+    <table class="t"><thead><tr><th>Check</th><th>Stored in header</th><th>Recomputed on read</th><th>Verdict</th></tr></thead><tbody id="ckTbl"></tbody></table>
+  </div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b>Primitives</b><span>Fixed-width integers with an agreed byte order; IEEE 754 floats; length-prefixed strings.</span></div>
+    <div><b class="blue">Bits</b><span>Pack booleans, enums and flags; set with OR, clear with AND NOT, test with AND.</span></div>
+    <div><b>Layout</b><span>Header, pages, optional trailer. Fixed fields first, variable fields after.</span></div>
+    <div><b class="pencil">Slotted pages</b><span>Pointers sorted on the left, cells appended on the right, slots referenced by ID.</span></div>
+    <div><b>Free space</b><span>Availability list with first-fit or best-fit; defragment when fragmented; overflow pages when full.</span></div>
+    <div><b class="okc">Safety</b><span>Version every format; checksum or CRC every page.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Database Internals: A Deep Dive into How Distributed Data Systems Work</i> by Alex Petrov (O'Reilly, 2019). Explanations, examples, code and drawings are original summaries, not copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch02-btree-basics.html"><span>Previous · Chapter 2</span><b>B-Tree Basics</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch04-implementing-btrees.html"><span>Next · Chapter 4</span><b>Implementing B-Trees</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('dbi:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('dbi:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle */
+$$('.themebtn').forEach(b=>b.addEventListener('click',()=>{const r=document.documentElement;const dark=r.dataset.theme?r.dataset.theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches;r.dataset.theme=dark?'light':'dark';store.set('theme',r.dataset.theme)}));
+function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'})[c])}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
+
+
+/* hierarchy */
+(function(){const s=$('#hierSvg');const items=[['field','int32 · 4B','d1',20,70],['cell','key_size|page_id|key','d2',150,130],['page','header · pointers · cells','d3',320,150],['file','header · pages … · trailer','d4',510,140]];
+ items.forEach(([t,sub,c,x,w],i)=>{s.appendChild(el('rect',{x,y:40,width:w,height:70,rx:8,fill:'var(--surface)',stroke:`var(--${c})`,'stroke-width':2}));s.appendChild(el('text',{x:x+w/2,y:68,'text-anchor':'middle','font-size':14,'font-weight':700,fill:`var(--${c})`},t));s.appendChild(el('text',{x:x+w/2,y:90,'text-anchor':'middle','font-size':10.5,fill:'var(--muted)',class:'t-mono'},sub));
+  if(i<3){const nx=items[i+1][3];s.appendChild(el('line',{x1:x+w+4,y1:75,x2:nx-6,y2:75,stroke:'var(--muted)','stroke-width':1.5}));s.appendChild(el('polygon',{points:`${nx-4},75 ${nx-11},71 ${nx-11},79`,fill:'var(--muted)'}))}});
+ s.appendChild(el('text',{x:330,y:140,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},'each level is built from the one on its left'))})();
+
+/* endianness */
+const hex=b=>b.toString(16).padStart(2,'0').toUpperCase();
+function drawE(){let v=Math.floor(+$('#eNum').value);if(!Number.isFinite(v))v=0;v=((v%4294967296)+4294967296)%4294967296;const b=[(v>>>24)&255,(v>>>16)&255,(v>>>8)&255,v&255];
+  const html=(arr,msbIdx)=>arr.map((x,i)=>`<div class="byte${i===msbIdx?' msb':''}">${hex(x)}<small>addr +${i}</small></div>`).join('');
+  $('#eBig').innerHTML=html(b,0);$('#eLit').innerHTML=html([...b].reverse(),3);const w=((b[3]<<24)>>>0)+(b[2]<<16)+(b[1]<<8)+b[0];$('#eWrong').textContent=w.toLocaleString('en-US')}
+$('#eNum').addEventListener('input',drawE);drawE();
+
+/* floats & strings */
+function drawF(){const v=parseFloat($('#fNum').value)||0;const dv=new DataView(new ArrayBuffer(4));dv.setFloat32(0,v);const u=dv.getUint32(0);const bits=u.toString(2).padStart(32,'0');
+  $('#fBits').innerHTML=bits.split('').map((c,i)=>`<span class="${i===0?'s':i<9?'e':'f'}">${c}</span>`).join('');
+  const e=parseInt(bits.slice(1,9),2);$('#fTxt').innerHTML=`<span class="badc">sign</span> ${bits[0]} · <span class="midc">exponent</span> ${e} (−127 = ${e-127}) · <span class="blue">fraction</span> 23 bits. Stored value: <b class="mono">${dv.getFloat32(0).toPrecision(12)}</b>`}
+$('#fNum').addEventListener('input',drawF);drawF();
+function drawS(){const t=new TextEncoder().encode($('#sTxt').value);const n=t.length;$('#sBytes').innerHTML=`<div class="byte len">${hex(n>>8)}<small>len</small></div><div class="byte len">${hex(n&255)}<small>len</small></div>`+Array.from(t).map((x,i)=>`<div class="byte">${hex(x)}<small>${esc(String.fromCharCode(x).replace(/[^\x20-\x7e]/,'·'))}</small></div>`).join('')}
+$('#sTxt').addEventListener('input',drawS);drawS();
+
+/* flags */
+const FL=[['IS_LEAF',0],['VARIABLE_SIZE_VALUES',1],['HAS_OVERFLOW_PAGES',2],['IS_DIRTY',3]];let fv=0b0101;
+$('#flags').innerHTML=FL.map(([n,b])=>`<label><input type="checkbox" data-b="${b}"${fv&(1<<b)?' checked':''}><span class="mono">${n}</span><span class="small">bit ${b}</span></label>`).join('');
+let lastOp='';
+function drawFlags(){$('#flagBits').innerHTML=[7,6,5,4,3,2,1,0].map(b=>`<span class="${fv&(1<<b)?'f':''}" style="${fv&(1<<b)?'':'background:var(--paper)'}">${fv&(1<<b)?1:0}</span>`).join('');$('#flagVal').textContent=`flags = 0b${fv.toString(2).padStart(8,'0')} = ${fv}`;
+  $('#flagCode').textContent=`const IS_LEAF              = 1 << 0;\nconst VARIABLE_SIZE_VALUES = 1 << 1;\nconst HAS_OVERFLOW_PAGES   = 1 << 2;\nconst IS_DIRTY             = 1 << 3;\n\n${lastOp||'// toggle a flag to see the operation'}\n\n// test:\n(flags & HAS_OVERFLOW_PAGES) !== 0  // ${(fv&4)!==0}`}
+$$('#flags input').forEach(c=>c.addEventListener('change',()=>{const b=+c.dataset.b,n=FL.find(f=>f[1]===b)[0];if(c.checked){fv|=1<<b;lastOp=`flags |= ${n};   // set`}else{fv&=~(1<<b);lastOp=`flags &= ~${n};  // clear`}drawFlags()}));drawFlags();
+
+/* record */
+function drawR(){const f=new TextEncoder().encode($('#rFirst').value).length,l=new TextEncoder().encode($('#rLast').value).length;
+  const parts=[['employee_id',4,'d1'],['tax_number',4,'d1'],['date',3,'d1'],['gender',1,'d1'],['first_len',2,'d5'],['last_len',2,'d5'],['first_name',f,'d2'],['last_name',l,'d3']];
+  const tot=parts.reduce((a,p)=>a+p[1],0);const s=$('#rSvg');s.innerHTML='';const sc=620/Math.max(tot,32);let x=20,off=0;
+  parts.forEach(([n,sz,c],i)=>{const w=Math.max(sz*sc,sz?2:0);s.appendChild(el('rect',{x,y:30,width:w,height:40,fill:`var(--${c})`,opacity:i<6?.25:.45,stroke:`var(--${c})`}));
+    if(w>26)s.appendChild(el('text',{x:x+w/2,y:54,'text-anchor':'middle','font-size':9.5,fill:'var(--ink)',class:'t-mono'},w>60?n:n.split('_')[0].slice(0,5)));
+    s.appendChild(el('text',{x,y:88+(i%2)*14,'font-size':9.5,fill:'var(--muted)',class:'t-mono'},off));x+=w;off+=sz});
+  s.appendChild(el('text',{x:20,y:20,'font-size':11,fill:'var(--muted)'},'fixed-size area (16 bytes, static offsets)'));s.appendChild(el('text',{x:Math.min(20+16*sc+6,520),y:20,'font-size':11,fill:'var(--muted)'},'variable-size area'));
+  $('#rTxt').innerHTML=`Total ${tot} bytes. <code>first_name</code> always starts at offset 16. <code>last_name</code> starts at 16 + first_len = <b>${16+f}</b>, so the reader must read <code>first_len</code> first. Storing an offset for each variable field in the fixed area would let you jump straight to any of them.`}
+$('#rFirst').addEventListener('input',drawR);$('#rLast').addEventListener('input',drawR);drawR();
+
+/* slotted page */
+const PS=128,HDR=8,PW=2;let sp,fit='first';
+function spReset(){sp={cells:[],avail:[],ptrs:[],top:PS,log:[]};['Tom','Leslie'].forEach(n=>spInsert(n,1));sp.log=['page starts with Tom then Leslie: cells in insertion order, pointers in key order'];spDraw()}
+function cellSize(n){return 2+n.length*2}
+function spInsert(name,quiet){const sz=cellSize(name);const ptrEnd=HDR+(sp.ptrs.length+1)*PW;let at=null,from='free space';
+  const cands=sp.avail.map((a,i)=>({...a,i})).filter(a=>a.size>=sz);
+  if(cands.length){const c=fit==='first'?cands.sort((a,b)=>a.off-b.off)[0]:cands.sort((a,b)=>a.size-b.size)[0];at=c.off;from=`freed block @${c.off} (${c.size} B, ${c.size-sz} B left over)`;sp.avail.splice(c.i,1);if(c.size>sz)sp.avail.push({off:c.off+sz,size:c.size-sz})}
+  else if(sp.top-sz>=ptrEnd){sp.top-=sz;at=sp.top}
+  else{const freeTot=sp.avail.reduce((a,b)=>a+b.size,0)+(sp.top-ptrEnd);if(!quiet)sp.log.push(freeTot>=sz?`no single gap fits ${name} (${sz} B) though ${freeTot} B are free in total → defragment first`:`page full: ${name} needs an overflow page or a split`);return false}
+  const cell={name,off:at,size:sz};sp.cells.push(cell);let pos=sp.ptrs.findIndex(c=>c.name>name);if(pos<0)pos=sp.ptrs.length;sp.ptrs.splice(pos,0,cell);
+  if(!quiet)sp.log.push(`insert ${name} (${sz} B) into ${from}; pointer placed at slot ${pos}, ${sp.ptrs.length-1-pos} pointer(s) shifted right`);return true}
+function spDelete(name){const i=sp.ptrs.findIndex(c=>c.name===name);if(i<0){sp.log.push(`${name} not on page`);return}const c=sp.ptrs[i];sp.ptrs.splice(i,1);sp.cells.splice(sp.cells.indexOf(c),1);sp.avail.push({off:c.off,size:c.size});sp.log.push(`delete ${name}: drop pointer, cell bytes @${c.off} go on the availability list (nothing moves)`)}
+function spDefrag(){const live=[...sp.cells].sort((a,b)=>b.off-a.off);let top=PS;live.forEach(c=>{top-=c.size;c.off=top});sp.top=top;const n=sp.avail.length;sp.avail=[];sp.log.push(`defragment: rewrite ${live.length} live cells contiguously, ${n} gap(s) reclaimed. Slot IDs unchanged.`)}
+function spDraw(){const bar=$('#spBar');const pct=v=>v/PS*100+'%';let h=`<div class="hd" style="left:0;width:${pct(HDR)}">hdr</div>`;
+  sp.ptrs.forEach((c,i)=>h+=`<div class="ptr" style="left:${pct(HDR+i*PW)};width:${pct(PW)}" title="slot ${i}"></div>`);
+  sp.cells.forEach(c=>h+=`<div class="cl" style="left:${pct(c.off)};width:${pct(c.size)}">${esc(c.name)}</div>`);
+  sp.avail.forEach(a=>h+=`<div class="fr" style="left:${pct(a.off)};width:${pct(a.size)}"></div>`);bar.innerHTML=h;
+  $('#spPtrs').innerHTML='<span class="small" style="background:none;border:0">pointer order:</span>'+sp.ptrs.map((c,i)=>`<span>${i}→@${c.off} ${esc(c.name)}</span>`).join('');
+  $('#spLog').innerHTML=sp.log.slice(-6).map(x=>`<div>${esc(x)}</div>`).join('');$('#spLog').scrollTop=1e5}
+$('#spIns').addEventListener('click',()=>{const n=$('#spName').value.trim();if(!n)return;if(sp.ptrs.some(c=>c.name===n)){sp.log.push(n+' already present');spDraw();return}spInsert(n);spDraw();const pool=['Ann','Maximilian','Bo','Zoe','Kim','Christopher','Al','Eve','Jo'];$('#spName').value=pool[Math.floor(Math.random()*pool.length)]});
+$('#spDel').addEventListener('click',()=>{spDelete($('#spName').value.trim());spDraw()});
+$('#spDefrag').addEventListener('click',()=>{spDefrag();spDraw()});$('#spReset').addEventListener('click',spReset);
+seg('[data-fit]',b=>{fit=b.dataset.fit});spReset();
+cards('#cellCards',[{t:'Key cell',c:'d1',d:'Separator key plus the ID of the child page to its left: [key_size][page_id][key bytes]. Lives in internal nodes.'},{t:'Key-value cell',c:'d2',d:'[flags][key_size][value_size][key bytes][value bytes]. Lives in leaves. Skip the header plus key_size to reach the value.'},{t:'Page IDs, not offsets',c:'d3',d:'Cells name child pages by ID; a lookup table translates IDs to file offsets. Offsets inside a page are page-local, so a smaller integer type will do.'},{t:'Uniform cells',c:'d4',d:'All cells on a page share a kind (key-only or key-value, fixed or variable), so that metadata is stored once in the page header.'}]);
+
+/* checksums */
+const ORIG=[0x4C,0x65,0x73,0x6C,0x69,0x65,0x00,0x2A,0x52,0x6F,0x6E,0x00,0x13,0x37,0x54,0x6F];let pg=[...ORIG],dirty=[];
+const CT=(()=>{const t=[];for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0}return t})();
+const crc32=a=>{let c=0xFFFFFFFF;for(const b of a)c=CT[(c^b)&255]^(c>>>8);return(c^0xFFFFFFFF)>>>0};const sum=a=>a.reduce((x,y)=>(x+y)&0xFFFF,0);
+const S0=sum(ORIG),C0=crc32(ORIG);
+function drawCk(){$('#ckBytes').innerHTML=pg.map((b,i)=>`<div class="byte${dirty.includes(i)?' flip':''}">${hex(b)}<small>${i}</small></div>`).join('');
+  const s=sum(pg),c=crc32(pg);const row=(n,st,now)=>`<tr><td>${n}</td><td class="mono">${st}</td><td class="mono">${now}</td><td>${st===now?(dirty.length?'<b class="badc">passes: corruption missed</b>':'<b class="okc">ok</b>'):'<b class="okc">mismatch: page rejected</b>'}</td></tr>`;
+  $('#ckTbl').innerHTML=row('Additive checksum (16-bit sum)',S0.toString(16),s.toString(16))+row('CRC-32',C0.toString(16),c.toString(16))}
+$('#ckFlip').addEventListener('click',()=>{const i=Math.floor(Math.random()*16);pg[i]^=1<<Math.floor(Math.random()*8);dirty.push(i);drawCk()});
+$('#ckSwap').addEventListener('click',()=>{let i=Math.floor(Math.random()*15);while(pg[i]===pg[i+1])i=(i+1)%15;[pg[i],pg[i+1]]=[pg[i+1],pg[i]];dirty.push(i,i+1);drawCk()});
+$('#ckBurst').addEventListener('click',()=>{const i=Math.floor(Math.random()*13);for(let k=0;k<3;k++){pg[i+k]=0;dirty.push(i+k)}drawCk()});
+$('#ckReset').addEventListener('click',()=>{pg=[...ORIG];dirty=[];drawCk()});drawCk();
+
+quiz('#qQuiz','#qScore',[
+ {q:'The value 0x0A0B0C0D is stored as bytes 0D 0C 0B 0A. Which byte order?',o:['Big-endian','Little-endian'],a:1,why:'Least significant byte first is little-endian.'},
+ {q:'Why put fixed-size fields before variable-size ones?',o:['Better compression','Their offsets can be precomputed','It sorts keys'],a:1,why:'Fixed fields sit at static offsets; only variable fields need offset arithmetic.'},
+ {q:'In a slotted page, what is kept in key order?',o:['The cells','The cell pointers','Both'],a:1,why:'Cells are appended in insertion order; only the small offset array is reordered.'},
+ {q:'Why do outside references use slot IDs rather than byte offsets?',o:['Cells can move inside the page during defragmentation','IDs are smaller','For encryption'],a:0,why:'The slot stays stable while the cell\'s position inside the page may change.'},
+ {q:'Swapping two bytes of a page fools which check?',o:['Additive checksum','CRC-32','Neither'],a:0,why:'Addition is order-independent, so a swap leaves the sum unchanged. CRCs depend on position.'}]);
+
+})();
+</script>
+</body>
+</html>

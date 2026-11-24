@@ -1,0 +1,532 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Anti-Entropy and Dissemination</title>
+<meta name="description" content="Replicas drift. Anti-entropy is the collection of background and foreground tricks that notice the drift and pull replicas back together, and gossip is how news spreads through a large cluster without anyone in charge.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<script>try{var t=localStorage.getItem('dbi:theme');if(t)document.documentElement.dataset.theme=JSON.parse(t)}catch(e){}</script>
+<style>
+/* Shared base for the Database Internals companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+button.tag{cursor:pointer}
+button.tag:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{font-family:var(--mono);font-size:.82rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:0;overflow-x:auto;white-space:pre;max-width:100%}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+pre.code code{border:0;padding:0;background:none}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;max-height:220px;overflow:auto;display:flex;flex-direction:column;gap:2px}
+.log div{white-space:pre-wrap;word-break:break-word}
+.cells{display:flex;flex-wrap:wrap;gap:4px}
+.cell{font-family:var(--mono);font-size:.8rem;min-width:2.4em;padding:4px 6px;text-align:center;border:1px solid var(--line);border-radius:4px;background:var(--paper);transition:background .3s,border-color .3s}
+.cell.hit{background:var(--blue-soft);border-color:var(--blue)}
+.cell.ok{background:var(--ok-soft);border-color:var(--ok)}
+.cell.bad{background:var(--bad-soft);border-color:var(--bad)}
+.cell.mid{background:var(--mid-soft);border-color:var(--mid)}
+.cell.dim{opacity:.35}
+input[type=text],input[type=number]{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+
+/* page */
+
+.reps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.rep{border:1.5px solid var(--line);border-radius:10px;padding:10px;background:var(--surface);display:flex;flex-direction:column;gap:4px;align-items:center;text-align:center}
+.rep .v{font-family:var(--mono);font-size:1.15rem;font-weight:700}
+.rep.stale{border-color:var(--bad)}.rep.fixed{border-color:var(--ok)}.rep.down{border-style:dashed;opacity:.6}
+.bits{display:flex;flex-wrap:wrap;gap:4px}
+.bits button{width:38px;height:38px;border-radius:8px;border:1.5px solid var(--line);background:var(--surface);font-family:var(--mono);font-weight:700}
+.bits button[aria-pressed="true"]{background:var(--blue);color:#fff;border-color:var(--blue)}
+.enc{font-family:var(--mono);font-size:1.1rem;font-weight:700}
+@media (max-width:560px){.reps{grid-template-columns:1fr}}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Database Internals · visual companion</a><span class="tag">Part II · Chapter 12 of 14</span><button class="tag themebtn" type="button" aria-label="Toggle light and dark theme">Theme</button></div>
+  <h1>Anti-Entropy and Dissemination</h1>
+  <p class="lede">Replicas drift. Anti-entropy is the collection of background and foreground tricks that notice the drift and pull replicas back together, and gossip is how news spreads through a large cluster without anyone in charge.</p>
+  <nav class="toc" aria-label="Sections"><a href="#patterns">Three patterns</a><a href="#readrepair">Read repair</a><a href="#digest">Digest reads</a><a href="#hinted">Hinted handoff</a><a href="#merkle">Merkle trees</a><a href="#bvv">Bitmap version vectors</a><a href="#gossip">Gossip</a><a href="#overlay">Overlays and Plumtree</a><a href="#compare">Comparison</a><a href="#quiz">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="patterns" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Three ways to spread information</h2></div>
+  <p>Cluster metadata (who joined, who failed, schema changes) and lost writes both need to reach every node. Three broad patterns: <b>broadcast</b> from one node to everyone (simple, but one sender carries all the load and must be up), <b>anti-entropy</b> where peers periodically compare and fix differences pairwise, and <b>gossip</b>, where every recipient helps spread the update. <i>Entropy</i> here means how far replicas have drifted apart; anti-entropy mechanisms push it back down, either in the background (Merkle trees, logs) or piggybacked on reads and writes (read repair, hinted handoff).</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Pattern"><button data-pt="b" aria-pressed="true">Broadcast</button><button data-pt="a" aria-pressed="false">Anti-entropy</button><button data-pt="g" aria-pressed="false">Gossip</button></div>
+    <div class="svgbox fit"><svg id="ptSvg" viewBox="0 0 400 240" role="img" aria-label="Animation of the chosen propagation pattern"></svg></div>
+    <p class="small" id="ptTxt"></p>
+  </div>
+</section>
+
+<section id="readrepair" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Read repair</h2></div>
+  <p>Reads are a natural moment to spot divergence: the coordinator asks several replicas for the same key and compares answers. If one is behind, it sends it the newer value. <b>Blocking</b> read repair waits for the repair to be acknowledged before replying, which guarantees <b>monotonic reads</b> for quorum reads but costs latency and availability. <b>Asynchronous</b> repair replies first and fixes later.</p>
+  <div class="sheet">
+    <div class="row"><div class="seg" role="group" aria-label="Repair mode"><button data-rr="block" aria-pressed="true">Blocking</button><button data-rr="async" aria-pressed="false">Asynchronous</button></div><button class="btn" id="rrRead">Quorum read (2 of 3)</button><button class="btn" id="rrReset">Reset</button></div>
+    <div class="reps" id="rrReps"></div>
+    <div class="log" id="rrLog" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="digest" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Digest reads</h2></div>
+  <p>Shipping full results from every replica wastes bandwidth. Instead, the coordinator asks <b>one</b> replica for the data and the others for a <b>digest</b>: a hash of what they would have returned. If all digests match the hash of the full read, done. If one differs, the coordinator can't tell who is ahead, so it falls back to full reads from the mismatching replicas and reconciles. The hash needs to be fast rather than cryptographic; a rare collision is caught by other anti-entropy layers.</p>
+  <div class="sheet">
+    <div class="row"><label class="small"><input type="checkbox" id="dgStale"> replica 3 missed the last write</label><button class="btn primary" id="dgGo">Run digest read</button></div>
+    <div class="log" id="dgLog" aria-live="polite"></div>
+    <div class="row"><span class="small">Bytes on the wire:</span><b id="dgBytes"></b></div>
+  </div>
+</section>
+
+<section id="hinted" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Hinted handoff and sloppy quorums</h2></div>
+  <p>Write-side repair. If a target replica doesn't acknowledge, another node keeps a <b>hint</b>: the write plus a note of who it was really for, replayed when the target returns. With a <b>sloppy quorum</b> (Riak), the write may be counted on a healthy node outside the replica set, so writes stay available. The price: a read that only reaches the "real" replicas may miss it.</p>
+  <div class="sheet stepper" id="hhStep">
+    <div class="svgbox fit"><svg id="hhSvg" viewBox="0 0 420 260" role="img" aria-label="Five-node ring with replica set A, B, C"></svg></div>
+  </div>
+</section>
+
+<section id="merkle" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Merkle trees</h2></div>
+  <p>Read repair only fixes keys someone reads. To find differences in cold data without comparing every record, each replica hashes ranges of its data, then hashes pairs of hashes up to a single root. Equal roots mean equal data. If roots differ, descend only into children whose hashes differ. Edit records on replica 2 and watch how few comparisons pinpoint the damage. The catch: a change means recomputing hashes up to the root, and bigger leaves make the tree smaller but repairs coarser.</p>
+  <div class="sheet">
+    <p class="small">Click a leaf range on replica 2 to change one of its records.</p>
+    <div class="svgbox"><svg id="mkSvg" viewBox="0 0 680 330" role="img" aria-label="Two Merkle trees side by side"></svg></div>
+    <div class="row"><button class="btn primary" id="mkCmp">Compare trees</button><button class="btn" id="mkRepair">Repair differing ranges</button><button class="btn" id="mkReset">Reset</button></div>
+    <p id="mkTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="bvv" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Bitmap version vectors</h2></div>
+  <p>Another approach keeps track of exactly <i>which writes</i> each node has seen. Every write coordinated by node n gets a <b>dot</b> (i, n): its local sequence number. A node's view of each peer is a set of dots, stored compactly as <b>(highest contiguous number, bitmap of extras beyond it)</b>. Gaps are exactly the writes to fetch during sync. Once everyone has a contiguous prefix, it can be truncated; a long-dead node blocks truncation.</p>
+  <div class="sheet">
+    <p class="small">Toggle which of P1's writes this node has seen.</p>
+    <div class="bits" id="bits"></div>
+    <div class="row between"><span>Compact form: <span class="enc" id="bvEnc"></span></span><span class="small" id="bvMiss"></span></div>
+  </div>
+</section>
+
+<section id="gossip" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Gossip: spreading like an epidemic</h2></div>
+  <p>Gossip borrows from epidemiology. A node holding new information is <b>infective</b>; one that hasn't heard is <b>susceptible</b>; one that has lost interest is <b>removed</b>. Each round, every infective node contacts <b>fanout</b> random peers. Nodes stop after hearing the rumor again too often (or with some probability per round). Duplicate deliveries (<b>redundancy</b>) are the price of robustness. Messages reach everyone in about log N rounds.</p>
+  <div class="sheet">
+    <div class="row"><label class="rng" style="flex:1"><span>Fanout: <b id="foV"></b></span><input type="range" id="fo" min="1" max="5" value="2"></label><label class="rng" style="flex:1"><span>Stop after <b id="ilV"></b> duplicate(s)</span><input type="range" id="il" min="1" max="5" value="2"></label></div>
+    <div class="row"><button class="btn primary" id="gsRun">Run gossip</button><button class="btn" id="gsStep">One round</button><label class="small"><input type="checkbox" id="gsFail"> 25% of nodes crashed</label></div>
+    <div class="svgbox fit"><svg id="gsSvg" viewBox="0 0 420 300" role="img" aria-label="Sixty nodes coloured by gossip state"></svg></div>
+    <div class="row between small"><span><b style="color:var(--line)">●</b> susceptible <b style="color:var(--bad)">●</b> infective <b style="color:var(--blue)">●</b> removed</span><span id="gsStat" aria-live="polite"></span></div>
+  </div>
+</section>
+
+<section id="overlay" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Overlay networks and hybrid gossip</h2></div>
+  <p>Pure gossip is robust but wasteful. A <b>spanning tree</b> delivers each message exactly once per node in a fixed number of hops, but one broken link cuts off a whole subtree. <b>Plumtree</b> combines both: messages travel eagerly along a tree, while every other link carries only <b>message IDs</b> lazily. A node that sees an ID for a message it never got asks for it and grafts that link into the tree, so the tree heals itself, and tends toward the fastest links.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn primary" id="ptSend">Broadcast from root</button><button class="btn" id="ptBreak">Break a tree link</button><button class="btn" id="ptReset">Reset</button></div>
+    <div class="svgbox fit"><svg id="plSvg" viewBox="0 0 420 260" role="img" aria-label="Spanning tree with lazy links"></svg></div>
+    <p class="small" id="plTxt" aria-live="polite">Solid: eager tree links. Dotted: lazy links that only carry IDs.</p>
+  </div>
+  <div class="callout blue"><b class="h">Partial views (HyParView)</b><span>Nobody needs the full membership list. Each node keeps a small <b>active view</b> (peers it gossips to) and a larger <b>passive view</b> (spares). Nodes periodically <b>shuffle</b> views with peers. When an active peer fails, a passive one is promoted; a node with an empty active view gets priority so newcomers join quickly. Plumtree runs over these views; Riak and Partisan use them.</span></div>
+</section>
+
+<section id="compare" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Choosing an anti-entropy tool</h2></div>
+  <div class="tbl"><table class="t">
+    <thead><tr><th>Mechanism</th><th>When</th><th>Optimizes for</th><th>Repairs</th></tr></thead>
+    <tbody>
+      <tr><td><b>Read repair</b></td><td>On read</td><td>Scope: only queried keys</td><td>Divergent replicas of that key</td></tr>
+      <tr><td><b>Hinted handoff</b></td><td>On failed write</td><td>Scope: single missed writes</td><td>The replica that was down</td></tr>
+      <tr><td><b>Bitmap version vectors</b></td><td>Background</td><td>Recency: recent missed writes</td><td>Exactly the missing dots</td></tr>
+      <tr><td><b>Merkle trees</b></td><td>Background</td><td>Completeness: whole dataset</td><td>Ranges whose hashes differ</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">10</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">11</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b>Read repair</b><span>Compare replies on read; blocking gives monotonic quorum reads.</span></div>
+    <div><b class="blue">Digests</b><span>One full read, hashes from the rest; full reads only on mismatch.</span></div>
+    <div><b>Hints</b><span>Keep a missed write for the down node; sloppy quorums trade consistency for availability.</span></div>
+    <div><b class="pencil">Merkle</b><span>Hash tree; compare top-down to find differing ranges in log steps.</span></div>
+    <div><b>Gossip</b><span>Fanout, interest loss, redundancy; reaches all in ~log N rounds.</span></div>
+    <div><b class="okc">Hybrid</b><span>Plumtree eager tree + lazy IDs; HyParView active/passive views.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Database Internals: A Deep Dive into How Distributed Data Systems Work</i> by Alex Petrov (O'Reilly, 2019). Explanations, examples, code and drawings are original summaries, not copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch11-replication-consistency.html"><span>Previous · Chapter 11</span><b>Replication and Consistency</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch13-distributed-transactions.html"><span>Next · Chapter 13</span><b>Distributed Transactions</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('dbi:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('dbi:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle */
+$$('.themebtn').forEach(b=>b.addEventListener('click',()=>{const r=document.documentElement;const dark=r.dataset.theme?r.dataset.theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches;r.dataset.theme=dark?'light':'dark';store.set('theme',r.dataset.theme)}));
+function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'})[c])}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
+
+
+/* ---- patterns ---- */
+const PN=Array.from({length:10},(_,i)=>{const a=i/10*Math.PI*2-Math.PI/2;return{x:200+Math.cos(a)*95,y:120+Math.sin(a)*95}});let ptTimer=null,ptMode='b';
+function ptRun(){clearInterval(ptTimer);const s=$('#ptSvg');s.innerHTML='';const g1=el('g'),g2=el('g');s.appendChild(g1);s.appendChild(g2);const has=PN.map((_,i)=>i===0);
+  const dots=PN.map((p,i)=>{const c=el('circle',{cx:p.x,cy:p.y,r:13,fill:has[i]?'var(--blue)':'var(--surface)',stroke:'var(--blue)','stroke-width':2});g2.appendChild(c);g2.appendChild(el('text',{x:p.x,y:p.y+4,'text-anchor':'middle','font-size':10,fill:'var(--ink)'},i===0?'src':''));return c});
+  const line=(a,b,c)=>g1.appendChild(el('line',{x1:PN[a].x,y1:PN[a].y,x2:PN[b].x,y2:PN[b].y,stroke:`var(--${c})`,'stroke-width':1.5,opacity:.7}));let t=0;
+  const txt={b:'The source sends to every node itself. Fast for small clusters; the source is a bottleneck and single point of failure.',a:'Each round, random pairs compare state and copy what\'s missing. Slow but thorough: it repairs anything the primary delivery missed.',g:'Every node that has the update forwards it to a couple of random peers. The number of informed nodes roughly doubles each round.'};$('#ptTxt').textContent=txt[ptMode];
+  ptTimer=setInterval(()=>{t++;if(has.every(Boolean)||t>25){clearInterval(ptTimer);return}g1.innerHTML='';
+    if(ptMode==='b'){const k=t;if(k<10){line(0,k,'blue');has[k]=true}}
+    else{const sources=has.map((h,i)=>h?i:-1).filter(i=>i>=0);const pairs=ptMode==='a'?[[Math.floor(Math.random()*10),Math.floor(Math.random()*10)]]:sources.flatMap(s=>[0,1].map(()=>[s,Math.floor(Math.random()*10)]));
+      pairs.forEach(([a,b])=>{if(a===b)return;line(a,b,ptMode==='a'?'pencil':'bad');if(has[a]||has[b]){has[a]=has[b]=true}})}
+    dots.forEach((d,i)=>d.setAttribute('fill',has[i]?'var(--blue)':'var(--surface)'))},ptMode==='a'?350:600)}
+seg('[data-pt]',b=>{ptMode=b.dataset.pt;ptRun()});ptRun();
+
+/* ---- read repair ---- */
+let RR,rrMode='block';function rrReset(){RR={v:['v2','v2','v1'],n:0};rrDraw([]);$('#rrLog').innerHTML='Replica 3 missed the last write (v2).'}
+function rrDraw(hl){$('#rrReps').innerHTML=RR.v.map((v,i)=>`<div class="rep${v==='v1'?' stale':''}${hl.includes(i)&&v==='v2'?' fixed':''}"><b>Replica ${i+1}</b><span class="v">${v}</span></div>`).join('')}
+$('#rrRead').addEventListener('click',()=>{RR.n++;const pick=RR.n%2?[1,2]:[0,2];const got=pick.map(i=>RR.v[i]);const newest=got.includes('v2')?'v2':'v1';const stale=pick.filter(i=>RR.v[i]!==newest);
+  let msg=`Read #${RR.n} asks replicas ${pick.map(i=>i+1).join(' and ')}: got ${got.join(', ')}. `;
+  if(!stale.length)msg+=`They agree. Return ${newest}.`;else if(rrMode==='block'){stale.forEach(i=>RR.v[i]=newest);msg+=`Mismatch: send ${newest} to replica ${stale.map(i=>i+1)}, wait for the ack, then return ${newest}. Extra round trip, but any later quorum read will also see ${newest}.`}
+  else{msg+=`Return ${newest} now; schedule repair of replica ${stale.map(i=>i+1)} in the background.`;setTimeout(()=>{stale.forEach(i=>RR.v[i]=newest);rrDraw(stale);$('#rrLog').innerHTML+=`<br>Background repair of replica ${stale.map(i=>i+1)} done.`},1200)}
+  rrDraw(pick);$('#rrLog').innerHTML=msg});
+seg('[data-rr]',b=>{rrMode=b.dataset.rr;rrReset()});$('#rrReset').addEventListener('click',rrReset);rrReset();
+
+/* ---- digest ---- */
+function h32(s){let h=2166136261;for(const c of s){h^=c.charCodeAt(0);h=Math.imul(h,16777619)>>>0}return h.toString(16).padStart(8,'0')}
+$('#dgGo').addEventListener('click',()=>{const st=$('#dgStale').checked;const full='{user:42,name:"Ana",city:"Lyon"}',old='{user:42,name:"Ana",city:"Oslo"}';const r=[full,full,st?old:full];
+  const lines=[`Full read from replica 1 → ${full.length} B, hash ${h32(full)}`,`Digest from replica 2 → ${h32(r[1])}`,`Digest from replica 3 → ${h32(r[2])}`];let bytes=full.length+16;
+  if(!st)lines.push('<b class="okc">All digests match.</b> Return the full read.');else{lines.push('<b class="badc">Replica 3\'s digest differs.</b> Who is newer is unknown: fetch the full row from replica 3, compare timestamps, keep the newer value, write it back to the stale side.');bytes+=old.length+full.length}
+  $('#dgLog').innerHTML=lines.join('<br>');$('#dgBytes').textContent=`${bytes} B (vs ${full.length*3} B with three full reads)`});
+$('#dgGo').click();
+
+/* ---- hinted handoff ---- */
+const HN=['A','B','C','D','E'].map((n,i)=>{const a=i/5*Math.PI*2-Math.PI/2;return{n,x:210+Math.cos(a)*90,y:125+Math.sin(a)*90}});
+const HS=[{t:'Key k belongs on replicas A, B, C (blue ring). D and E hold other keys.',st:{}},{t:'B crashes. A coordinates a write of k = 9 and needs three acks.',st:{B:'down'}},
+ {t:'Sloppy quorum: A writes to A, C and the next healthy node D. D stores the value with a hint "meant for B". Write succeeds.',st:{B:'down',A:'9',C:'9',D:'9 (hint→B)'}},
+ {t:'Meanwhile a partition leaves only B and C reachable to some client. B is back but empty, so a read of {B, C} may disagree or miss k = 9: sloppy quorums give up consistency for availability.',st:{A:'9',C:'9',D:'9 (hint→B)',B:'—'}},
+ {t:'D notices B is reachable and replays the hint. Once B acknowledges, D deletes its copy. Three real replicas again.',st:{A:'9',B:'9',C:'9',D:''}}];
+$('#hhStep').insertAdjacentHTML('beforeend',stepHTML());stepper('#hhStep',HS.map(h=>h.t),i=>{const s=$('#hhSvg');s.innerHTML='';const st=HS[i].st;
+  s.appendChild(el('circle',{cx:210,cy:125,r:90,fill:'none',stroke:'var(--line)','stroke-width':2}));
+  HN.forEach(p=>{const rep='ABC'.includes(p.n),down=st[p.n]==='down';s.appendChild(el('circle',{cx:p.x,cy:p.y,r:22,fill:down?'var(--bad-soft)':'var(--surface)',stroke:rep?'var(--blue)':'var(--muted)','stroke-width':rep?3:1.5,'stroke-dasharray':down?'4 3':''}));
+    s.appendChild(el('text',{x:p.x,y:p.y+5,'text-anchor':'middle','font-size':15,'font-weight':700,fill:'var(--ink)'},p.n));const v=st[p.n];if(v&&v!=='down'){const right=p.x>=210;s.appendChild(el('text',{x:p.x+(right?28:-28),y:p.y+5,'text-anchor':right?'start':'end','font-size':12,class:'t-mono',fill:v.includes('hint')?'var(--pencil)':'var(--ok)'},'k='+v))}
+    if(down)s.appendChild(el('text',{x:p.x,y:p.y-28,'text-anchor':'middle','font-size':11,fill:'var(--bad)'},'down'))});
+  if(i===4)s.appendChild(el('path',{d:`M${HN[3].x},${HN[3].y-22} Q210,250 ${HN[1].x},${HN[1].y+22}`,fill:'none',stroke:'var(--pencil)','stroke-width':2,'stroke-dasharray':'5 4'}))});
+
+/* ---- Merkle ---- */
+const BASE=['a-c','d-f','g-i','j-l','m-o','p-r','s-u','v-z'];let MK;
+function mkReset(){MK={r1:BASE.map(b=>b+':v1'),r2:BASE.map(b=>b+':v1'),cmp:null};mkDraw();$('#mkTxt').textContent='The two replicas start identical.'}
+function tree(leaves){const L=[leaves.map(h32)];while(L[L.length-1].length>1){const p=L[L.length-1];const n=[];for(let i=0;i<p.length;i+=2)n.push(h32(p[i]+p[i+1]));L.push(n)}return L}
+function mkDraw(){const s=$('#mkSvg');s.innerHTML='';const T1=tree(MK.r1),T2=tree(MK.r2);[[T1,0,'Replica 1'],[T2,345,'Replica 2']].forEach(([T,ox,lab],ti)=>{
+  s.appendChild(el('text',{x:ox+165,y:16,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--ink)'},lab));
+  const pos=(lv,i)=>{const n=T[lv].length;const w=330/n;return{x:ox+w*i+w/2,y:300-lv*66}};
+  for(let lv=T.length-1;lv>=0;lv--)T[lv].forEach((h,i)=>{const p=pos(lv,i);if(lv>0){[0,1].forEach(k=>{const c=pos(lv-1,i*2+k);s.appendChild(el('line',{x1:p.x,y1:p.y+10,x2:c.x,y2:c.y-10,stroke:'var(--line)'}))})}
+    const diff=T1[lv][i]!==T2[lv][i];const checked=MK.cmp&&MK.cmp.has(lv+':'+i);const w=lv===0?38:52;
+    const g=el('g',lv===0&&ti===1?{style:'cursor:pointer',tabindex:0,role:'button'}:{});g.appendChild(el('rect',{x:p.x-w/2,y:p.y-10,width:w,height:20,rx:4,fill:checked?(diff?'var(--bad-soft)':'var(--ok-soft)'):'var(--surface)',stroke:checked?(diff?'var(--bad)':'var(--ok)'):'var(--line)','stroke-width':checked?2:1}));
+    g.appendChild(el('text',{x:p.x,y:p.y+4,'text-anchor':'middle','font-size':lv===0?8.5:9,class:'t-mono',fill:'var(--ink)'},h.slice(0,lv===0?4:6)));
+    if(lv===0){g.appendChild(el('text',{x:p.x,y:p.y+24,'text-anchor':'middle','font-size':9,fill:'var(--muted)'},BASE[i]));if(ti===1)g.addEventListener('click',()=>{const [k,v]=MK.r2[i].split(':v');MK.r2[i]=k+':v'+(+v+1);MK.cmp=null;mkDraw();$('#mkTxt').textContent=`Replica 2 changed a record in range ${k}. Its leaf hash and every hash up to the root were recomputed.`})}
+    s.appendChild(g)})})}
+$('#mkCmp').addEventListener('click',()=>{const T1=tree(MK.r1),T2=tree(MK.r2);MK.cmp=new Set();const diffs=[];const walk=(lv,i)=>{MK.cmp.add(lv+':'+i);if(T1[lv][i]===T2[lv][i])return;if(lv===0){diffs.push(BASE[i]);return}walk(lv-1,i*2);walk(lv-1,i*2+1)};walk(T1.length-1,0);mkDraw();
+  $('#mkTxt').innerHTML=diffs.length?`${MK.cmp.size} hash comparisons found ${diffs.length} differing range(s): <b>${diffs.join(', ')}</b>. Only those ranges need their records exchanged.`:'Root hashes match after one comparison: the replicas hold the same data.'});
+$('#mkRepair').addEventListener('click',()=>{const n=MK.r2.filter((v,i)=>v!==MK.r1[i]).length;MK.r1=MK.r2.map((v,i)=>v>MK.r1[i]?v:MK.r1[i]);MK.r2=[...MK.r1];MK.cmp=null;mkDraw();$('#mkTxt').textContent=n?`Exchanged ${n} range(s); both trees are identical again.`:'Nothing to repair.'});
+$('#mkReset').addEventListener('click',mkReset);mkReset();
+
+/* ---- bitmap version vectors ---- */
+let BV=[1,2,3,5,6,8];function bvDraw(){$('#bits').innerHTML=Array.from({length:12},(_,i)=>`<button aria-pressed="${BV.includes(i+1)}" data-b="${i+1}">${i+1}</button>`).join('');
+  $$('#bits button').forEach(b=>b.addEventListener('click',()=>{const n=+b.dataset.b;BV=BV.includes(n)?BV.filter(x=>x!==n):[...BV,n];bvDraw()}));
+  let base=0;while(BV.includes(base+1))base++;const max=Math.max(0,...BV);let bm='';for(let k=base+1;k<=max;k++)bm=(BV.includes(k)?'1':'0')+bm;
+  $('#bvEnc').textContent=`(${base}, ${bm||'0'}₂)`;const miss=[];for(let k=base+1;k<max;k++)if(!BV.includes(k))miss.push(k);
+  $('#bvMiss').innerHTML=miss.length?`Gaps to fetch from P1: <b>${miss.join(', ')}</b>`:'No gaps up to the highest seen write.'}bvDraw();
+
+/* ---- gossip sim ---- */
+const GN=60;const GP=Array.from({length:GN},(_,i)=>({x:30+(i%10)*40,y:30+Math.floor(i/10)*46}));let GS,gsTimer=null;
+function gsReset(){const fail=$('#gsFail').checked;GS={st:GP.map(()=>'s'),dup:GP.map(()=>0),dead:GP.map((_,i)=>fail&&i>0&&((i*7)%4===0)),round:0,msgs:0,hist:[1]};GS.st[0]='i';gsDraw()}
+function gsRound(){const fo=+$('#fo').value,lim=+$('#il').value;const inf=GS.st.map((s,i)=>s==='i'?i:-1).filter(i=>i>=0);if(!inf.length)return false;GS.round++;
+  inf.forEach(i=>{for(let k=0;k<fo;k++){let j=Math.floor(Math.random()*GN);if(j===i)continue;GS.msgs++;if(GS.dead[j])continue;if(GS.st[j]==='s')GS.st[j]='n';else{GS.dup[i]++}}});
+  GS.st=GS.st.map((s,i)=>s==='n'?'i':(s==='i'&&GS.dup[i]>=lim)?'r':s);GS.hist.push(GS.st.filter((s,i)=>s!=='s'&&!GS.dead[i]).length);gsDraw();return true}
+function gsDraw(){const s=$('#gsSvg');s.innerHTML='';GP.forEach((p,i)=>{const st=GS.st[i];s.appendChild(el('circle',{cx:p.x,cy:p.y,r:12,fill:GS.dead[i]?'none':st==='s'?'var(--line)':st==='r'?'var(--blue)':'var(--bad)',stroke:GS.dead[i]?'var(--muted)':'none','stroke-dasharray':'3 2'}));if(GS.dead[i])s.appendChild(el('text',{x:p.x,y:p.y+4,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},'×'))});
+  const alive=GS.dead.filter(d=>!d).length,got=GS.st.filter((s,i)=>s!=='s'&&!GS.dead[i]).length;$('#gsStat').innerHTML=`round <b>${GS.round}</b> · informed <b>${got}/${alive}</b> · messages <b>${GS.msgs}</b> · redundancy <b>${got>1?(GS.msgs/(got-1)).toFixed(1):'–'}×</b>`;
+  const ch=GS.hist,w=Math.min(20,380/Math.max(ch.length,1));ch.forEach((v,k)=>s.appendChild(el('rect',{x:20+k*w,y:296-v/alive*20,width:w-2,height:v/alive*20,fill:'var(--blue)',opacity:.5})))}
+$('#gsStep').addEventListener('click',()=>{if(!gsRound())gsReset()});$('#gsRun').addEventListener('click',()=>{clearInterval(gsTimer);gsReset();gsTimer=setInterval(()=>{if(!gsRound())clearInterval(gsTimer)},450)});
+['fo','il'].forEach(id=>{const f=()=>{$('#'+id+'V').textContent=$('#'+id).value};$('#'+id).addEventListener('input',()=>{f();gsReset()});f()});$('#gsFail').addEventListener('change',gsReset);gsReset();
+
+/* ---- plumtree ---- */
+const PT={n:[[210,30],[110,100],[310,100],[50,180],[160,180],[260,180],[370,180],[110,240],[300,240]],tree:[[0,1],[0,2],[1,3],[1,4],[2,5],[2,6],[4,7],[5,8]],lazy:[[1,2],[3,4],[4,5],[5,6],[3,7],[7,8],[6,8],[0,4]]};let PL;
+function plReset(){PL={tree:PT.tree.map(e=>[...e]),lazy:PT.lazy.map(e=>[...e]),broken:null,got:[],hl:[]};plDraw()}
+function plDraw(){const s=$('#plSvg');s.innerHTML='';const P=PT.n;const L=(e,o)=>s.appendChild(el('line',{x1:P[e[0]][0],y1:P[e[0]][1],x2:P[e[1]][0],y2:P[e[1]][1],...o}));
+  PL.lazy.forEach(e=>L(e,{stroke:'var(--muted)','stroke-dasharray':'3 4','stroke-width':1.3}));PL.tree.forEach(e=>L(e,{stroke:'var(--blue)','stroke-width':3}));if(PL.broken)L(PL.broken,{stroke:'var(--bad)','stroke-width':3,'stroke-dasharray':'2 6'});
+  PL.hl.forEach(e=>L(e,{stroke:'var(--pencil)','stroke-width':4}));P.forEach((p,i)=>{s.appendChild(el('circle',{cx:p[0],cy:p[1],r:15,fill:PL.got.includes(i)?'var(--ok)':'var(--surface)',stroke:'var(--blue)','stroke-width':2}));s.appendChild(el('text',{x:p[0],y:p[1]+4,'text-anchor':'middle','font-size':11,'font-weight':700,fill:'var(--ink)'},i===0?'root':i))})}
+$('#ptBreak').addEventListener('click',()=>{if(PL.broken)return;const idx=PL.tree.findIndex(e=>e[0]===1&&e[1]===4);PL.broken=PL.tree.splice(idx,1)[0];PL.got=[];PL.hl=[];plDraw();$('#plTxt').textContent='The link 1 → 4 broke. Node 4 and its subtree (7) are cut off from the eager tree.'});
+$('#ptSend').addEventListener('click',async()=>{PL.got=[0];PL.hl=[];plDraw();const adj=i=>PL.tree.filter(e=>e[0]===i).map(e=>e[1]);let frontier=[0];
+  while(frontier.length){await sleep(450);const nx=frontier.flatMap(adj).filter(j=>!PL.got.includes(j));PL.got.push(...nx);frontier=nx;plDraw()}
+  const miss=PT.n.map((_,i)=>i).filter(i=>!PL.got.includes(i));if(!miss.length){$('#plTxt').textContent=`All ${PT.n.length} nodes received the message over ${PL.tree.length} eager links: exactly one copy each. Lazy links carried only IDs.`;return}
+  await sleep(500);const lz=PL.lazy.find(e=>miss.includes(e[1])&&PL.got.includes(e[0]))||PL.lazy.find(e=>miss.includes(e[0])&&PL.got.includes(e[1]));const tgt=miss.includes(lz[1])?lz[1]:lz[0],src=lz[0]===tgt?lz[1]:lz[0];
+  PL.hl=[lz];plDraw();$('#plTxt').textContent=`Node ${tgt} got only an ID over a lazy link from ${src}. It asks ${src} for the message (GRAFT) and promotes that link into the tree.`;await sleep(900);
+  PL.lazy=PL.lazy.filter(e=>e!==lz);PL.tree.push([src,tgt]);PL.lazy.push(PL.broken);PL.broken=null;PL.got.push(tgt);plDraw();await sleep(450);
+  const rest=PL.tree.filter(e=>e[0]===tgt).map(e=>e[1]);PL.got.push(...rest);PL.hl=[];plDraw();$('#plTxt').textContent=`Tree healed: ${src} → ${tgt} is now an eager link and the broken one is demoted to lazy. Every node has the message.`});
+$('#ptReset').addEventListener('click',()=>{plReset();$('#plTxt').textContent='Solid: eager tree links. Dotted: lazy links that only carry IDs.'});plReset();
+
+quiz('#qQuiz','#qScore',[
+ {q:'Which read repair guarantees monotonic quorum reads?',o:['Blocking','Asynchronous'],a:0,why:'The read returns only after stale replicas acknowledge the newer value.'},
+ {q:'A digest from one replica differs. What does the coordinator know?',o:['Which replica is stale','Only that they differ'],a:1,why:'A hash doesn\'t say which side is newer; it needs full reads to reconcile.'},
+ {q:'Sloppy quorums improve…',o:['Consistency','Availability'],a:1,why:'Writes succeed on substitute nodes, but reads of the real replicas may miss them.'},
+ {q:'Merkle tree roots match. What follows?',o:['The replicas hold the same data (barring collisions)','You still need to compare every leaf'],a:0,why:'Root hashes summarise all data underneath.'},
+ {q:'(3, 10110₂) means the node has seen writes…',o:['1–3, 5, 6, 8','1–3, 4, 6, 7'],a:0,why:'Contiguous up to 3, then bits from the right are 4 (0), 5 (1), 6 (1), 7 (0), 8 (1).'}]);
+
+})();
+</script>
+</body>
+</html>

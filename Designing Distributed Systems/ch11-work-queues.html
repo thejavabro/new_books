@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Work Queue Systems</title>
+<meta name="description" content="A work queue takes a pile of independent tasks and spreads them over a pool of workers. Split it into reusable containers and you get a batch system you can assemble from parts.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Designing Distributed Systems companion. Layout: an engineer's notebook on blueprint grid paper.
+   Blue ink = containers, services and requests, orange pencil = the pattern being added, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code listings (short, original) */
+pre.code{margin:0;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-family:var(--mono);font-size:.82rem;line-height:1.5;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)} pre.code .p{color:var(--pencil)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+/* log console used by simulations */
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;height:150px;overflow-y:auto;display:flex;flex-direction:column;gap:2px}
+.log div{white-space:pre-wrap;word-break:break-word}
+.log .ok{color:var(--ok)} .log .bad{color:var(--bad)} .log .mid{color:var(--mid)} .log .blue{color:var(--blue)}
+.note-missing{border:1px dashed var(--line);border-radius:10px;padding:14px 16px;font-size:.93rem;color:var(--muted);background:var(--surface)}
+.stat span.big{font-size:clamp(1.5rem,4.5vw,2.1rem);color:var(--ink)}
+.stat span.big.blue{color:var(--blue)} .stat span.big.badc{color:var(--bad)} .stat span.big.okc{color:var(--ok)} .stat span.big.midc{color:var(--mid)} .stat span.big.pencil{color:var(--pencil)}
+:root{--d1-soft:color-mix(in srgb,var(--d1) 15%,var(--surface));--d2-soft:color-mix(in srgb,var(--d2) 15%,var(--surface));--d3-soft:color-mix(in srgb,var(--d3) 15%,var(--surface));--d4-soft:color-mix(in srgb,var(--d4) 15%,var(--surface));--d5-soft:color-mix(in srgb,var(--d5) 15%,var(--surface));--muted-soft:color-mix(in srgb,var(--muted) 12%,var(--surface));--ink-soft:color-mix(in srgb,var(--ink) 8%,var(--surface))}
+
+/* page */
+
+.api{display:grid;grid-template-columns:minmax(0,200px) minmax(0,1fr);gap:12px}
+@media (max-width:640px){.api{grid-template-columns:1fr}}
+.api .calls{display:flex;flex-direction:column;gap:6px}
+.api .calls button{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:8px 10px;text-align:left;font-family:var(--mono);font-size:.78rem;word-break:break-all}
+.api .calls button[aria-pressed="true"]{background:var(--blue-soft);border-color:var(--blue)}
+.calc{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:640px){.calc{grid-template-columns:1fr}}
+.stage{display:flex;flex-wrap:wrap;gap:8px}
+.stage button{border:1px solid var(--line);background:var(--paper);border-radius:999px;padding:5px 12px;font-size:.88rem}
+.stage button[aria-pressed="true"]{background:var(--pencil-soft);border-color:var(--pencil);color:var(--pencil);font-weight:600}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Designing Distributed Systems · visual companion</a><span class="tag">Part IV · Chapter 11</span></div>
+  <h1>Work Queue Systems</h1>
+  <p class="lede">A work queue takes a pile of independent tasks and spreads them over a pool of workers. Split it into reusable containers and you get a batch system you can assemble from parts.</p>
+  <nav class="toc" aria-label="Sections"><a href="#batch">Batch and work queues</a><a href="#source">Source interface</a><a href="#worker">Worker interface</a><a href="#manager">The manager loop</a><a href="#scale">Scaling workers</a><a href="#multi">Multiworker</a><a href="#check">Quick check</a></nav>
+</header>
+
+<section id="batch" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Batch work, and the simplest batch pattern</h2></div>
+  <p>Part IV turns from servers that run forever to <b>batch</b> jobs that run, finish and stop: rolling up telemetry, weekly sales reports, transcoding video. Batch is about pushing a lot of data through quickly using parallelism. MapReduce is the famous example; the <b>work queue</b> is the simplest. Every item is independent, a pool of workers chews through them, and the pool grows or shrinks so each item finishes in reasonable time.</p>
+  <p>The insight of this chapter: almost all of a work queue is generic. Only two small pieces are specific to your job. Click the boxes.</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="wqSvg" viewBox="0 0 640 230" role="img" aria-label="Work queue built from reusable and user-supplied containers"></svg></div>
+    <div class="detail" id="wqTip" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="source" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>The source container: an ambassador for work</h2></div>
+  <p>The queue manager needs a list of work. Where that list lives varies: files on a network share, objects in a cloud bucket, messages in Kafka or Redis. So the manager talks to a <b>source container</b> in its pod over a tiny HTTP API on localhost. That makes the source an <b>ambassador</b>, and there can be one reusable source per kind of storage. Pick a backend and call the API; the answers have the same shape whatever the backend.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Source backend"><button data-src="nfs" aria-pressed="true">NFS directory</button><button data-src="bucket" aria-pressed="false">Cloud bucket</button><button data-src="kafka" aria-pressed="false">Kafka topic</button></div>
+    <div class="api"><div class="calls" id="calls"></div><pre class="code" id="apiOut" aria-live="polite"></pre></div>
+  </div>
+  <ul class="plain small"><li>Note the <code>v1</code>. Versioning an API on day one costs almost nothing; retrofitting it later is expensive.</li><li>There is no "mark as done" call. Tracking progress is the manager's job, which keeps each source trivially simple.</li></ul>
+</section>
+
+<section id="worker" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>The worker container: a file, not a web server</h2></div>
+  <p>The worker is different. It runs once per item in its <i>own</i> pod, started through the orchestrator, so the manager must hand work across the network. An HTTP endpoint would be overkill (workers are often a shell script around a command-line tool) and a security risk (anyone in the cluster could inject work). So the interface is a file: the manager writes the item's <code>data</code> into a ConfigMap, mounts it, and sets <code>WORK_ITEM_FILE</code> to its path.</p>
+  <div class="two">
+    <pre class="code"><span class="c">#!/bin/sh</span>
+<span class="c"># a complete worker: thumbnail one video</span>
+IN=$(jq -r .path <span class="p">"$WORK_ITEM_FILE"</span>)
+ffmpeg -i "$IN" -vf fps=1/10 thumb%03d.png
+cp thumb*.png /output/$(basename "$IN")/</pre>
+    <div class="stack"><p class="small">The book's video-thumbnailer needs just two user containers: a source that lists <code>*.mp4</code> files on a shared disk, and a worker that runs <code>ffmpeg</code>. Generic workers exist too: "download a file, run the script you pass me, upload the result" covers many queues with no new image at all.</p></div>
+  </div>
+</section>
+
+<section id="manager" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>The shared manager: a loop over Kubernetes Jobs</h2></div>
+  <p>The reusable manager is a short loop. Kubernetes does the heavy lifting: a <b>Job</b> runs a container until it succeeds, even if a machine dies; and labels and annotations on Jobs record which item each one handles. So the manager needs <b>no storage of its own</b>: the list of Jobs <i>is</i> its state. Run it.</p>
+  <div class="sheet">
+    <div class="row between"><div class="row"><button class="btn primary" id="mTick">Run one loop</button><button class="btn" id="mAdd">Drop 3 new videos</button><button class="btn" id="mFail">Fail a machine</button></div><span class="small">every 10 s in real life</span></div>
+    <div class="svgbox"><svg id="mSvg" viewBox="0 0 640 250" role="img" aria-label="Source items, Jobs and their states"></svg></div>
+    <div class="log" id="mLog" aria-live="polite"></div>
+  </div>
+  <pre class="code"><span class="k">while</span> True:
+    items = get(<span class="s">"http://localhost:8000/api/v1/items"</span>)[<span class="s">"items"</span>]
+    jobs  = {j.metadata.name <span class="k">for</span> j <span class="k">in</span> k8s.list_jobs(namespace)}
+    <span class="k">for</span> item <span class="k">in</span> items:
+        <span class="k">if</span> item <span class="k">not in</span> jobs:          <span class="c"># the diff is the whole algorithm</span>
+            k8s.create_job(job_for(item))
+    sleep(10)</pre>
+</section>
+
+<section id="scale" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Keeping up: interarrival time vs. processing time</h2></div>
+  <p>Spawning a Job per item as fast as items arrive creates feast-or-famine load on the cluster. Capping parallelism smooths it, but then items wait. The rule is simple: the <b>effective processing time</b> (time per item ÷ parallelism) must be less than the <b>interarrival time</b> of new items. Otherwise the backlog grows without limit. Tune the system, or let the autoscaler do it.</p>
+  <div class="sheet">
+    <div class="calc">
+      <label class="rng"><span>An item arrives every <b id="iaV">60 s</b></span><input type="range" id="ia" min="10" max="120" step="5" value="60"></label>
+      <label class="rng"><span>Each takes <b id="ptV">120 s</b> to process</span><input type="range" id="pt" min="10" max="300" step="10" value="120"></label>
+      <label class="rng"><span>Workers in parallel: <b id="pV">1</b></span><input type="range" id="par" min="1" max="10" value="1"></label>
+    </div>
+    <div class="row between"><label class="row small"><input type="checkbox" id="auto" style="accent-color:var(--blue);width:18px;height:18px"> autoscale (target: effective time ≤ 90% of interarrival)</label><span class="small">simulated 6 hours with random arrivals</span></div>
+    <div class="svgbox"><svg id="qSvg" viewBox="0 0 640 220" role="img" aria-label="Queue length over time"></svg></div>
+    <p id="qTxt" aria-live="polite"></p>
+  </div>
+  <p class="small">Scaling down is trickier than scaling up; keep a safety margin. Rather than writing your own scaler, the book points to <b>KEDA</b> (Kubernetes Event-Driven Autoscaling), which can scale on queue length in many pub/sub systems, files on disk and more.</p>
+</section>
+
+<section id="multi" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>The multiworker: compose workers from parts</h2></div>
+  <p>Detect faces, tag them with names, blur them. One bespoke worker could do all three, but next month you need to blur license plates instead. The <b>multiworker</b> pattern (a specialization of the adapter) wraps several reusable containers behind the single worker interface. Swap a stage.</p>
+  <div class="sheet">
+    <div class="row"><span class="small">Detector:</span><div class="stage" role="group" aria-label="Detector"><button data-det="faces" aria-pressed="true">faces</button><button data-det="plates" aria-pressed="false">license plates</button></div>
+    <span class="small">Tagger:</span><div class="stage" role="group" aria-label="Tagger"><button data-tag="on" aria-pressed="true">identify</button><button data-tag="off" aria-pressed="false">skip</button></div></div>
+    <div class="svgbox"><svg id="mwSvg" viewBox="0 0 640 170" role="img" aria-label="Multiworker pod chaining detector, tagger and blur containers"></svg></div>
+  </div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Designing Distributed Systems: Patterns and Paradigms for Scalable, Reliable Systems Using Kubernetes</i>, 2nd edition, by Brendan Burns (O'Reilly, 2025). Explanations, code snippets, diagrams and simulations are original summaries, not copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch10-ownership-election.html"><span>Previous · Chapter 10</span><b>Ownership Election</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch12-event-driven-batch.html"><span>Next · Chapter 12</span><b>Event-Driven Batch Processing</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('dds:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('dds:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+
+function bx(s,x,y,w,h,t,sub,c,soft,ex){const g=el('g',ex&&ex.g?ex.g:{});g.appendChild(el('rect',Object.assign({x,y,width:w,height:h,rx:8,fill:soft===false?'var(--surface)':`var(--${c}-soft)`,stroke:`var(--${c})`,'stroke-width':1.6},ex&&ex.r||{})));g.appendChild(el('text',{x:x+w/2,y:y+h/2+(sub?-3:5),'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},t));if(sub)g.appendChild(el('text',{x:x+w/2,y:y+h/2+13,'text-anchor':'middle','font-size':10.5,class:'t-mono',fill:'var(--muted)'},sub));s.appendChild(g);return g}
+
+/* generic queue */
+const WQ={mgr:['Work queue manager','generic','Reusable. Lists items, diffs against existing Jobs, creates Jobs for new items. Written once for everyone.'],src:['Source container','yours (or a library one)','Application-specific: knows where your items live. Generic versions exist for common stores, so often you just pick one.'],k8s:['Kubernetes Jobs','orchestrator','Runs each worker to completion, retries on failure, and remembers what has been done via Job names and annotations.'],wk:['Worker container','yours','Application-specific: knows how to process one item. Reads one file, does the work, exits.']};
+function drawWq(sel){const s=$('#wqSvg');s.innerHTML='';s.appendChild(el('rect',{x:10,y:20,width:330,height:110,rx:14,fill:'none',stroke:'var(--muted)','stroke-dasharray':'6 4'}));s.appendChild(el('text',{x:22,y:38,'font-size':11,class:'t-mono',fill:'var(--muted)'},'manager pod'));
+ const B=[['mgr',30,50,140,64,'surface'],['src',190,50,135,64,'pencil'],['k8s',380,50,130,64,'d5'],['wk',380,150,80,56,'blue'],['wk',470,150,80,56,'blue'],['wk',560,150,70,56,'blue']];
+ s.appendChild(el('line',{x1:170,y1:82,x2:190,y2:82,stroke:'var(--pencil)','stroke-width':2,class:'flow'}));s.appendChild(el('line',{x1:170,y1:100,x2:380,y2:100,stroke:'var(--muted)','stroke-width':2,class:'flow'}));
+ [[420,114,420,150],[445,114,510,150],[470,114,595,150]].forEach(p=>s.appendChild(el('line',{x1:p[0],y1:p[1],x2:p[2],y2:p[3],stroke:'var(--d5)','stroke-width':1.5})));
+ B.forEach(([k,x,y,w,h,c],i)=>{const generic=k==='mgr'||k==='k8s';const g=bx(s,x,y,w,h,({mgr:'queue manager',src:'source',k8s:'Kubernetes Jobs',wk:'worker'})[k],k==='wk'?'item '+(i-2):WQ[k][1],generic?(k==='k8s'?'d5':'muted'):(k==='src'?'pencil':'blue'),generic&&k==='mgr'?false:undefined,{g:{class:'gnode',tabindex:0,role:'button'},r:{'stroke-width':sel===k?3:1.6}});
+  g.addEventListener('click',()=>drawWq(k));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();drawWq(k)}})});
+ s.appendChild(el('text',{x:20,y:220,'font-size':11,fill:'var(--muted)'},'white/grey = shared, reusable · orange/blue = user-supplied'));
+ const w=WQ[sel];$('#wqTip').innerHTML=`<span class="eyebrow">${w[1]}</span><h3>${w[0]}</h3><p>${w[2]}</p>`}
+drawWq('mgr');
+
+/* source api */
+const SRC={nfs:['clip-001.mp4','clip-002.mp4','clip-003.mp4'],bucket:['gs://media/2026/a.mp4','gs://media/2026/b.mp4'],kafka:['offset-1182','offset-1183','offset-1184','offset-1185']};
+let src='nfs',call=0;
+function drawApi(){const items=SRC[src];const calls=['GET /api/v1/items',...items.slice(0,2).map(i=>'GET /api/v1/items/'+i.split('/').pop())];
+ $('#calls').innerHTML=calls.map((c,i)=>`<button data-c="${i}" aria-pressed="${i===call}">${c}</button>`).join('');$$('#calls button').forEach(b=>b.addEventListener('click',()=>{call=+b.dataset.c;drawApi()}));
+ let out;if(call===0)out={kind:'ItemList',apiVersion:'v1',items:items.map(i=>i.split('/').pop())};else{const it=items[call-1];out={kind:'Item',apiVersion:'v1',data:src==='kafka'?{topic:'uploads',offset:+it.split('-')[1],payload:'{"video":"u/77/x.mp4"}'}:{path:it,sizeMB:40+call*13}}}
+ $('#apiOut').textContent=JSON.stringify(out,null,2)}
+seg('[data-src]',b=>{src=b.dataset.src;call=0;drawApi()});drawApi();
+
+/* manager sim */
+let mItems=['clip-001','clip-002','clip-003','clip-004'],jobs={},nextClip=5,machines=[0,0,0];
+function mLog(t,c){const d=document.createElement('div');d.className=c||'';d.textContent=t;$('#mLog').appendChild(d);$('#mLog').scrollTop=1e6}
+function drawM(){const s=$('#mSvg');s.innerHTML='';s.appendChild(el('text',{x:20,y:20,'font-size':12,'font-weight':700,fill:'var(--pencil)'},'source: /items'));s.appendChild(el('text',{x:330,y:20,'font-size':12,'font-weight':700,fill:'var(--d5)'},'Kubernetes Jobs'));
+ mItems.forEach((it,i)=>{const y=30+i*26;if(y>235)return;const j=jobs[it];s.appendChild(el('rect',{x:20,y,width:160,height:22,rx:4,fill:'var(--pencil-soft)',stroke:'var(--pencil)'}));s.appendChild(el('text',{x:28,y:y+15,'font-size':11,class:'t-mono',fill:'var(--ink)'},it+'.mp4'));
+  if(j){const c=j.st==='done'?'ok':j.st==='failed'?'bad':'blue';s.appendChild(el('line',{x1:180,y1:y+11,x2:330,y2:y+11,stroke:'var(--line)'}));s.appendChild(el('rect',{x:330,y,width:290,height:22,rx:4,fill:`var(--${c}-soft)`,stroke:`var(--${c})`}));
+   s.appendChild(el('text',{x:338,y:y+15,'font-size':11,class:'t-mono',fill:'var(--ink)'},`job/${it} · node-${j.node} · ${j.st}${j.tries>1?' (try '+j.tries+')':''}`))}
+  else s.appendChild(el('text',{x:340,y:y+15,'font-size':11,fill:'var(--muted)'},'no job yet'))})}
+$('#mTick').addEventListener('click',()=>{let made=0;Object.values(jobs).forEach(j=>{if(j.st==='running'&&Math.random()<.6)j.st='done';else if(j.st==='retrying'){j.st='running';j.tries++;j.node=(j.node+1)%3}});
+ mItems.forEach(it=>{if(!jobs[it]){jobs[it]={st:'running',node:made%3,tries:1};made++}});mLog(`loop: ${mItems.length} items, ${Object.keys(jobs).length-made} existing jobs → created ${made}`,made?'blue':'');drawM()});
+$('#mAdd').addEventListener('click',()=>{for(let k=0;k<3;k++)mItems.push('clip-'+String(nextClip++).padStart(3,'0'));if(mItems.length>8)mItems=mItems.slice(-8);mLog('3 new files appeared on the share. Next loop will pick them up.','mid');drawM()});
+$('#mFail').addEventListener('click',()=>{const n=(Math.random()*3)|0;let hit=0;Object.values(jobs).forEach(j=>{if(j.node===n&&j.st==='running'){j.st='retrying';hit++}});mLog(`node-${n} died: ${hit} running job(s) will be rescheduled by Kubernetes, not by the manager.`,'bad');drawM()});drawM();
+
+/* scaling sim */
+function simQ(){const ia=+$('#ia').value,pt=+$('#pt').value,auto=$('#auto').checked;let par=+$('#par').value;
+ if(auto){par=Math.max(1,Math.ceil(pt/(0.9*ia)));$('#par').value=Math.min(10,par)}$('#iaV').textContent=ia+' s';$('#ptV').textContent=pt+' s';$('#pV').textContent=par;
+ let seed=7;const rnd=()=>{seed=(seed*16807)%2147483647;return seed/2147483647};const T=6*3600;let t=0,next=0,q=0,busy=[],pts=[];
+ for(t=0;t<=T;t+=10){while(next<=t){q++;next+=-Math.log(1-rnd())*ia}busy=busy.filter(e=>e>t);while(busy.length<par&&q>0){q--;busy.push(t+pt*(.5+rnd()))}if(t%120===0)pts.push(q)}
+ const s=$('#qSvg');s.innerHTML='';const mx=Math.max(10,...pts),X=i=>50+i/(pts.length-1)*570,Y=v=>190-v/mx*170;
+ s.appendChild(el('line',{x1:50,y1:190,x2:620,y2:190,stroke:'var(--line)'}));[0,2,4,6].forEach(h=>s.appendChild(el('text',{x:50+h/6*570,y:206,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},h+'h')));
+ s.appendChild(el('text',{x:44,y:24,'text-anchor':'end','font-size':11,fill:'var(--muted)'},Math.round(mx)));s.appendChild(el('text',{x:44,y:194,'text-anchor':'end','font-size':11,fill:'var(--muted)'},'0'));
+ const eff=pt/par,stable=eff<ia,tight=eff>=0.85*ia&&stable;const c=!stable?'bad':tight?'mid':'ok';
+ s.appendChild(el('path',{d:pts.map((v,i)=>(i?'L':'M')+X(i)+','+Y(v)).join(''),fill:'none',stroke:`var(--${c})`,'stroke-width':2.5}));s.appendChild(el('text',{x:60,y:24,'font-size':12,fill:'var(--muted)'},'items waiting'));
+ $('#qTxt').innerHTML=`Effective time per item: ${pt} ÷ ${par} = <b>${eff.toFixed(0)} s</b> vs. interarrival <b>${ia} s</b>. `+(!stable?'<b class="badc">Losing ground:</b> the queue grows without bound and waits head toward infinity.':tight?'<b class="midc">Balanced on a knife-edge:</b> it recovers from bursts slowly and has no room for growth.':'<b class="okc">Stable with slack:</b> bursts build a backlog that drains in quiet periods.')+(auto?' The autoscaler picked '+par+' workers.':'')}
+['#ia','#pt','#par'].forEach(i=>$(i).addEventListener('input',simQ));$('#auto').addEventListener('change',simQ);simQ();
+
+/* multiworker */
+let det='faces',tag='on';
+function drawMw(){const s=$('#mwSvg');s.innerHTML='';s.appendChild(el('rect',{x:110,y:15,width:520,height:140,rx:14,fill:'none',stroke:'var(--muted)','stroke-dasharray':'6 4'}));s.appendChild(el('text',{x:122,y:33,'font-size':11,class:'t-mono',fill:'var(--muted)'},'one worker pod · implements WORK_ITEM_FILE'));
+ bx(s,10,60,80,50,'item','image','muted',false);bx(s,130,50,120,64,'aggregator','adapter','ok');const st=[[det==='faces'?'face-detect':'plate-detect','reusable','blue'],...(tag==='on'?[[det==='faces'?'face-tag':'plate-OCR','reusable','d2']]:[]),['blur','reusable','pencil']];
+ s.appendChild(el('line',{x1:90,y1:85,x2:130,y2:85,stroke:'var(--muted)','stroke-width':2}));
+ st.forEach((x,i)=>{const X=280+i*(340/st.length);bx(s,X,55,340/st.length-14,56,x[0],x[1],x[2]);s.appendChild(el('line',{x1:i?X-14:250,y1:83,x2:X,y2:83,stroke:'var(--ok)','stroke-width':2,class:'flow'}))});
+ s.appendChild(el('text',{x:370,y:140,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},'swap a container, keep the rest: '+st.length+' stages, 1 worker interface'))}
+seg('[data-det]',b=>{det=b.dataset.det;drawMw()});seg('[data-tag]',b=>{tag=b.dataset.tag;drawMw()});drawMw();
+
+quiz('#qQuiz','#qScore',[
+ {q:'The source container in the manager\'s pod is an example of which single-node pattern?',o:['Sidecar','Ambassador','Adapter'],a:1,why:'It brokers the manager\'s requests out to wherever the work really lives.'},
+ {q:'Why does the worker get its item as a file rather than over HTTP?',o:['Speed','Simplicity and security'],a:1,why:'One-off call, shell-script friendly, and nobody else in the cluster can inject work.'},
+ {q:'Where does the generic manager keep track of finished items?',o:['Its own database','The Kubernetes Job objects'],a:1,why:'Jobs and their annotations are the state; the manager stores nothing itself.'},
+ {q:'Items arrive every 60 s and take 4 minutes each. Minimum workers to keep up?',o:['4','5'],a:1,why:'240 ÷ 4 = 60 s is exactly balanced, with no slack; 5 gives 48 s < 60 s.'},
+ {q:'Detect + tag + blur built from three reusable containers behind one worker interface is the...',o:['Multiworker pattern','Merger pattern'],a:0,why:'An adapter-style aggregator that composes worker containers.'}]);
+
+})();
+</script>
+</body>
+</html>

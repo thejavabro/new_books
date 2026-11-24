@@ -1,0 +1,544 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Interprocess Communication</title>
+<meta name="description" content="Services are separate processes, so every collaboration goes over the network. This chapter compares interaction styles, synchronous RPC and asynchronous messaging, and the techniques that make each reliable.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Microservices Patterns companion. Blueprint grid paper: blue = services and structure, orange = messages and data in flight, green = success, red = failure.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+button.theme{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted)}
+button.theme:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-family:var(--mono);font-size:.8rem;line-height:1.5;overflow-x:auto;white-space:pre;max-width:100%}
+.code .k{color:var(--d5)} .code .s{color:var(--d2)} .code .c{color:var(--muted);font-style:italic}
+.pattern{border:1px solid var(--line);border-left:4px solid var(--d2);background:var(--surface);border-radius:0 10px 10px 0;padding:12px 16px;display:flex;flex-direction:column;gap:4px}
+.pattern .eyebrow{color:var(--d2)}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:5em;max-height:14em;overflow:auto;display:flex;flex-direction:column;gap:2px}
+.chip.on{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+button.chip{cursor:pointer}
+
+/* page */
+
+.grid2x3{display:grid;grid-template-columns:auto repeat(2,minmax(0,1fr));gap:6px;font-size:.92rem}
+.grid2x3>div{padding:8px 10px;border-radius:8px}
+.grid2x3 .h{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;display:flex;align-items:center}
+.grid2x3 button{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:8px 10px;text-align:left;font-weight:600}
+.grid2x3 button[aria-pressed="true"]{background:var(--blue-soft);border-color:var(--blue)}
+@media (max-width:560px){.grid2x3{font-size:.82rem}.grid2x3>div,.grid2x3 button{padding:6px}}
+.grid2x3 button,.grid2x3 .na{overflow-wrap:anywhere}
+.grid2x3 .na{border:1px dashed var(--line);color:var(--muted);font-size:.85rem}
+.cb{display:flex;gap:8px;flex-wrap:wrap}
+.state{font-family:var(--mono);font-weight:600;padding:4px 10px;border-radius:6px}
+.lvl{display:flex;flex-direction:column-reverse;gap:6px}
+.lvl button{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:8px 12px;text-align:left}
+.lvl button[aria-pressed="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Microservices Patterns · visual companion</a><span class="tag">Chapter 3 of 13 · Foundations</span><button class="theme" type="button">Dark theme</button></div>
+  <h1>Interprocess Communication</h1>
+  <p class="lede">Services are separate processes, so every collaboration goes over the network. This chapter compares interaction styles, synchronous RPC and asynchronous messaging, and the techniques that make each reliable.</p>
+  <nav class="toc" aria-label="Sections"><a href="#styles">Interaction styles</a><a href="#apis">APIs and versions</a><a href="#rpi">REST and gRPC</a><a href="#breaker">Circuit breaker</a><a href="#discovery">Service discovery</a><a href="#messaging">Messaging</a><a href="#ordering">Order and duplicates</a><a href="#outbox">Transactional outbox</a><a href="#availability">Availability</a><a href="#check">Quick check</a></nav>
+</header>
+
+<section id="styles" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Interaction styles</h2></div>
+  <p>In a monolith, modules call each other with method calls. In a microservice architecture, services are separate processes, so they must use <b>interprocess communication</b> (IPC). Before picking a technology, pick an interaction style. Two dimensions: is it <b>one-to-one</b> or <b>one-to-many</b>, and is it <b>synchronous</b> (the client waits, and may even block) or <b>asynchronous</b>?</p>
+  <div class="sheet">
+    <div class="grid2x3" id="ix"></div>
+    <div class="detail" id="ixInfo" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="apis" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Defining and evolving APIs</h2></div>
+  <p>Whatever the IPC, a service's API is a contract. The book recommends <b>API-first design</b>: write the interface definition (OpenAPI for REST, a .proto file for gRPC, channels and message types for messaging) and review it with client developers before you write code.</p>
+  <p>APIs change, and in a microservice architecture you can't update all clients in lockstep. Use <b>semantic versioning</b>: MAJOR for incompatible changes, MINOR for backward-compatible additions, PATCH for compatible fixes. Make clients and servers follow the <b>robustness principle</b>: be conservative in what you send, liberal in what you accept, so additions don't break anyone. Which part of the version does each change bump?</p>
+  <div class="sheet"><div class="row between"><h3>Version bump</h3><span class="score" id="svScore"></span></div><div class="quiz" id="svQuiz"></div></div>
+  <div class="callout blue"><b class="h">Message formats</b><span><b>Text</b> formats (JSON, XML) are self-describing and readable, and a consumer can ignore fields it doesn't know. They are verbose and slow to parse. <b>Binary</b> formats (Protocol Buffers, Avro) are compact and typed via a schema, which makes compatibility easier to check, but you need tooling. Avro readers need the writer's schema; Protocol Buffers uses tagged fields.</span></div>
+</section>
+
+<section id="rpi" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Synchronous RPI: REST and gRPC</h2></div>
+  <p>In the <b>Remote procedure invocation</b> pattern, the client's business logic calls a proxy interface; a proxy adapter sends the request, and a server adapter calls the service's business logic. <b>REST</b> models the API as resources addressed by URLs and manipulated with HTTP verbs. Leonard Richardson's maturity model rates how RESTful an API is. Climb the levels.</p>
+  <div class="sheet two">
+    <div class="lvl" id="lvl"></div>
+    <div class="detail" id="lvlInfo" aria-live="polite"></div>
+  </div>
+  <div class="cardgrid" id="restCards"></div>
+  <pre class="code" aria-label="A tiny protobuf-like service definition"><span class="c">// gRPC: the API is a protocol-buffers IDL, compiled into client and server stubs</span>
+<span class="k">service</span> OrderService {
+  <span class="k">rpc</span> createOrder(CreateOrderRequest) <span class="k">returns</span> (CreateOrderReply);
+  <span class="k">rpc</span> cancelOrder(CancelOrderRequest) <span class="k">returns</span> (CancelOrderReply);
+}
+<span class="k">message</span> CreateOrderRequest { int64 consumerId = 1; repeated LineItem items = 2; }</pre>
+  <p class="small">gRPC is a binary, HTTP/2-based framework with compact messages, efficient streaming in both directions, and a natural place for operations that don't fit CRUD. On the downside, JavaScript clients and older firewalls may struggle with it.</p>
+</section>
+
+<section id="breaker" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Partial failure and the circuit breaker</h2></div>
+  <p>A remote service can be down or, worse, slow. If the Order Service keeps waiting on an unresponsive dependency, its threads pile up and it fails too: a <b>cascading failure</b>. The book's recipe: <b>network timeouts</b>, a <b>limit on outstanding requests</b>, and the <b>Circuit breaker pattern</b>, which stops calling a service once its error rate crosses a threshold and tries again after a cool-off. Play with it.</p>
+  <div class="sheet">
+    <div class="row"><span>Downstream service is</span><div class="seg" role="group" aria-label="Health"><button data-h="up" aria-pressed="true">healthy</button><button data-h="down" aria-pressed="false">failing</button></div></div>
+    <div class="row"><button class="btn primary" id="cbSend">Send 1 request</button><button class="btn" id="cbBurst">Send 5</button><button class="btn" id="cbWait">Wait out the timeout</button><span>Breaker: <span class="state" id="cbState"></span></span></div>
+    <div class="svgbox"><svg id="cbSvg" viewBox="0 0 640 150" role="img" aria-label="Circuit breaker state machine: closed, open, half-open"></svg></div>
+    <div class="log" id="cbLog" aria-live="polite"></div>
+  </div>
+  <div class="callout"><b class="h">Then what? Recover</b><span>When a call fails, decide per case: return an error to your client, or return a <b>fallback</b> such as a cached or default value. If a restaurant's estimated delivery time is unavailable, you can omit it. If the order itself can't be loaded, there is no sensible fallback.</span></div>
+</section>
+
+<section id="discovery" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Service discovery</h2></div>
+  <p>Service instances come and go, with addresses assigned dynamically. Clients need a <b>service registry</b>: a database of available instances. There are two families. Toggle them.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Discovery approach"><button data-d="app" aria-pressed="true">Application-level</button><button data-d="plat" aria-pressed="false">Platform-provided</button></div>
+    <div class="svgbox"><svg id="dSvg" viewBox="0 0 640 250" role="img" aria-label="Service discovery diagram"></svg></div>
+    <p id="dTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="messaging" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Asynchronous messaging</h2></div>
+  <p>With the <b>Messaging pattern</b>, services exchange messages over <b>channels</b>. A message has a header (an ID, maybe a return address) and a body. There are three kinds: a <b>document</b> (just data, such as a reply), a <b>command</b> (please do X) and an <b>event</b> (X happened). Channels are either <b>point-to-point</b> (one consumer gets each message: good for commands) or <b>publish-subscribe</b> (every subscriber gets a copy: good for events).</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Channel type"><button data-ch="p2p" aria-pressed="true">Point-to-point</button><button data-ch="ps" aria-pressed="false">Publish-subscribe</button></div>
+    <div class="svgbox"><svg id="chSvg" viewBox="0 0 640 200" role="img" aria-label="Messages flowing through a channel"></svg></div>
+    <div class="row"><button class="btn primary" id="chSend">Send a message</button><span class="small" id="chTxt"></span></div>
+  </div>
+  <div class="cardgrid" id="brokerCards"></div>
+</section>
+
+<section id="ordering" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Scaling consumers without losing order, and handling duplicates</h2></div>
+  <p>To scale, you run several instances of a consumer as <b>competing receivers</b>. But then two updates to the same order can be processed out of order. The fix, used by Kafka and Kinesis, is a <b>sharded</b> (partitioned) channel: the sender puts a shard key such as the order ID on each message, all messages with that key go to the same shard, and each shard is read by one consumer instance at a time. Send some events.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn" data-o="101">Event for order 101</button><button class="btn" data-o="202">Event for order 202</button><button class="btn" data-o="303">Event for order 303</button><button class="btn" id="shReset">Reset</button></div>
+    <div class="svgbox"><svg id="shSvg" viewBox="0 0 640 220" role="img" aria-label="Sharded channel with three shards and three consumer instances"></svg></div>
+  </div>
+  <p>Most brokers promise <b>at-least-once</b> delivery, so a crash can redeliver a message. Either write <b>idempotent</b> handlers, or record the IDs of processed messages in the same database transaction as the business update and discard repeats.</p>
+  <div class="sheet">
+    <div class="row"><span>Handler</span><div class="seg" role="group" aria-label="Handler"><button data-dd="naive" aria-pressed="true">naive</button><button data-dd="track" aria-pressed="false">tracks message IDs</button></div><button class="btn primary" id="ddSend">Deliver msg-42 (credit $10)</button></div>
+    <div class="row between"><span>Account balance: <b class="mono" id="ddBal">$0</b></span><span class="small mono" id="ddSeen"></span></div>
+    <div class="log" id="ddLog" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="outbox" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Transactional messaging: the outbox</h2></div>
+  <p>A service usually needs to update its database <i>and</i> send a message, atomically. If it commits and then crashes before sending, the message is lost; if it sends first and then the transaction rolls back, it has announced something that never happened. Distributed transactions across the database and broker are not an option for most modern brokers. The <b>Transactional outbox</b> writes the message into an OUTBOX table in the same local transaction, and a separate <b>message relay</b> publishes it. Step through.</p>
+  <div class="sheet stepper" id="obStep">
+    <div class="seg" role="group" aria-label="Relay"><button data-rel="poll" aria-pressed="true">Polling publisher</button><button data-rel="tail" aria-pressed="false">Transaction log tailing</button></div>
+    <div class="svgbox"><svg id="obSvg" viewBox="0 0 640 230" role="img" aria-label="Transactional outbox"></svg></div>
+  </div>
+  <p class="small">Frameworks such as the author's Eventuate Tram package these patterns (plus duplicate detection and command and reply channels) behind simple APIs, so you don't use a raw broker client directly.</p>
+</section>
+
+<section id="availability" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Asynchronous messaging improves availability</h2></div>
+  <p>If <code>createOrder()</code> has to synchronously call three other services before it can answer, its availability is the product of all four. Slide the numbers.</p>
+  <div class="sheet">
+    <label class="rng"><span>Availability of each service: <b id="avV"></b></span><input type="range" id="av" min="900" max="9999" value="995"></label>
+    <label class="rng"><span>Services called synchronously: <b id="nV"></b></span><input type="range" id="n" min="0" max="8" value="3"></label>
+    <div class="bars" id="avBars"></div>
+    <p class="small" id="avTxt"></p>
+  </div>
+  <div class="cardgrid" id="availCards"></div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">10</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="quiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Microservices Patterns: With examples in Java</i> by Chris Richardson (Manning, 2019). Explanations, code snippets, diagrams and simulations are original summaries written for this companion; nothing is copied from the book's figures or listings.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch02-decomposition-strategies.html"><span>Previous · Chapter 2</span><b>Decomposition Strategies</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch04-sagas.html"><span>Next · Chapter 4</span><b>Managing Transactions with Sagas</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('mp:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('mp:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: button.theme switches light/dark, remembered per viewer */
+(function(){const r=document.documentElement;const t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+  const cur=()=>r.getAttribute('data-theme')||(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+  const lab=()=>$$('button.theme').forEach(x=>x.textContent=cur()==='dark'?'Light theme':'Dark theme');lab();
+  $$('button.theme').forEach(b=>b.addEventListener('click',()=>{const n=cur()==='dark'?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n);lab()}))})();
+/* drawing helpers */
+function box(svg,x,y,w,h,t,c,o){o=o||{};const g=el('g',{class:o.cls||''});c=c||'blue';
+  g.appendChild(el('rect',{x,y,width:w,height:h,rx:o.rx!=null?o.rx:8,fill:o.fill||'var(--surface)',stroke:`var(--${c})`,'stroke-width':o.sw||1.8,'stroke-dasharray':o.dash||''}));
+  const L=String(t).split('\n');const fs=o.fs||12.5;L.forEach((l,i)=>g.appendChild(el('text',{x:x+w/2,y:y+h/2+(i-(L.length-1)/2)*(fs+3)+fs*.36,'text-anchor':'middle','font-size':fs,'font-weight':o.fw||600,fill:o.tc||'var(--ink)'},l)));
+  svg.appendChild(g);return g}
+function arrow(svg,x1,y1,x2,y2,c,o){o=o||{};c=c||'muted';const g=el('g',{class:o.cls||''});const dx=x2-x1,dy=y2-y1,L=Math.hypot(dx,dy)||1,ux=dx/L,uy=dy/L,px=-uy,py=ux;
+  g.appendChild(el('line',{x1,y1,x2:x2-ux*8,y2:y2-uy*8,stroke:`var(--${c})`,'stroke-width':o.sw||2,'stroke-dasharray':o.dash||'',class:o.flow?'flow':''}));
+  g.appendChild(el('polygon',{points:`${x2},${y2} ${x2-ux*10+px*5},${y2-uy*10+py*5} ${x2-ux*10-px*5},${y2-uy*10-py*5}`,fill:`var(--${c})`}));
+  if(o.t)g.appendChild(el('text',{x:(x1+x2)/2+(o.dx||0),y:(y1+y2)/2-6+(o.dy||0),'text-anchor':'middle','font-size':o.fs||11,fill:`var(--${o.tcol||c})`,class:o.mono?'t-mono':''},o.t));
+  svg.appendChild(g);return g}
+function txt(svg,x,y,t,o){o=o||{};const e=el('text',{x,y,'text-anchor':o.a||'middle','font-size':o.fs||11,'font-weight':o.fw||400,fill:`var(--${o.c||'muted'})`,class:o.mono?'t-mono':''},t);svg.appendChild(e);return e}
+/* sequence diagram: lanes [{t,c}], msgs [{f,t,l,c,dash}] (f===t draws a self-call); returns apply(i) showing messages 0..i */
+function seqDiagram(svgSel,lanes,msgs,opt){opt=opt||{};const svg=typeof svgSel==='string'?$(svgSel):svgSel;const W=opt.w||640;const n=lanes.length;const gap=W/n;const top=opt.top||50,dy=opt.dy||30;
+  const H=top+msgs.length*dy+14;svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.innerHTML='';
+  const X=i=>gap/2+i*gap;
+  lanes.forEach((l,i)=>{svg.appendChild(el('line',{x1:X(i),y1:38,x2:X(i),y2:H-4,stroke:'var(--line)','stroke-dasharray':'4 4'}));const w=Math.min(gap-8,140);box(svg,X(i)-w/2,4,w,32,l.t,l.c||'blue',{fs:11})});
+  const rows=msgs.map((m,k)=>{const y=top+10+k*dy;const g=el('g',{class:'fade'});const c=`var(--${m.c||'blue'})`;
+    if(m.f===m.t){const x=X(m.f);g.appendChild(el('path',{d:`M${x},${y-7} h22 v12 h-14`,fill:'none',stroke:c,'stroke-width':1.8}));g.appendChild(el('polygon',{points:`${x},${y+5} ${x+9},${y+1} ${x+9},${y+9}`,fill:c}));
+      g.appendChild(el('text',{x:x+(m.f===n-1?-6:28),y:y+3,'text-anchor':m.f===n-1?'end':'start','font-size':10.5,fill:'var(--ink)'},m.l))}
+    else{const a=X(m.f),b=X(m.t),d=b>a?1:-1;g.appendChild(el('line',{x1:a,y1:y,x2:b-d*8,y2:y,stroke:c,'stroke-width':1.8,'stroke-dasharray':m.dash?'5 4':''}));
+      g.appendChild(el('polygon',{points:`${b},${y} ${b-d*9},${y-4.5} ${b-d*9},${y+4.5}`,fill:c}));
+      g.appendChild(el('text',{x:(a+b)/2,y:y-5,'text-anchor':'middle','font-size':10.5,fill:'var(--ink)'},m.l))}
+    svg.appendChild(g);return g});
+  return function(i){rows.forEach((g,k)=>g.classList.toggle('off',k>i))}}
+/* simple tabs: buttons [data-tab] inside .seg, panels [data-panel] */
+function tabs(rootSel){const r=$(rootSel);const bs=r.querySelectorAll('[data-tab]');bs.forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);r.querySelectorAll('[data-panel]').forEach(p=>p.hidden=p.dataset.panel!==b.dataset.tab)}))}
+function logLine(sel,html,c){const r=$(sel);const d=document.createElement('div');d.innerHTML=html;if(c)d.style.color=`var(--${c})`;r.appendChild(d);r.scrollTop=r.scrollHeight}
+
+
+/* interaction styles */
+const IX={rr:['Request/response','One-to-one, synchronous','The client sends a request and waits for a timely response, possibly blocking. Typical of REST and gRPC. Tends to couple services tightly.'],
+ arr:['Asynchronous request/response','One-to-one, asynchronous','The client sends a request; the reply arrives later. The client doesn\'t block and assumes the answer may not come right away.'],
+ ow:['One-way notification','One-to-one, asynchronous','The client sends a request and expects no reply at all.'],
+ ps:['Publish/subscribe','One-to-many, asynchronous','A client publishes a notification; zero or more interested services consume it.'],
+ pa:['Publish/async responses','One-to-many, asynchronous','A client publishes a request and waits a while for responses from interested services.']};
+$('#ix').innerHTML=`<div></div><div class="h">One-to-one</div><div class="h">One-to-many</div><div class="h">Synchronous</div><button data-k="rr">Request/response</button><div class="na">not a thing</div><div class="h">Asynchronous</div><div class="stack" style="gap:6px"><button data-k="arr">Async request/response</button><button data-k="ow">One-way notification</button></div><div class="stack" style="gap:6px"><button data-k="ps">Publish/subscribe</button><button data-k="pa">Publish/async responses</button></div>`;
+function ixs(k){$$('#ix button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.k===k));const v=IX[k];$('#ixInfo').innerHTML=`<span class="eyebrow">${v[1]}</span><h3 class="blue">${v[0]}</h3><p>${v[2]}</p>`}
+$$('#ix button').forEach(b=>b.addEventListener('click',()=>ixs(b.dataset.k)));ixs('rr');
+
+quiz('#svQuiz','#svScore',[
+ {q:'Add an optional field to a request',a:1,why:'Backward compatible: old clients simply don\'t send it.'},
+ {q:'Rename a required attribute in the response',a:0,why:'Old clients break, so it\'s a major change; support both versions for a while.'},
+ {q:'Fix a bug without changing the interface',a:2,why:'A patch.'},
+ {q:'Add a new operation',a:1,why:'Additions are minor.'},
+ {q:'Remove an operation some clients still use',a:0,why:'Breaking. In REST you might expose /v1/ and /v2/ paths or use a MIME-type version until clients migrate.'}],['MAJOR','MINOR','PATCH']);
+
+/* REST maturity */
+const LV=[['Level 0','Clients send HTTP POST to a single URL endpoint, naming the action and parameters in the body. RPC over HTTP.'],['Level 1','The API knows about resources. A POST to a resource\'s URL specifies the action.'],['Level 2','HTTP verbs do the work: GET to read, POST to create, PUT to update. Query parameters and bodies carry the arguments. Infrastructure such as caching for GET works.'],['Level 3','HATEOAS: a GET response contains links to the actions that are allowed on the resource, so clients don\'t hard-wire URLs.']];
+$('#lvl').innerHTML=LV.map((l,i)=>`<button data-i="${i}" aria-pressed="${i===2}"><b>${l[0]}</b></button>`).join('');
+function lv(i){$('#lvlInfo').innerHTML=`<span class="eyebrow">Richardson maturity model</span><h3 class="blue">${LV[i][0]}</h3><p>${LV[i][1]}</p>`}
+seg('#lvl button',b=>lv(+b.dataset.i));lv(2);
+cards('#restCards',[{t:'REST pros',c:'ok',d:'Simple and familiar; easy to test with a browser or curl; request/response built in; firewall friendly; no broker to run.'},{t:'REST cons',c:'bad',d:'Request/response only; reduced availability since both sides must be up; clients must know instance addresses; mapping several operations to verbs can be awkward; fetching many resources in one request is hard.'},{t:'Fetching several resources',c:'d3',d:'Plain REST needs many round trips. Workarounds include an expand parameter, or alternatives such as GraphQL and Netflix Falcor (chapter 8).'}]);
+
+/* circuit breaker */
+let cb={st:'closed',fails:0,health:'up'};const TH=3;
+function cbDraw(){const s=$('#cbSvg');s.innerHTML='';const P={closed:[90,'ok'],open:[320,'bad'],half:[550,'mid']};
+  for(const k in P){const on=cb.st===k;box(s,P[k][0]-70,40,140,54,k==='half'?'HALF-OPEN':k.toUpperCase(),P[k][1],{fill:on?`var(--${P[k][1]}-soft)`:'var(--surface)',sw:on?3:1.4})}
+  arrow(s,160,58,250,58,'bad',{t:`${TH} failures in a row`,fs:10});arrow(s,390,58,480,58,'mid',{t:'timeout elapses',fs:10});
+  s.appendChild(el('path',{d:'M550,94 C550,140 90,140 90,98',fill:'none',stroke:'var(--ok)','stroke-width':1.8}));txt(s,320,138,'trial request succeeds',{fs:10,c:'ok'});
+  s.appendChild(el('path',{d:'M500,40 C470,10 370,10 340,36',fill:'none',stroke:'var(--bad)','stroke-width':1.5,'stroke-dasharray':'4 3'}));txt(s,420,16,'trial fails',{fs:10,c:'bad'});
+  const L={closed:['CLOSED','ok'],open:['OPEN','bad'],half:['HALF-OPEN','mid']}[cb.st];$('#cbState').textContent=L[0]+` · failures ${cb.fails}`;$('#cbState').style.background=`var(--${L[1]}-soft)`;$('#cbState').style.color=`var(--${L[1]})`}
+function cbSend(){if(cb.st==='open'){logLine('#cbLog','✗ rejected immediately: breaker open, no thread tied up (fallback served)','mid');return}
+  const ok=cb.health==='up';if(ok){logLine('#cbLog','✓ 200 OK in 40 ms','ok');cb.fails=0;if(cb.st==='half'){cb.st='closed';logLine('#cbLog','→ trial succeeded, breaker closes','ok')}}
+  else{logLine('#cbLog','✗ timed out after 1 s','bad');cb.fails++;if(cb.st==='half'||cb.fails>=TH){cb.st='open';logLine('#cbLog','→ breaker trips OPEN','bad')}}cbDraw()}
+$('#cbSend').addEventListener('click',cbSend);$('#cbBurst').addEventListener('click',()=>{for(let i=0;i<5;i++)cbSend()});
+$('#cbWait').addEventListener('click',()=>{if(cb.st==='open'){cb.st='half';cb.fails=0;logLine('#cbLog','… timeout elapsed, breaker HALF-OPEN: next request is a trial','mid')}else logLine('#cbLog','(nothing to wait for: breaker is not open)');cbDraw()});
+seg('[data-h]',b=>{cb.health=b.dataset.h;logLine('#cbLog',`downstream is now ${b.dataset.h==='up'?'healthy':'failing'}`)});cbDraw();
+
+/* discovery */
+function disc(k){const s=$('#dSvg');s.innerHTML='';
+  if(k==='app'){box(s,250,10,140,50,'Service registry','d5');box(s,30,140,140,50,'Order Service\n(client)','blue',{fs:11.5});[0,1].forEach(i=>box(s,450,100+i*80,160,50,'Kitchen Service\ninstance '+(i+1),'d2',{fs:11.5}));
+    arrow(s,450,120,390,45,'d2',{t:'1 register + heartbeat',fs:10,dx:30});arrow(s,100,140,260,60,'d5',{t:'2 query + cache',fs:10,dx:-40});arrow(s,170,165,450,205,'pencil',{t:'3 call, client load-balances',fs:10,dy:20});
+    $('#dTxt').innerHTML='<b>Self registration</b> + <b>client-side discovery</b>: each instance registers itself (and sends heartbeats); clients query the registry, cache the result and load-balance. Netflix Eureka with Ribbon and Spring Cloud work this way. It handles services on mixed platforms, but you need a discovery library for every language and you run the registry yourself.'}
+  else{box(s,250,10,140,50,'Platform registry','d5');box(s,30,140,140,50,'Order Service\n(client)','blue',{fs:11.5});box(s,240,140,160,50,'Router / DNS name\nkitchen-service','d3',{fs:11.5});[0,1].forEach(i=>box(s,470,100+i*80,150,50,'Kitchen instance '+(i+1),'d2',{fs:11.5}));
+    arrow(s,320,60,320,140,'d5',{t:'lookup',fs:10,dx:24});arrow(s,170,165,240,165,'pencil',{t:'call',fs:10});arrow(s,400,160,470,125,'pencil');arrow(s,400,170,470,205,'pencil');s.appendChild(el('path',{d:'M545,100 C545,40 420,30 392,35',fill:'none',stroke:'var(--muted)','stroke-dasharray':'4 3'}));txt(s,500,40,'registrar tracks instances',{fs:10});
+    $('#dTxt').innerHTML='<b>3rd party registration</b> + <b>server-side discovery</b>: the deployment platform (Docker, Kubernetes) registers instances and gives each service a DNS name and virtual IP; a router load-balances. No client code needed, works for any language. It only covers services on that platform.'}}
+seg('[data-d]',b=>disc(b.dataset.d));disc('app');
+
+/* channels */
+let chMode='p2p',rr=0;function chDraw(hit){const s=$('#chSvg');s.innerHTML='';box(s,20,75,120,50,'Sender','blue');s.appendChild(el('rect',{x:190,y:80,width:180,height:40,rx:20,fill:'var(--pencil-soft)',stroke:'var(--pencil)'}));txt(s,280,105,chMode==='p2p'?'point-to-point channel':'publish-subscribe channel',{fs:11,c:'ink'});arrow(s,140,100,190,100,'muted');
+  [0,1,2].forEach(i=>{const y=15+i*65;const on=hit&&(chMode==='ps'||i===hit-1);box(s,460,y,150,46,(chMode==='p2p'?'Instance ':'Subscriber ')+(i+1),on?'ok':'line',{fill:on?'var(--ok-soft)':'var(--surface)'});arrow(s,370,100,460,y+23,on?'pencil':'line',{flow:on})})}
+seg('[data-ch]',b=>{chMode=b.dataset.ch;chDraw(0);$('#chTxt').textContent=''});
+$('#chSend').addEventListener('click',()=>{rr=rr%3+1;chDraw(rr);$('#chTxt').textContent=chMode==='p2p'?`Delivered to exactly one consumer (instance ${rr}).`:'Every subscriber gets its own copy.'});chDraw(0);
+cards('#brokerCards',[{t:'Brokerless',c:'d3',d:'Services exchange messages directly (ZeroMQ). Lower latency, no broker to fail. But services must know each other\'s locations and reliability is harder.'},{t:'Broker-based',c:'d1',d:'An intermediary such as ActiveMQ, RabbitMQ or Apache Kafka. Loose coupling, buffering while consumers are down, flexible interaction styles. The broker is a possible bottleneck and one more thing to operate.'},{t:'Why messaging?',c:'ok',d:'The sender doesn\'t need to know where consumers are; messages wait if a consumer is down; it supports every interaction style.'}]);
+
+/* sharding */
+const shQ=[[],[],[]];const hash=o=>({101:0,202:1,303:2})[o];let shN=0;
+function shDraw(){const s=$('#shSvg');s.innerHTML='';box(s,10,85,100,50,'Order\nService','blue',{fs:11.5});
+  [0,1,2].forEach(i=>{const y=20+i*70;s.appendChild(el('rect',{x:170,y,width:260,height:40,rx:6,fill:'var(--paper)',stroke:'var(--pencil)'}));txt(s,180,y-4,'shard '+i,{a:'start',mono:1,fs:10});
+    shQ[i].slice(-7).forEach((m,k)=>{box(s,176+k*36,y+5,32,30,'#'+m.n,'pencil',{fs:10,fill:'var(--pencil-soft)'})});
+    box(s,500,y,130,40,'Consumer '+(i+1),'d2',{fs:11.5});arrow(s,430,y+20,500,y+20,'muted');arrow(s,110,110,170,y+20,'line')});
+  txt(s,320,218,'Each consumer sees events for its orders in the order they were sent.',{fs:11,c:'ink'})}
+$$('[data-o]').forEach(b=>b.addEventListener('click',()=>{shN++;shQ[hash(b.dataset.o)].push({n:shN,o:b.dataset.o});shDraw()}));$('#shReset').addEventListener('click',()=>{shQ.forEach(q=>q.length=0);shN=0;shDraw()});shDraw();
+
+/* duplicates */
+let dd={mode:'naive',bal:0,seen:new Set()};seg('[data-dd]',b=>{dd={mode:b.dataset.dd,bal:0,seen:new Set()};$('#ddLog').innerHTML='';ddShow()});
+function ddShow(){$('#ddBal').textContent='$'+dd.bal;$('#ddBal').style.color=dd.bal>10?'var(--bad)':'';$('#ddSeen').textContent=dd.mode==='track'?'PROCESSED_MESSAGES: '+([...dd.seen].join(', ')||'empty'):''}
+$('#ddSend').addEventListener('click',()=>{if(dd.mode==='track'&&dd.seen.has('msg-42')){logLine('#ddLog','msg-42 redelivered → already in PROCESSED_MESSAGES, ignored','ok')}else{dd.bal+=10;dd.seen.add('msg-42');logLine('#ddLog',dd.bal>10?'msg-42 redelivered → credited again! balance wrong':'msg-42 → credited $10'+(dd.mode==='track'?' (and recorded its ID in the same transaction)':''),dd.bal>10?'bad':'ink')}ddShow()});ddShow();
+
+/* outbox */
+$('#obStep').insertAdjacentHTML('beforeend',stepHTML());let rel='poll',obGo;
+const OB=['The service handles a request: begin a local database transaction.','Insert or update the business row in ORDERS, <i>and</i> insert the message into the OUTBOX table, in the same transaction.','Commit. Both writes land, or neither does. No broker involved yet.','__relay__','The relay publishes the message to the broker and marks it done. If it crashes in between, it simply publishes again, so consumers must handle duplicates.'];
+function obDraw(i){const s=$('#obSvg');s.innerHTML='';box(s,10,30,140,50,'Order Service','blue');s.appendChild(el('rect',{x:200,y:10,width:200,height:200,rx:10,fill:'var(--paper)',stroke:i>=1&&i<=2?'var(--blue)':'var(--line)','stroke-width':i>=1&&i<=2?2:1}));txt(s,300,30,'database',{mono:1});
+  box(s,220,45,160,40,i>=1?'ORDERS: order 7 ✓':'ORDERS','d1',{fs:11});box(s,220,100,160,40,i>=1?'OUTBOX: OrderCreated':'OUTBOX','pencil',{fs:11,fill:i>=1&&i<4?'var(--pencil-soft)':'var(--surface)'});
+  if(rel==='tail')box(s,220,155,160,40,'transaction log','d5',{fs:11,fill:i===3?'var(--blue-soft)':'var(--surface)'});
+  if(i>=1)arrow(s,150,55,220,65,'blue',{t:i<=2?'one txn':'',fs:10});box(s,450,90,120,50,'Message relay','d5',{fs:11.5});box(s,450,170,170,44,'Message broker','pencil',{fs:11.5});
+  if(i>=3)arrow(s,rel==='poll'?380:380,rel==='poll'?120:175,450,rel==='poll'?115:125,'d5',{t:rel==='poll'?'SELECT ... poll':'read log',fs:10,flow:i===3});
+  if(i>=4)arrow(s,510,140,510,170,'pencil',{flow:1})}
+function obRun(){obGo=stepper('#obStep',OB.map(t=>t==='__relay__'?(rel==='poll'?'<b>Polling publisher:</b> the relay periodically queries the OUTBOX for unpublished messages. Simple, works with any SQL database, but frequent polling is expensive and tricky with NoSQL.':'<b>Transaction log tailing:</b> the relay reads the database\'s commit log (MySQL binlog, Postgres WAL, DynamoDB streams) and turns each OUTBOX insert into a message. Efficient and scalable, but harder to build. Debezium and LinkedIn Databus do this.'):t),obDraw)}
+seg('[data-rel]',b=>{rel=b.dataset.rel;const st=$('#obStep');st.querySelector('.step-cap').remove();st.querySelector('.row.between').remove();st.insertAdjacentHTML('beforeend',stepHTML());obRun();obGo(3)});obRun();
+
+/* availability */
+function av(){const a=+$('#av').value/1000,n=+$('#n').value;$('#avV').textContent=(a*100).toFixed(1).replace(/\.0$/,'')+'%';$('#nV').textContent=n;const sync=Math.pow(a,n+1);
+  bars('#avBars',[{l:'Order Service alone',v:a*100,c:'ok',txt:(a*100).toFixed(2)+'%'},{l:`With ${n} sync calls`,v:sync*100,c:sync<.98?'bad':'mid',txt:(sync*100).toFixed(2)+'%'}],100);
+  const dt=(1-sync)*30*24*60;$('#avTxt').textContent=`About ${Math.round(dt)} minutes a month when createOrder() can't succeed, versus ${Math.round((1-a)*30*24*60)} if the other services were only contacted asynchronously.`}
+$('#av').addEventListener('input',av);$('#n').addEventListener('input',av);av();
+cards('#availCards',[{t:'Use async interactions',c:'d1',d:'Let services exchange asynchronous messages end to end, so the client does not wait on a chain of services.'},{t:'Replicate data',c:'d2',d:'The Order Service keeps a replica of the restaurant menu data it needs, updated by events, so it can validate orders without calling Restaurant Service.'},{t:'Respond first, finish later',c:'d3',d:'Validate with local data, save the order as PENDING, reply right away, then complete the work with messages. The client polls or is notified of the outcome. This is how sagas begin in chapter 4.'}]);
+
+quiz('#quiz','#qScore',[
+ {q:'Which channel type suits a command meant for one handler?',o:['Point-to-point','Publish-subscribe'],a:0,why:'Exactly one consumer reads each message from a point-to-point channel.'},
+ {q:'What does an OPEN circuit breaker do with new calls?',o:['Queues them','Fails them immediately','Retries them'],a:1,why:'It rejects them straight away until the timeout passes and a trial call is allowed.'},
+ {q:'Kubernetes gives each service a DNS name and load-balances for you. Which patterns is that?',o:['Self registration + client-side discovery','3rd party registration + server-side discovery'],a:1,why:'The platform registers instances and routes requests.'},
+ {q:'How does the transactional outbox avoid losing a message?',o:['2PC with the broker','Writes it in the same local transaction as the data','Sends it before committing'],a:1,why:'A relay publishes it later from the OUTBOX table.'},
+ {q:'Messages for the same order must stay in order with many consumer instances. Use...',o:['More partitions per order','A sharded channel keyed by order ID','A bigger broker'],a:1,why:'All messages with one shard key go to one shard and one consumer.'}]);
+
+})();
+</script>
+</body>
+</html>

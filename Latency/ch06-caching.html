@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Caching</title>
+<meta name="description" content="A cache keeps a copy of data in faster storage. Everything hinges on the hit ratio, on what you evict, and on how stale you are willing to let the copy get.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Latency companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:560px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+button.tag.themebtn{cursor:pointer}
+button.tag.themebtn:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-family:var(--mono);font-size:.82rem;line-height:1.5;overflow-x:auto;white-space:pre}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.svgbox svg text{font-family:var(--body)}
+.mtx{font-family:var(--mono)}
+.stat span.big{font-size:clamp(1.5rem,5vw,2.2rem);color:var(--ink)}
+.stat span.big.blue{color:var(--blue)} .stat span.big.pencil{color:var(--pencil)} .stat span.big.okc{color:var(--ok)} .stat span.big.badc{color:var(--bad)}
+
+/* page */
+
+.slots{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
+.slot{width:64px;border:1.5px solid var(--line);border-radius:8px;background:var(--surface);padding:6px;text-align:center;font-family:var(--mono);transition:all .3s}
+.slot b{display:block;font-size:1.2rem}
+.slot span{font-size:.7rem;color:var(--muted)}
+.slot.new{border-color:var(--ok);background:var(--ok-soft)}
+.slot.hitc{border-color:var(--blue);background:var(--blue-soft)}
+.slot.hand{box-shadow:0 0 0 3px var(--pencil)}
+.mesi{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.core{border:1.5px solid var(--line);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;background:var(--paper)}
+.st{font-family:var(--mono);font-size:1.6rem;font-weight:700;width:2.2em;height:2.2em;border-radius:8px;display:grid;place-items:center;border:2px solid}
+.st.M{color:var(--bad);border-color:var(--bad)} .st.E{color:var(--ok);border-color:var(--ok)} .st.S{color:var(--blue);border-color:var(--blue)} .st.I{color:var(--muted);border-color:var(--line)}
+.log{font-family:var(--mono);font-size:.82rem;color:var(--muted);min-height:1.4em}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Latency · visual companion</a><span class="tag">Part 2 · Chapter 6 of 11</span><button class="tag themebtn" type="button" aria-label="Switch colour theme">Theme</button></div>
+  <h1>Caching</h1>
+  <p class="lede">A cache keeps a copy of data in faster storage. Everything hinges on the hit ratio, on what you evict, and on how stale you are willing to let the copy get.</p>
+  <nav class="toc" aria-label="Sections"><a href="#why">Why cache</a><a href="#strategies">Strategies</a><a href="#coherence">Coherence</a><a href="#hit">Hit ratio</a><a href="#replace">Replacement</a><a href="#ttl">TTL</a><a href="#views">Views, memo</a><a href="#lab">Moka cache</a><a href="#quiz">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="why" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Why cache, and the vocabulary</h2></div>
+  <p>A cache keeps a <b>temporary copy</b> of part of the data in faster, closer storage, while the backing store (a database, a service) keeps the primary copy. It sounds like replication, but the trade-offs differ: you give up freshness and some memory to reuse results. The book suggests reaching for caching when the system:</p>
+  <div class="cardgrid" id="whenCards"></div>
+  <p>Vocabulary: a lookup by <b>cache key</b> is a <b>hit</b> or a <b>miss</b>. Caches may be in memory or <b>persistent</b> (survive restarts, avoiding a cold start), <b>transactional</b> (isolation guarantees) or not. <b>Negative caching</b> remembers that something does not exist, so an expensive "no results" search is not repeated. A <b>replacement policy</b> decides what to evict when full; a <b>TTL</b> decides when an entry is too old.</p>
+</section>
+
+<section id="strategies" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Four caching strategies</h2></div>
+  <p>The strategy decides who talks to the backing store, and when. Pick one and an operation to see the message flow and the latency the application waits for (cache 1 ms away, database 20 ms away; illustrative).</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Strategy"><button data-cs="aside" aria-pressed="true">Cache-aside</button><button data-cs="rt" aria-pressed="false">Read-through</button><button data-cs="wt" aria-pressed="false">Write-through</button><button data-cs="wb" aria-pressed="false">Write-behind</button></div>
+    <div class="seg" role="group" aria-label="Operation" id="csOps"></div>
+    <div class="svgbox"><svg id="csSvg" viewBox="0 0 640 230" role="img" aria-label="Message flow between service, cache and database"></svg></div>
+    <p id="csTxt" aria-live="polite"></p>
+  </div>
+  <div class="two">
+    <div class="callout"><b class="h">Client-side caching</b><span>Put the cache inside the application on the user's device and you skip the last mile entirely. Read-through plus write-behind is the fastest combination there, though transactions get hard and memory use grows. For richer needs, the local-first approach from chapter 4 may fit better.</span></div>
+    <div class="callout blue"><b class="h">Distributed caching</b><span>Many cache instances, partitioned (chapter 5) and often replicated (chapter 4). You inherit all the benefits, and all the problems, of both.</span></div>
+  </div>
+</section>
+
+<section id="coherence" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Cache coherence, the CPU way</h2></div>
+  <p>When several caches hold copies of the same data, <b>coherence</b> means they never disagree. CPUs do this in hardware with protocols like <b>MESI</b>, which tracks a state per 64-byte cache line: <b class="badc">M</b>odified, <b class="okc">E</b>xclusive, <b class="blue">S</b>hared, <b>I</b>nvalid. Writing to a shared line first invalidates every other copy, which is why writes to shared data cost latency. Drive two cores.</p>
+  <div class="sheet">
+    <div class="mesi" id="mesi"></div>
+    <div class="row"><span class="small">Memory holds: <b class="mono" id="memV"></b></span><button class="btn" id="mesiReset">Reset</button></div>
+    <p class="log" id="mesiLog" aria-live="polite"></p>
+  </div>
+  <p>Application caches are usually <b>incoherent</b> on purpose: no coordination means low latency, at the cost of stale reads. Note also that coherence is not consistency: it says copies agree, not in what order operations appear. Real CPUs add store buffers and invalidation queues, so two cores can briefly see different values (chapter 8).</p>
+</section>
+
+<section id="hit" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>The hit ratio, and the tail it leaves</h2></div>
+  <p><span class="mono">hit ratio = hits ÷ (hits + misses)</span>. Average latency slides linearly from miss latency toward hit latency as the ratio rises. But averages hide the shape: even at 80% hits, one request in five pays the full miss. The tail is the backing store's latency.</p>
+  <div class="sheet">
+    <div class="two">
+      <div class="stack">
+        <label class="rng"><span>Hit ratio: <b id="hrV"></b></span><input type="range" id="hr" min="0" max="100" value="80"></label>
+        <label class="rng"><span>Hit latency: <b id="hlV"></b></span><input type="range" id="hl" min="1" max="50" value="10"></label>
+        <p class="small">Miss latency fixed at 100 ms.</p>
+      </div>
+      <div class="three" style="grid-template-columns:1fr 1fr 1fr"><div class="stat"><span class="big blue" id="hAvg">-</span><span>average</span></div><div class="stat"><span class="big okc" id="hP50">-</span><span>p50</span></div><div class="stat"><span class="big badc" id="hP99">-</span><span>p99</span></div></div>
+    </div>
+    <div class="svgbox"><svg id="hSvg" viewBox="0 0 640 200" role="img" aria-label="Distribution of cache access latency"></svg></div>
+  </div>
+  <div class="callout ok"><b class="h">Pattern: maximize the hit ratio</b><span>Make the cache at least as big as the <b>working set</b> (the data actually in use right now, like this week's popular products), pick a replacement policy that matches the workload, and shape access patterns: with 100 GB of data and 100 MB of cache, do all passes over one 100 MB chunk before moving on.</span></div>
+</section>
+
+<section id="replace" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Replacement policies: LRU, LFU, FIFO, SIEVE</h2></div>
+  <p>Fast memory is small and pricey (DRAM costs roughly ten times more per gigabyte than SSD), so a full cache must evict. Try the policies by hand on a 3-slot cache, then race them on longer workloads.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Policy" id="rpSeg"><button data-rp="LRU" aria-pressed="true">LRU</button><button data-rp="LFU" aria-pressed="false">LFU</button><button data-rp="FIFO" aria-pressed="false">FIFO</button><button data-rp="SIEVE" aria-pressed="false">SIEVE</button></div>
+    <div class="row" id="rpKeys"></div>
+    <div class="slots" id="rpSlots"></div>
+    <p class="log" id="rpLog" aria-live="polite"></p>
+    <p class="small" id="rpDesc"></p>
+  </div>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Workload"><button data-wl="zipf" aria-pressed="true">Popular items (skewed)</button><button data-wl="scan" aria-pressed="false">Hot set + one-off scans</button><button data-wl="shift" aria-pressed="false">Popularity shifts</button></div><button class="btn primary" id="raceGo">Race</button></div>
+    <label class="rng"><span>Cache size: <b id="csizeV"></b> of 1,000 items</span><input type="range" id="csize" min="10" max="300" value="50"></label>
+    <div class="bars" id="raceBars"></div>
+    <p class="small" id="raceTxt"></p>
+  </div>
+</section>
+
+<section id="ttl" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Time-to-live: freshness by the clock</h2></div>
+  <p>TTL expires entries after a fixed time, whether or not anything changed. It solves invalidation without the cache knowing about the backing store, which is why DNS uses it (a day for stable records, 30 seconds for load-balanced ones). The dilemma: long TTL means more hits but staler data; short TTL means fresh data and needless misses.</p>
+  <div class="sheet">
+    <div class="two">
+      <label class="rng"><span>TTL: <b id="ttlV"></b></span><input type="range" id="ttl" min="0" max="100" value="40"></label>
+      <label class="rng"><span>Value changes in the store every: <b id="chV"></b></span><input type="range" id="ch" min="0" max="100" value="60"></label>
+    </div>
+    <div class="bars" id="ttlBars"></div>
+    <p class="small">Model: one key read 10 times per second. Miss whenever the entry has expired; stale whenever the store changed since the entry was loaded.</p>
+  </div>
+</section>
+
+<section id="views" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Materialized views and memoization</h2></div>
+  <p>A <b>materialized view</b> stores a query's results inside the database, e.g. all users in London, and is queried like a table. Some databases refresh it on demand; dataflow systems such as Noria keep it updated incrementally as writes arrive (eventually consistent). It's a cache that the database manages, with full SQL in front.</p>
+  <p><b>Memoization</b> caches <i>computation</i>: the function's arguments are the key, its result is the value. Every time you cache a REST response on the client, you are memoizing. Watch the call count.</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Memo"><button data-mm="off" aria-pressed="true">Plain recursion</button><button data-mm="on" aria-pressed="false">Memoized</button></div><label class="small row">n = <input type="range" id="fn" min="5" max="30" value="20" style="width:160px"> <b id="fnV" class="mono"></b></label></div>
+    <div class="three"><div class="stat"><span class="big blue" id="fCalls">-</span><span>function calls</span></div><div class="stat"><span class="big pencil" id="fMs">-</span><span>time in this browser</span></div><div class="stat"><span class="big okc" id="fMem">-</span><span>entries kept in memory</span></div></div>
+  </div>
+</section>
+
+<section id="lab" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Putting it together: in-application caching</h2></div>
+  <p>The hands-on project wraps chapter 3's PostgreSQL REST server with an in-process cache-aside cache (the Moka library in Rust) whose entries live 5 seconds. Every 5 seconds a request misses and goes to the database; everything else is served from memory. The book's eCDF shows the whole curve shifting left, with a tail still there from those misses.</p>
+  <pre class="code"><span class="c">// cache-aside in a request handler (illustrative)</span>
+<span class="k">async fn</span> hello(pool: &amp;Pool, cache: &amp;Cache&lt;String, String&gt;) -> Result&lt;String&gt; {
+    <span class="k">if let</span> Some(v) = cache.get(KEY).<span class="k">await</span> { <span class="k">return</span> Ok(v); }   <span class="c">// hit</span>
+    <span class="k">let</span> v = query_db(pool).<span class="k">await</span>?;                          <span class="c">// miss: go to Postgres</span>
+    cache.insert(KEY.into(), v.clone()).<span class="k">await</span>;               <span class="c">// TTL 5 s set on the cache</span>
+    Ok(v)
+}</pre>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">10</span><h2>Recap</h2></div>
+  <div class="recap">
+    <div><b>Caching</b><span>A temporary, closer copy. Trades freshness and memory for latency.</span></div>
+    <div><b>Strategies</b><span>Cache-aside is simple; read-through hides misses; write-through is safe but slow; write-behind is fast but can lose data.</span></div>
+    <div><b>Coherence</b><span>Hardware keeps CPU caches coherent at a cost; app caches usually allow staleness.</span></div>
+    <div><b>Hit ratio</b><span>Fit the working set. Misses still set the tail.</span></div>
+    <div><b>Eviction</b><span>LRU for recency, LFU for popularity, FIFO/SIEVE for cheap, scan-resistant eviction.</span></div>
+    <div><b>Beyond data</b><span>TTL for freshness, materialized views for queries, memoization for computation.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Latency: Reduce delay in software systems</i> by Pekka Enberg (Manning, 2026). Explanations, examples, code snippets and drawings are original summaries, not text or figures from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch05-partitioning.html"><span>Previous · Chapter 5</span><b>Partitioning</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch07-eliminating-work.html"><span>Next · Chapter 7</span><b>Eliminating Work</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page (Latency companion). */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){if(!group)return;group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('lat:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('lat:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: cycles auto -> light -> dark; remembered per viewer when storage works */
+(function(){const r=document.documentElement;const t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+ const b=document.querySelector('.themebtn');if(!b)return;
+ const lab=()=>{const v=r.getAttribute('data-theme');b.textContent=v==='dark'?'Dark':v==='light'?'Light':'Auto theme'};lab();
+ b.addEventListener('click',()=>{const v=r.getAttribute('data-theme');const n=v==null?'light':v==='light'?'dark':null;
+  if(n)r.setAttribute('data-theme',n);else r.removeAttribute('data-theme');store.set('theme',n);lab()})})();
+
+
+cards('#whenCards',[
+ {t:'Needs no transactions or complex queries',c:'d1',d:'A key–value interface is enough: user profiles by ID, session state. Recommendations or ad delivery may outgrow it.'},
+ {t:'Cannot be changed',c:'d2',d:'A legacy database without replication, accessed from many places: cache query results in front of it.'},
+ {t:'Is constrained in storage or compute',c:'d3',d:'You cannot replicate the whole product catalog to every client, or run a query engine there, but you can cache the part in use.'}]);
+
+/* strategies */
+(function(){let cs='aside',op='hit';const OPS={aside:[['hit','Read (hit)'],['miss','Read (miss)'],['write','Write']],rt:[['hit','Read (hit)'],['miss','Read (miss)'],['refresh','Refresh-ahead']],wt:[['write','Write']],wb:[['write','3 writes'],['crash','Crash before flush']]};
+ const s=$('#csSvg');const P={svc:[90,40],cache:[550,40],db:[320,190]};
+ function node(k,t,c){const [x,y]=P[k];s.appendChild(el('rect',{x:x-62,y:y-20,width:124,height:40,rx:8,fill:'var(--surface)',stroke:`var(--${c})`,'stroke-width':1.8}));s.appendChild(el('text',{x,y:y+5,'text-anchor':'middle','font-size':13,'font-weight':600,fill:'var(--ink)'},t))}
+ function arr(a,b,n,lab,c,off){const [x1,y1]=P[a],[x2,y2]=P[b];const dx=x2-x1,dy=y2-y1,L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L,cf=(x1>x2||(x1===x2&&y1>y2))?-1:1,px=-uy*cf*(off||0),py=ux*cf*(off||0);
+  const sx=x1+ux*70+px,sy=y1+uy*26+py,ex=x2-ux*70+px,ey=y2-uy*26+py;s.appendChild(el('line',{x1:sx,y1:sy,x2:ex,y2:ey,stroke:c||'var(--pencil)','stroke-width':2,'stroke-dasharray':c==='var(--muted)'?'5 4':null}));s.appendChild(el('circle',{cx:ex,cy:ey,r:4,fill:c||'var(--pencil)'}));
+  s.appendChild(el('text',{x:(sx+ex)/2+px*1.2,y:(sy+ey)/2+py*1.2-6,'text-anchor':'middle','font-size':11,fill:c||'var(--pencil)','font-weight':600},n+'. '+lab))}
+ const D={
+  aside:{hit:[[['svc','cache','lookup'],['cache','svc','value']],1,'A hit costs one trip to a nearby cache.'],miss:[[['svc','cache','lookup → miss'],['svc','db','read'],['svc','cache','update']],22,'On a miss the cache is passive: the application reads the database and fills the cache itself. Simple to set up (any cache server works), but the app owns the logic, concurrent misses can stampede the database, there are no transactions, and the tail is database latency.'],write:[[['svc','db','write'],['svc','cache','invalidate / update']],21,'The application writes the database and then fixes the cache. The two can drift if one step fails.']},
+  rt:{hit:[[['svc','cache','lookup'],['cache','svc','value']],1,'Hits look the same as cache-aside.'],miss:[[['svc','cache','lookup'],['cache','db','read'],['cache','svc','value']],22,'The cache fetches on a miss and fills itself, transparently. It must understand your data model and formats, but it can coordinate concurrent misses and even offer transactional guarantees.'],refresh:[[['svc','cache','lookup'],['cache','svc','value (fresh)'],['cache','db','async refresh before expiry']],1,'Refresh-ahead: an active cache renews entries before they expire, so the application never waits on the database for expired data.']},
+  wt:{write:[[['svc','cache','write'],['cache','db','write (sync)'],['cache','svc','ack after commit']],21,'Every write waits for the database commit: cache and store stay in sync (and can be made transactional), but write latency is database latency.']},
+  wb:{write:[[['svc','cache','write ×3, acked at once'],['cache','db','one batched write, later']],1,'Writes are acknowledged by the cache immediately and flushed in batches. Lowest write latency; no transactions, and the store lags.'],crash:[[['svc','cache','write ×3, acked'],['cache','db','✕ never flushed']],1,'The cache dies before flushing: three acknowledged writes are gone. Write-behind trades durability for speed.']}};
+ function draw(){s.innerHTML='';node('svc','Service','blue');node('cache','Cache','ok');node('db','Database','pencil');if(!D[cs][op])op=OPS[cs][0][0];const d=D[cs][op];
+  d[0].forEach((m,i)=>arr(m[0],m[1],i+1,m[2],op==='crash'&&i===1?'var(--bad)':m[0]==='cache'&&m[1]==='db'&&(cs==='wb'||op==='refresh')?'var(--muted)':undefined,[-14,14,14,-14][i]));
+  s.appendChild(el('text',{x:630,y:110,'text-anchor':'end','font-size':14,'font-weight':800,fill:'var(--ink)'},`app waits ≈ ${d[1]} ms`));$('#csTxt').textContent=d[2]}
+ function ops(){$('#csOps').innerHTML=OPS[cs].map((o,i)=>`<button data-o="${o[0]}" aria-pressed="${i===0}">${o[1]}</button>`).join('');op=OPS[cs][0][0];$$('#csOps button').forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);op=b.dataset.o;draw()}))}
+ seg('[data-cs]',b=>{cs=b.dataset.cs;ops();draw()});ops();draw()})();
+
+/* MESI */
+(function(){let st=['I','I'],mem=0,val=[null,null];function render(msg){$('#mesi').innerHTML=[0,1].map(c=>`<div class="core"><div class="row between"><b>Core ${c}</b><span class="st ${st[c]}">${st[c]}</span></div><span class="small mono">cached value: ${st[c]==='I'?'—':val[c]}</span><div class="row"><button class="btn" data-c="${c}" data-a="r">Read</button><button class="btn" data-c="${c}" data-a="w">Write +1</button></div></div>`).join('');
+ $('#memV').textContent=mem;$('#mesiLog').textContent=msg||'Both lines start Invalid: nothing cached.';
+ $$('#mesi button').forEach(b=>b.addEventListener('click',()=>act(+b.dataset.c,b.dataset.a)))}
+ function act(c,a){const o=1-c;let m;
+  if(a==='r'){if(st[c]!=='I')m=`Core ${c} hits in its cache (${st[c]}). No traffic.`;else{if(st[o]==='M'){mem=val[o];st[o]='S';m=`Core ${o} had it Modified: it writes back, both now Shared.`}else if(st[o]==='E'||st[o]==='S'){st[o]='S';m=`Another copy exists, so both lines become Shared.`}else m=`Miss, loaded from memory. No other copy: Exclusive.`;val[c]=st[o]==='S'?(val[o]):mem;st[c]=st[o]==='S'?'S':'E'}}
+  else{if(st[c]==='M'){val[c]++;m=`Already Modified: write stays local.`}else if(st[c]==='E'){val[c]++;st[c]='M';m=`Exclusive → Modified silently. Cheap.`}else{const had=st[o]!=='I';if(st[o]==='M')mem=val[o];const base=st[c]==='S'?val[c]:(st[o]==='M'?val[o]:mem);st[o]='I';st[c]='M';val[c]=base+1;m=had?`Must invalidate core ${o}'s copy first, then write: the slow path for shared data.`:`Fetched for ownership, written: Modified.`}}
+  render(m)}
+ $('#mesiReset').addEventListener('click',()=>{st=['I','I'];mem=0;val=[null,null];render()});render()})();
+
+/* hit ratio */
+(function(){const s=$('#hSvg');function upd(){const h=+$('#hr').value/100,hl=+$('#hl').value,ml=100;$('#hrV').textContent=Math.round(h*100)+'%';$('#hlV').textContent=hl+' ms';
+ const avg=h*hl+(1-h)*ml;$('#hAvg').textContent=avg.toFixed(0)+' ms';$('#hP50').textContent=(h>=.5?hl:ml)+' ms';$('#hP99').textContent=(h>=.99?hl:ml)+' ms';
+ s.innerHTML='';s.appendChild(el('line',{x1:40,x2:630,y1:170,y2:170,stroke:'var(--muted)'}));const X=v=>40+v/110*590;
+ [[hl,h,'var(--ok)','hits'],[ml,1-h,'var(--bad)','misses']].forEach(([v,f,c,l])=>{const H=f*140;s.appendChild(el('rect',{x:X(v)-14,y:170-H,width:28,height:H,fill:c,rx:3}));s.appendChild(el('text',{x:X(v),y:162-H,'text-anchor':'middle','font-size':11,fill:'var(--ink)'},`${l} ${Math.round(f*100)}%`))});
+ s.appendChild(el('line',{x1:X(avg),x2:X(avg),y1:20,y2:170,stroke:'var(--blue)','stroke-dasharray':'5 4','stroke-width':2}));s.appendChild(el('text',{x:X(avg)+4,y:30,'font-size':11,fill:'var(--blue)'},'average (nobody actually sees it)'));
+ [0,25,50,75,100].forEach(v=>s.appendChild(el('text',{x:X(v),y:186,'text-anchor':'middle','font-size':10,fill:'var(--muted)'},v+' ms')))}
+ ['hr','hl'].forEach(k=>$('#'+k).addEventListener('input',upd));upd()})();
+
+/* replacement policies */
+function makeCache(pol,cap){const items=[];let hand=-1;const meta=new Map();
+ return {items,get hand(){return hand},meta,access(k){const i=items.indexOf(k);
+  if(i>=0){if(pol==='LRU'){items.splice(i,1);items.unshift(k)}if(pol==='LFU')meta.set(k,meta.get(k)+1);if(pol==='SIEVE')meta.set(k,1);return {hit:true}}
+  let ev=null;if(items.length>=cap){
+   if(pol==='LRU'||pol==='FIFO')ev=items.pop();
+   else if(pol==='LFU'){let mi=0;items.forEach((x,j)=>{if(meta.get(x)<=meta.get(items[mi]))mi=j});ev=items.splice(mi,1)[0]}
+   else{if(hand<0||hand>=items.length)hand=items.length-1;while(meta.get(items[hand])){meta.set(items[hand],0);hand--;if(hand<0)hand=items.length-1}ev=items.splice(hand,1)[0];hand--;if(hand<0)hand=items.length-1}
+   meta.delete(ev)}
+  items.unshift(k);if(pol==='SIEVE'&&hand>=0)hand++;meta.set(k,pol==='LFU'?1:0);if(pol==='SIEVE'&&hand<0)hand=items.length-1;return {hit:false,ev}}}}
+(function(){let pol='LRU',c;const D={LRU:'Evicts the least recently used. Great with temporal locality; a one-off scan can flush the whole cache.',LFU:'Evicts the least frequently used (counts shown). Keeps long-term favourites, like a CDN\'s most popular assets, but is slow to forget yesterday\'s hits.',FIFO:'Evicts the oldest insertion, ignoring hits. Cheap; recent research shows FIFO with lazy promotion and quick demotion can beat LRU.',SIEVE:'FIFO plus a "visited" bit and a moving hand. On eviction, visited items are spared once (bit cleared) without moving them; the first unvisited one goes. Hot items survive, one-hit wonders leave fast.'};
+ $('#rpKeys').innerHTML='ABCDEF'.split('').map(k=>`<button class="btn" data-g="${k}">get(${k})</button>`).join('')+'<button class="btn" id="rpReset">Reset</button>';
+ function render(last,res){$('#rpSlots').innerHTML=c.items.map((k,i)=>`<div class="slot ${k===last?(res.hit?'hitc':'new'):''} ${pol==='SIEVE'&&i===c.hand?'hand':''}"><b>${k}</b><span>${pol==='LFU'?'count '+c.meta.get(k):pol==='SIEVE'?(c.meta.get(k)?'visited':'—'):i===0?(pol==='LRU'?'MRU':'newest'):i===c.items.length-1?(pol==='LRU'?'LRU':'oldest'):''}</span></div>`).join('')+(pol==='SIEVE'?'<span class="small">orange ring = hand</span>':'');
+  $('#rpLog').textContent=last?`get(${last}): ${res.hit?'hit':'miss'}${res.ev?', evicted '+res.ev:''}`:'Start with get(A), get(B), get(C) to fill the cache.';$('#rpDesc').textContent=D[pol]}
+ function reset(){c=makeCache(pol,3);render()}
+ $$('[data-g]').forEach(b=>b.addEventListener('click',()=>{const r=c.access(b.dataset.g);render(b.dataset.g,r)}));$('#rpReset').addEventListener('click',reset);seg('#rpSeg button',b=>{pol=b.dataset.rp;reset()});reset()})();
+(function(){let wl='zipf';function trace(){let seed=11;const r=()=>{seed=(seed*48271)%2147483647;return seed/2147483647};const z=()=>Math.floor(Math.pow(r(),3)*1000);const t=[];
+ if(wl==='zipf')for(let i=0;i<20000;i++)t.push(z());
+ else if(wl==='scan'){let s=2000;for(let i=0;i<20000;i++){if(i%2000<400)t.push(s++);else t.push(Math.floor(Math.pow(r(),4)*200))}}
+ else for(let i=0;i<20000;i++){const ph=Math.floor(i/5000);t.push((z()+ph*250)%1000)}return t}
+ function race(){const cap=+$('#csize').value;$('#csizeV').textContent=cap;const t=trace();const res=['LRU','LFU','FIFO','SIEVE'].map(p=>{const c=makeCache(p,cap);let h=0;t.forEach(k=>{if(c.access(k).hit)h++});return [p,h/t.length]});
+  const best=res.reduce((a,b)=>b[1]>a[1]?b:a);bars('#raceBars',res.map(([p,v])=>({l:p,v:v*100,c:p===best[0]?'ok':'blue',txt:(v*100).toFixed(1)+'%'})),100);
+  $('#raceTxt').textContent={zipf:'Stable popularity: frequency and visited bits both protect the hot items.',scan:'Sequential one-off keys stream through. Pure LRU and FIFO let the scan push hot items out; LFU and SIEVE resist.',shift:'The popular set moves every 5,000 requests. LFU clings to old favourites; recency-based policies adapt.'}[wl]+' Results are from a synthetic trace; real workloads vary, so measure yours.'}
+ seg('[data-wl]',b=>{wl=b.dataset.wl;race()});$('#raceGo').addEventListener('click',race);$('#csize').addEventListener('input',()=>{$('#csizeV').textContent=$('#csize').value});race()})();
+
+/* TTL */
+(function(){const sv=v=>Math.round(Math.pow(10,v/100*4))/10; /* 0.1s..1000s */
+ function f(x){return x<60?x+' s':x<3600?(x/60).toFixed(1)+' min':(x/3600).toFixed(1)+' h'}
+ function upd(){const T=sv(+$('#ttl').value),C=sv(+$('#ch').value);$('#ttlV').textContent=f(T);$('#chV').textContent=f(C);
+  const reads=10*T;const hit=Math.max(0,1-1/Math.max(1,reads));const stale=Math.min(1,T/(2*C));
+  bars('#ttlBars',[{l:'Hit ratio',v:hit*100,c:'ok',txt:(hit*100).toFixed(1)+'%'},{l:'Reads that are stale',v:stale*100,c:'bad',txt:(stale*100).toFixed(1)+'%'}],100)}
+ ['ttl','ch'].forEach(k=>$('#'+k).addEventListener('input',upd));upd()})();
+
+/* memo */
+(function(){let mm='off';function run(){const n=+$('#fn').value;$('#fnV').textContent=n;let calls=0;const memo=new Map();
+ function fib(k){calls++;if(k<2)return k;if(mm==='on'){if(memo.has(k))return memo.get(k);const v=fib(k-1)+fib(k-2);memo.set(k,v);return v}return fib(k-1)+fib(k-2)}
+ const t=performance.now();fib(n);const ms=performance.now()-t;$('#fCalls').textContent=calls.toLocaleString();$('#fMs').textContent=ms<0.1?'<0.1 ms':ms.toFixed(1)+' ms';$('#fMem').textContent=memo.size}
+ seg('[data-mm]',b=>{mm=b.dataset.mm;run()});$('#fn').addEventListener('input',run);run()})();
+
+quiz('#qQuiz','#qScore',[
+ {q:'Which strategy acknowledges writes fastest?',o:['Write-through','Write-behind'],a:1,why:'It acks from the cache and flushes later, at the risk of losing data.'},
+ {q:'Hit 10 ms, miss 100 ms, 80% hits. p99 latency?',o:['28 ms','10 ms','100 ms'],a:2,why:'One in five requests misses, so the 99th percentile is a miss.'},
+ {q:'A core writes to a line in Shared state. What must happen first?',o:['Other copies invalidated','Nothing'],a:0,why:'MESI moves the line to exclusive ownership before modifying it.'},
+ {q:'Nightly batch scans flush your hot items from cache. Better policy than plain LRU?',o:['SIEVE or LFU','Larger TTL'],a:0,why:'Scan-resistant policies spare items with recent or frequent hits.'},
+ {q:'Caching REST responses keyed by request parameters is…',o:['memoization','a materialized view'],a:0,why:'Function inputs as key, output as value.'}]);
+
+})();
+</script>
+</body>
+</html>

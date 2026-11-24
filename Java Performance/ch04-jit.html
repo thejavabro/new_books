@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Working with the JIT Compiler</title>
+<meta name="description" content="Java starts out interpreted and gets faster as it runs. The just-in-time compiler watches which code is hot and turns it into optimized machine code, in tiers.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Java Performance companion. Layout: an engineer's notebook column on blueprint grid paper.
+   Blue ink = the JVM and measurement, orange pencil = your application code, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code and terminal snippets */
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)} pre.code .b{color:var(--bad)} pre.code .p{color:var(--pencil)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+button.tag.theme{cursor:pointer}
+button.tag.theme:hover{border-color:var(--blue);color:var(--blue)}
+.meter{height:14px;border-radius:7px;background:var(--paper);border:1px solid var(--line);overflow:hidden}
+.meter>i{display:block;height:100%;width:0;background:var(--blue);transition:width .3s}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.kv>div{border:1px solid var(--line);border-radius:8px;padding:8px 12px;background:var(--paper);display:flex;flex-direction:column;min-width:0}
+.kv b{font-family:var(--mono);font-size:1.1rem}
+.kv span{font-size:.82rem;color:var(--muted)}
+
+/* page */
+
+.lv{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+@media (max-width:640px){.lv{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.lv div{border:1.5px solid var(--line);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:2px;transition:all .3s;background:var(--surface);min-width:0}
+.lv div b{font-family:var(--mono);font-size:1.2rem}
+.lv div span{font-size:.82rem;color:var(--muted)}
+.lv div.on{border-color:var(--blue);background:var(--blue-soft);transform:translateY(-3px)}
+.pcl{display:flex;flex-wrap:wrap;gap:4px;font-family:var(--mono);font-size:.85rem}
+.pcl button{border:1px dashed var(--line);background:var(--paper);border-radius:5px;padding:3px 7px}
+.pcl button[aria-pressed="true"]{border-style:solid;border-color:var(--blue);background:var(--blue-soft)}
+.inl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+@media (max-width:640px){.inl{grid-template-columns:1fr}}
+.verdict{font-family:var(--display);font-weight:800;font-size:1.3rem}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Java Performance · visual companion</a><span class="tag">Part II · Chapter 4 of 12</span><button class="tag theme" type="button" data-theme-toggle aria-label="Switch light or dark theme">Theme</button></div>
+  <h1>Working with the JIT Compiler</h1>
+  <p class="lede">Java starts out interpreted and gets faster as it runs. The just-in-time compiler watches which code is hot and turns it into optimized machine code, in tiers.</p>
+  <nav class="toc" aria-label="Sections"><a href="#why">Why JIT</a><a href="#tiers">Tiered</a><a href="#cache">Code cache</a><a href="#print">PrintCompilation</a><a href="#deopt">Deoptimization</a><a href="#thresh">Thresholds and threads</a><a href="#inline">Inlining</a><a href="#escape">Escape analysis</a><a href="#tradeoffs">Trade-offs</a><a href="#check">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="why" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>From bytecode to machine code</h2></div>
+  <p>A CPU runs only its own instructions. C++ compiles to those ahead of time, one binary per platform; scripting languages interpret source as they go. Java does both: <code>javac</code> produces portable <b>bytecode</b>, the JVM starts by <b>interpreting</b> it, and the <b>just-in-time (JIT) compiler</b> turns the hot parts into native code while the program runs. The original HotSpot name says it: compile the hot spots, not everything.</p>
+  <p>Why not compile everything at once? Compiling costs time, and code that runs once is cheaper to interpret. Code that runs a lot is worth compiling, and the longer it runs, the more the compiler learns (which types really show up, which branches are taken) and the better it can optimize, for example keeping a value in a register instead of reloading it from memory.</p>
+  <div class="sheet">
+    <div class="row between"><h3>When does compiling pay off?</h3><span class="small">illustrative cost units</span></div>
+    <label class="rng"><span>Times the method runs: <b id="callsV">1,000</b></span><input type="range" id="calls" min="0" max="100" value="45"></label>
+    <div class="svgbox"><svg id="beSvg" viewBox="0 0 640 210" role="img" aria-label="Total cost of interpreting versus compiling"></svg></div>
+    <p id="beTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="tiers" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Tiered compilation: two compilers, five levels</h2></div>
+  <p>HotSpot has two JIT compilers. <b>C1</b> (once called the client compiler) compiles early and quickly. <b>C2</b> (the server compiler) waits longer, gathers a profile, and produces faster code. Tiered compilation, the default since Java 8, uses both: C1 first for a quick win, C2 later for the hot code. Step through a method's life.</p>
+  <div class="sheet">
+    <div class="lv" id="lv"></div>
+    <div class="stepper" id="tierStep"></div>
+  </div>
+  <div class="cardgrid" id="compCards"></div>
+</section>
+
+<section id="cache" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>The code cache can fill up</h2></div>
+  <p>Compiled code lives in the <b>code cache</b>, which has a fixed maximum (240 MB by default with tiered compilation; initial size about 2.5 MB). When it fills, the JVM prints a warning that the code cache is full and the compiler has been disabled; everything not yet compiled stays interpreted. Java 11 splits it into three segments (non-method, profiled and non-profiled code) but the total is still set with <code>-XX:ReservedCodeCacheSize=N</code>. Space is only reserved virtual memory until used, so a generous size costs little.</p>
+  <div class="sheet">
+    <div class="row"><label class="rng" style="flex:1"><span>ReservedCodeCacheSize: <b id="ccV">240 MB</b></span><input type="range" id="cc" min="16" max="512" step="16" value="240"></label>
+      <label class="rng" style="flex:1"><span>Compiled code the app wants: <b id="cnV">120 MB</b></span><input type="range" id="cn" min="10" max="400" step="10" value="120"></label></div>
+    <div class="svgbox"><svg id="ccSvg" viewBox="0 0 640 120" role="img" aria-label="Code cache fill level"></svg></div>
+    <p id="ccTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="print" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Watching the compiler work</h2></div>
+  <p><code>-XX:+PrintCompilation</code> prints a line each time a method or loop is compiled; <code>jstat -compiler &lt;pid&gt;</code> and <code>jcmd &lt;pid&gt; Compiler.codelist</code> give similar views. Tap each field of this made-up line:</p>
+  <div class="sheet">
+    <div class="pcl" id="pcl"></div>
+    <div class="detail" id="pclTip" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="deopt" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Deoptimization: not entrant and zombie</h2></div>
+  <p>The compiler optimizes for what it has seen. If an assumption breaks, compiled code is thrown away. Code is <b>made not entrant</b> (no new calls may enter it) when a type assumption fails, or simply when tiered compilation replaces level-3 code with level-4 code. Later, when nothing is still running it, it is <b>made zombie</b> and its space in the code cache is reclaimed.</p>
+  <div class="sheet">
+    <div class="row between"><h3>A call site that changes its mind</h3><div class="row"><button class="btn primary" id="dpGo">Send a request</button><button class="btn" id="dpLog">Now send ?log=true</button><button class="btn" id="dpReset">Reset</button></div></div>
+    <div class="svgbox"><svg id="dpSvg" viewBox="0 0 640 190" role="img" aria-label="Compiled code for an interface call being deoptimized"></svg></div>
+    <p id="dpTxt" aria-live="polite"></p>
+  </div>
+  <p class="small">Neither kind is usually a concern: tiered compilation produces lots of "not entrant" lines by design, and a type change costs a short dip while the method is recompiled.</p>
+</section>
+
+<section id="thresh" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Thresholds, OSR and compiler threads</h2></div>
+  <p>Each method has two counters: <b>invocations</b> and <b>back-edges</b> (loop iterations that jump back). When their sum crosses a threshold the method is queued for compilation. A long loop inside a method that is called once can still be compiled mid-loop: <b>on-stack replacement</b> (OSR) swaps the running frame onto compiled code. Counters decay over time, so rarely used methods may never reach C2.</p>
+  <div class="sheet">
+    <div class="row between"><h3>Climb the thresholds</h3><div class="row"><button class="btn primary" id="thRun">Run 100 calls</button><button class="btn" id="thLoop">Enter a 50,000-iteration loop</button><button class="btn" id="thReset">Reset</button></div></div>
+    <div class="svgbox"><svg id="thSvg" viewBox="0 0 640 150" role="img" aria-label="Invocation and back-edge counters approaching thresholds"></svg></div>
+    <p id="thTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout blue"><b class="h">Don't tune the thresholds</b><span>Without tiering, people lowered <code>-XX:CompileThreshold</code> (10,000 for C2) to compile sooner. With tiering this brings little; if you must, the knobs are <code>Tier3InvocationThreshold</code> (200) and <code>Tier4InvocationThreshold</code> (5,000). The queue is not FIFO: hotter methods jump ahead.</span></div>
+  <div class="sheet">
+    <div class="row between"><h3>Compiler threads by CPU count</h3><span class="small">defaults with tiered compilation</span></div>
+    <div class="bars" id="ctBars"></div>
+    <p class="small">Change with <code>-XX:CICompilerCount=N</code>. On a single CPU, one compiler thread can help early on (the book saw about 10% faster initial work) because compilation competes less with the application. In older Java 8 builds inside Docker, these were sized for the host's CPUs. <code>-Xbatch</code> turns off background compilation, mainly useful for testing.</p>
+  </div>
+</section>
+
+<section id="inline" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Inlining: the biggest win</h2></div>
+  <p>Well-encapsulated code calls tiny getters and setters all the time. A real call means saving registers and jumping; the getter's work is one load. Inlining copies the callee's body into the caller, and then other optimizations can see across the boundary. Turning inlining off slowed the book's stock test by more than half.</p>
+  <div class="tt inl">
+    <pre class="code"><span class="c">// what you write</span>
+<span class="k">int</span> total = order.getQty() * order.getPrice();</pre>
+    <pre class="code"><span class="c">// what the compiled code effectively does</span>
+<span class="k">int</span> total = order.qty * order.price;</pre>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>Will it be inlined?</h3><span class="small">the two-size rule</span></div>
+    <div class="inl">
+      <label class="rng"><span>Bytecode size of the callee: <b id="inSV">20 bytes</b></span><input type="range" id="inS" min="5" max="500" step="5" value="20"></label>
+      <div class="seg" role="group" aria-label="Call frequency"><button data-hot="0" aria-pressed="false">Called rarely</button><button data-hot="1" aria-pressed="true">Hot call site</button></div>
+    </div>
+    <div class="svgbox fit"><svg id="inSvg" viewBox="0 0 640 70" role="img" aria-label="Inlining size thresholds"></svg></div>
+    <p><span class="verdict" id="inV"></span> <span id="inTxt"></span></p>
+  </div>
+  <p class="small">Raising <code>MaxInlineSize</code> lets bigger methods inline on their first calls, which may shorten warm-up but rarely changes a long-running app. Hot methods already get the larger 325-byte limit (<code>MaxFreqInlineSize</code>).</p>
+</section>
+
+<section id="escape" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Escape analysis</h2></div>
+  <p>If C2 can prove an object never leaves a method (it doesn't "escape"), it can skip the lock on its synchronized methods, keep its fields in registers, and often not allocate it at all. On by default (<code>-XX:+DoEscapeAnalysis</code>). It is also a big reason naive microbenchmarks measure nothing.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="View"><button data-ea="src" aria-pressed="true">Source</button><button data-ea="opt" aria-pressed="false">After escape analysis (conceptually)</button></div>
+    <pre class="code" id="eaCode"></pre>
+    <p id="eaTxt" class="small" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="tradeoffs" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Tiering, AOT and GraalVM</h2></div>
+  <p>Tiered compilation compiles far more code. In the book's NetBeans startup test, turning it off compiled about a quarter as many classes and used about a quarter of the code cache, but started 18 seconds slower. After warm-up, long-running servers perform about the same either way, so <code>-XX:-TieredCompilation</code> or <code>-XX:TieredStopAtLevel=1</code> (C1 only) can make sense only when memory is very tight.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Metric"><button data-nb="0" aria-pressed="true">Classes compiled</button><button data-nb="1" aria-pressed="false">Code cache</button><button data-nb="2" aria-pressed="false">Startup time</button></div>
+    <div class="bars" id="nbBars"></div>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>Startup vs. peak: who wins?</h3><span class="small">shape of the trade-off, not measured data</span></div>
+    <label class="rng"><span>How long the program runs: <b id="rlV">10 s</b></span><input type="range" id="rl" min="0" max="100" value="20"></label>
+    <div class="svgbox"><svg id="gvSvg" viewBox="0 0 640 200" role="img" aria-label="Work done over time by JIT JVM and native image"></svg></div>
+    <p id="gvTxt" aria-live="polite"></p>
+  </div>
+  <div class="cardgrid" id="aotCards"></div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">10</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">11</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b>Hot code gets compiled</b><span>Interpret first, compile what runs often, using a runtime profile.</span></div>
+    <div><b>Keep tiered compilation</b><span>C1 early, C2 for the hottest code. It is the default for a reason.</span></div>
+    <div><b>Watch the code cache</b><span>If it fills, compilation stops. Raise ReservedCodeCacheSize.</span></div>
+    <div><b>Leave thresholds alone</b><span>Tiering makes threshold tuning pointless.</span></div>
+    <div><b>Write small methods</b><span>They inline; simple code compiles better. final adds no speed.</span></div>
+    <div><b>Know your run length</b><span>Native images start fast; the JIT wins on long runs.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Java Performance: In-Depth Advice for Tuning and Programming Java 8, 11, and Beyond</i> (2nd edition) by Scott Oaks (O'Reilly, 2020). Explanations, code snippets, simulations and drawings are original summaries; numbers in the drawings are illustrative unless stated.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch03-toolbox.html"><span>Previous · Chapter 3</span><b>A Java Performance Toolbox</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch05-gc-intro.html"><span>Next · Chapter 5</span><b>An Introduction to Garbage Collection</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('jp:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('jp:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle: remembers the choice per viewer */
+(function(){const R=document.documentElement;const saved=store.get('theme',null);if(saved)R.setAttribute('data-theme',saved);
+ $$('[data-theme-toggle]').forEach(b=>b.addEventListener('click',()=>{const cur=R.getAttribute('data-theme');const dark=cur?cur==='dark':matchMedia('(prefers-color-scheme: dark)').matches;const nx=dark?'light':'dark';R.setAttribute('data-theme',nx);store.set('theme',nx)}))})();
+function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+
+
+/* break-even */
+function drawBE(){const v=+$('#calls').value;const n=Math.round(Math.pow(10,v/20));$('#callsV').textContent=n.toLocaleString();
+ const s=$('#beSvg');s.innerHTML='';const I=k=>k*10,C=k=>4000+k*1;const maxN=100000;const X=k=>50+Math.log10(Math.max(1,k))/5*570;const maxY=I(maxN);const Y=c=>180-Math.log10(Math.max(1,c))/Math.log10(maxY)*160;
+ s.appendChild(el('line',{x1:50,y1:180,x2:620,y2:180,stroke:'var(--line)'}));
+ [1,10,100,1000,10000,100000].forEach(k=>s.appendChild(el('text',{x:X(k),y:196,'text-anchor':'middle','font-size':10,fill:'var(--muted)'},k.toLocaleString())));
+ const pI=[],pC=[];for(let e=0;e<=5;e+=.1){const k=Math.pow(10,e);pI.push(X(k)+','+Y(I(k)));pC.push(X(k)+','+Y(C(k)))}
+ s.appendChild(el('polyline',{points:pI.join(' '),fill:'none',stroke:'var(--pencil)','stroke-width':2.5}));
+ s.appendChild(el('polyline',{points:pC.join(' '),fill:'none',stroke:'var(--blue)','stroke-width':2.5}));
+ s.appendChild(el('text',{x:600,y:Y(I(maxN))+14,'text-anchor':'end','font-size':12,fill:'var(--pencil)'},'interpret every call'));
+ s.appendChild(el('text',{x:60,y:Y(C(1))-6,'font-size':12,fill:'var(--blue)'},'compile once, then run fast'));
+ s.appendChild(el('line',{x1:X(n),y1:16,x2:X(n),y2:180,stroke:'var(--ink)','stroke-dasharray':'3 3'}));
+ const win=I(n)<C(n);$('#beTxt').innerHTML=`At ${n.toLocaleString()} call${n===1?'':'s'}: interpreting costs ${I(n).toLocaleString()}, compiling costs ${C(n).toLocaleString()}. <b class="${win?'pencil':'blue'}">${win?'Interpreting is cheaper':'Compiling wins'}</b>. The JVM can't know the future, so it counts calls and compiles once a method has proven itself hot.`}
+$('#calls').addEventListener('input',drawBE);drawBE();
+
+/* tiers */
+const LV=[['0','Interpreted'],['1','C1, no profiling'],['2','C1, counters only'],['3','C1, full profile'],['4','C2, optimized']];
+$('#lv').innerHTML=LV.map(l=>`<div data-l="${l[0]}"><b>L${l[0]}</b><span>${l[1]}</span></div>`).join('');
+const TS=[[0,'Every method starts at <b>level 0</b>, interpreted. The interpreter counts calls and loop back-edges.'],[3,'After a couple of hundred calls it is queued for C1 and compiled at <b>level 3</b>: fast-ish code that still collects a full profile of types and branches.'],[4,'Once hot enough (thousands of calls), C2 compiles it at <b>level 4</b> using that profile. The level-3 code is made not entrant. This is the normal path: 0 → 3 → 4.'],[2,'Detour: if the C2 queue is backed up, the method may be compiled at <b>level 2</b> (counters but no full profile) and moved to 3 and then 4 when C2 catches up.'],[1,'Detour: trivial methods (a plain getter) go to <b>level 1</b>, C1 with no profiling: C2 couldn\'t do better. Methods C2 fails to compile also land here.'],[0,'And if an assumption breaks, the code is deoptimized back to <b>level 0</b> and the climb starts again.']];
+$('#tierStep').innerHTML=stepHTML();stepper('#tierStep',TS.map(t=>t[1]),i=>$$('#lv div').forEach(d=>d.classList.toggle('on',+d.dataset.l===TS[i][0])));
+cards('#compCards',[
+ {t:'C1: compile early',d:'Lower thresholds, quicker compiles, less aggressive optimization. Good for startup. Use alone with -XX:TieredStopAtLevel=1.',c:'blue'},
+ {t:'C2: wait and learn',d:'Waits for a profile, then optimizes aggressively: inlining, escape analysis, loop transformations, CPU-specific instructions.',c:'pencil'},
+ {t:'Old flags are gone',d:'-client and -server used to pick one compiler. Today they are ignored; tiered compilation is used unless you turn it off.',c:'mid'}]);
+
+/* code cache */
+function drawCC(){const c=+$('#cc').value,n=+$('#cn').value;$('#ccV').textContent=c+' MB';$('#cnV').textContent=n+' MB';const s=$('#ccSvg');s.innerHTML='';const W=560/512;
+ s.appendChild(el('rect',{x:40,y:30,width:c*W,height:40,rx:6,fill:'var(--paper)',stroke:'var(--ink)'}));
+ s.appendChild(el('rect',{x:40,y:30,width:Math.min(n,c)*W,height:40,rx:6,fill:n>c?'var(--bad)':'var(--blue)',opacity:.8}));
+ if(n>c)s.appendChild(el('rect',{x:40+c*W,y:36,width:(n-c)*W,height:28,rx:4,fill:'none',stroke:'var(--bad)','stroke-dasharray':'4 3'}));
+ s.appendChild(el('text',{x:40,y:22,'font-size':11,fill:'var(--muted)'},'reserved code cache'));
+ s.appendChild(el('text',{x:40,y:92,'font-size':12,fill:n>c?'var(--bad)':'var(--ink)'},n>c?`${n-c} MB of hot code stays interpreted`:`${Math.round(n/c*100)}% used`));
+ $('#ccTxt').innerHTML=n>c?'<b class="badc">CodeCache is full. Compiler has been disabled.</b> Methods compiled from now on stay interpreted, and performance quietly suffers. Raise the reserved size; it is only virtual memory until used.':'Room to spare. Check usage with <code>jconsole</code> (Memory Pool: Code Cache) or Native Memory Tracking (chapter 8).'}
+['#cc','#cn'].forEach(i=>$(i).addEventListener('input',drawCC));drawCC();
+
+/* PrintCompilation */
+const PC=[['28015','Timestamp: milliseconds since the JVM started.'],['850','Compilation ID. IDs can appear out of order because compilation runs in background threads and the queue favours hot methods.'],['%','OSR: a loop is being compiled and swapped in while it runs (on-stack replacement).'],['s','The method is synchronized.'],['!','The method has an exception handler.'],['b','Blocking: compilation happened in the foreground (never by default).'],['n','A wrapper the JVM made for a native method.'],['4','Tier level 0 to 4 (missing when tiering is off).'],['demo.Prices::average','Class and method compiled.'],['@ 12','For OSR: the bytecode index where the loop starts.'],['(87 bytes)','Bytecode size of the method, not the size of the compiled code.'],['made not entrant','Deoptimization message, if any (see the next section).']];
+$('#pcl').innerHTML=PC.map((p,i)=>`<button data-pc="${i}" aria-pressed="${i===0}">${p[0]}</button>`).join('');
+seg('[data-pc]',b=>$('#pclTip').innerHTML=`<p><code>${PC[+b.dataset.pc][0]}</code> ${PC[+b.dataset.pc][1]}</p><p class="small">A real line shows only the attribute letters that apply (here they are all shown at once for the tour).</p>`);$('#pclTip').innerHTML='<p><code>28015</code> '+PC[0][1]+'</p>';
+
+/* deopt */
+let DP={n:0,log:false,state:'interp'};
+function drawDP(){const s=$('#dpSvg');s.innerHTML='';
+ const boxes=[['interp',20,'interpreted'],['c2',230,'C2 code: assumes\nPriceHistoryImpl'],['ne',440,'not entrant']];
+ s.appendChild(el('text',{x:20,y:20,'font-size':12,fill:'var(--muted)',class:'t-mono'},'PriceHistory h = log ? new LoggingHistory() : new PriceHistoryImpl();'));
+ boxes.forEach(b=>{const on=DP.state===b[0]||(b[0]==='ne'&&DP.state==='zombie');const g=el('g');g.appendChild(el('rect',{x:b[1],y:50,width:180,height:60,rx:8,fill:on?'var(--blue-soft)':'var(--surface)',stroke:on?'var(--blue)':'var(--line)','stroke-width':on?2.5:1}));
+  b[2].split('\n').forEach((t,i,a)=>g.appendChild(el('text',{x:b[1]+90,y:84+(i-(a.length-1)/2)*16,'text-anchor':'middle','font-size':12.5,fill:'var(--ink)'},b[0]==='ne'&&DP.state==='zombie'?(i?'':'zombie: space reclaimed'):t)));s.appendChild(g)});
+ s.appendChild(el('text',{x:20,y:140,'font-size':12,fill:'var(--ink)'},'requests: '+DP.n+(DP.log?'  (now with logging)':'')));
+ const m=el('rect',{x:20,y:150,width:Math.min(600,DP.n*6),height:14,rx:3,fill:DP.state==='c2'?'var(--ok)':'var(--mid)'});s.appendChild(m);
+ const T={interp:'Calls are interpreted while counters climb.',c2:'Every call has seen <code>PriceHistoryImpl</code>, so C2 inlined its methods directly: fast, but only valid for that type.',ne:'A <code>LoggingHistory</code> arrived. The assumption is broken: a deoptimization trap fires and the C2 code is <b>made not entrant</b>. Calls fall back to the interpreter until the method is recompiled with both types in its profile.',zombie:'Nothing references the old code any more, so it is <b>made zombie</b> and its code-cache space is freed. New compiled code handles both types.'};
+ $('#dpTxt').innerHTML=T[DP.state]}
+$('#dpGo').addEventListener('click',()=>{DP.n+=12;if(DP.state==='interp'&&DP.n>=36)DP.state='c2';else if(DP.state==='ne'){DP.state='zombie'}drawDP()});
+$('#dpLog').addEventListener('click',()=>{if(DP.state==='c2'){DP.log=true;DP.state='ne'}else{DP.log=true}drawDP()});
+$('#dpReset').addEventListener('click',()=>{DP={n:0,log:false,state:'interp'};drawDP()});drawDP();
+
+/* thresholds */
+let TH={inv:0,be:0,lvl:0,osr:false};
+function drawTH(){const s=$('#thSvg');s.innerHTML='';const tot=TH.inv+TH.be;const X=v=>40+Math.min(1,v/15000)*560;
+ s.appendChild(el('rect',{x:40,y:40,width:560,height:30,rx:5,fill:'var(--paper)',stroke:'var(--line)'}));
+ s.appendChild(el('rect',{x:40,y:40,width:X(TH.inv)-40,height:30,rx:5,fill:'var(--blue)'}));
+ s.appendChild(el('rect',{x:X(TH.inv),y:40,width:X(tot)-X(TH.inv),height:30,fill:'var(--pencil)'}));
+ [[200,'C1 (≈200)'],[5000,'C2 (≈5,000)'],[15000,'C2, calls + loops (≈15,000)']].forEach(([v,t])=>{s.appendChild(el('line',{x1:X(v),y1:30,x2:X(v),y2:80,stroke:'var(--ink)','stroke-dasharray':'3 3'}));s.appendChild(el('text',{x:Math.min(X(v),560),y:24,'font-size':10.5,fill:'var(--muted)','text-anchor':'middle'},t))});
+ s.appendChild(el('text',{x:40,y:100,'font-size':12,fill:'var(--blue)'},'invocations '+TH.inv.toLocaleString()));
+ s.appendChild(el('text',{x:220,y:100,'font-size':12,fill:'var(--pencil)'},'back-edges '+TH.be.toLocaleString()));
+ s.appendChild(el('text',{x:40,y:130,'font-size':14,'font-weight':700,fill:'var(--ink)'},'now at level '+TH.lvl+(TH.osr?' (OSR-compiled loop)':'')));
+ $('#thTxt').innerHTML=TH.osr?'The loop alone pushed the back-edge counter over the threshold, so the loop was compiled and swapped in mid-run: <code>%</code> in the log.':TH.lvl===4?'Hot method: compiled by C2.':TH.lvl===3?'Past the C1 threshold: running C1 code that still profiles.':'Still interpreted.'}
+function upd(){const t=TH.inv+TH.be;TH.lvl=(TH.inv>=5000||t>=15000)?4:(TH.inv>=200||t>=2000)?3:0}
+$('#thRun').addEventListener('click',()=>{TH.inv+=100;TH.osr=false;upd();drawTH()});
+$('#thLoop').addEventListener('click',()=>{TH.be+=50000;TH.osr=true;upd();drawTH()});
+$('#thReset').addEventListener('click',()=>{TH={inv:0,be:0,lvl:0,osr:false};drawTH()});drawTH();
+bars('#ctBars',[[1,1,1],[2,1,1],[4,1,2],[8,1,2],[16,2,6],[32,3,7],[64,4,8],[128,4,10]].map(r=>({l:r[0]+' CPU'+(r[0]>1?'s':''),v:r[1]+r[2],txt:`C1 ${r[1]} · C2 ${r[2]}`,c:'blue'})),14);
+
+/* inlining */
+let HOT=1;function drawIN(){const sz=+$('#inS').value;$('#inSV').textContent=sz+' bytes';const s=$('#inSvg');s.innerHTML='';const X=v=>20+v/500*600;
+ s.appendChild(el('rect',{x:20,y:20,width:600,height:20,rx:4,fill:'var(--paper)',stroke:'var(--line)'}));
+ s.appendChild(el('rect',{x:20,y:20,width:X(35)-20,height:20,rx:4,fill:'var(--ok)',opacity:.6}));
+ if(HOT)s.appendChild(el('rect',{x:X(35),y:20,width:X(325)-X(35),height:20,fill:'var(--ok)',opacity:.3}));
+ s.appendChild(el('text',{x:X(35),y:58,'font-size':10.5,'text-anchor':'middle',fill:'var(--muted)'},'35 MaxInlineSize'));
+ s.appendChild(el('text',{x:X(325),y:58,'font-size':10.5,'text-anchor':'middle',fill:'var(--muted)'},'325 MaxFreqInlineSize'));
+ s.appendChild(el('polygon',{points:`${X(sz)},18 ${X(sz)-6},6 ${X(sz)+6},6`,fill:'var(--ink)'}));
+ const ok=sz<35||(HOT&&sz<325);$('#inV').textContent=ok?'Inlined.':'Not inlined.';$('#inV').style.color=ok?'var(--ok)':'var(--bad)';
+ $('#inTxt').textContent=sz<35?'Under 35 bytes: small enough to inline anywhere, even on its first calls.':HOT&&sz<325?'Too big for the general limit, but the call site is hot, so the 325-byte limit applies.':HOT?'Even hot, it is over 325 bytes. Split it into smaller methods if it is genuinely hot.':'Not hot and over 35 bytes: it stays a real call.'}
+$('#inS').addEventListener('input',drawIN);seg('[data-hot]',b=>{HOT=+b.dataset.hot;drawIN()});drawIN();
+
+/* escape analysis */
+const EA={src:'<span class="k">class</span> Counter {\n  <span class="k">private int</span> n;\n  <span class="k">synchronized void</span> inc() { n++; }\n  <span class="k">synchronized int</span> get() { <span class="k">return</span> n; }\n}\n<span class="k">int</span> countEven(<span class="k">int</span>[] a) {\n  Counter c = <span class="k">new</span> Counter();   <span class="c">// never stored or returned</span>\n  <span class="k">for</span> (<span class="k">int</span> v : a) <span class="k">if</span> (v % 2 == 0) c.inc();\n  <span class="k">return</span> c.get();\n}',
+ opt:'<span class="k">int</span> countEven(<span class="k">int</span>[] a) {\n  <span class="k">int</span> n = 0;                   <span class="c">// field lives in a register</span>\n  <span class="k">for</span> (<span class="k">int</span> v : a) <span class="k">if</span> (v % 2 == 0) n++;  <span class="c">// no lock taken</span>\n  <span class="k">return</span> n;                    <span class="c">// no Counter ever allocated</span>\n}'};
+const EAT={src:'The Counter object is created, used and dropped inside one method. It never escapes.',opt:'No allocation, no synchronization, no memory traffic. Real code may get only some of these, but the analysis decides which are safe. Disabling it (advice from the days of old bugs) is rarely right today.'};
+seg('[data-ea]',b=>{$('#eaCode').innerHTML=EA[b.dataset.ea];$('#eaTxt').textContent=EAT[b.dataset.ea]});$('#eaCode').innerHTML=EA.src;$('#eaTxt').textContent=EAT.src;
+
+/* netbeans tiering */
+const NB=[[['+Tiered',22733],['-Tiered',5609],25000,v=>v.toLocaleString()],[['+Tiered',46.5],['-Tiered',10.7],50,v=>v+' MB'],[['+Tiered',50.1],['-Tiered',68.5],75,v=>v+' s']];
+function drawNB(i){const d=NB[i];bars('#nbBars',[{l:'Tiered on',v:d[0][1],txt:d[3](d[0][1]),c:'blue'},{l:'Tiered off',v:d[1][1],txt:d[3](d[1][1]),c:'pencil'}],d[2])}
+seg('[data-nb]',b=>drawNB(+b.dataset.nb));drawNB(0);
+
+/* graal native vs jit */
+function drawGV(){const v=+$('#rl').value;const T=Math.round(Math.pow(10,v/25));$('#rlV').textContent=T>=60?(T/60).toFixed(1)+' min':T+' s';
+ const s=$('#gvSvg');s.innerHTML='';const tmax=10000;const X=t=>50+Math.log10(1+t)/Math.log10(1+tmax)*570;
+ const nat=t=>t*0.8,jit=t=>t<1.5?0:(t<20?(t-1.5)*0.7:(18.5*0.7+(t-20)*1.15));const ymax=jit(tmax);const Y=w=>180-Math.log10(1+w)/Math.log10(1+ymax)*160;
+ const pn=[],pj=[];for(let e=0;e<=4;e+=.05){const t=Math.pow(10,e);pn.push(X(t)+','+Y(nat(t)));pj.push(X(t)+','+Y(jit(t)))}
+ s.appendChild(el('line',{x1:50,y1:180,x2:620,y2:180,stroke:'var(--line)'}));
+ s.appendChild(el('polyline',{points:pn.join(' '),fill:'none',stroke:'var(--pencil)','stroke-width':2.5}));
+ s.appendChild(el('polyline',{points:pj.join(' '),fill:'none',stroke:'var(--blue)','stroke-width':2.5}));
+ s.appendChild(el('text',{x:60,y:30,'font-size':12,fill:'var(--blue)'},'JVM + JIT (blue)'));s.appendChild(el('text',{x:60,y:46,'font-size':12,fill:'var(--pencil)'},'GraalVM native image (orange)'));
+ s.appendChild(el('text',{x:620,y:196,'text-anchor':'end','font-size':10,fill:'var(--muted)'},'run time (log scale) →  work done ↑'));
+ s.appendChild(el('line',{x1:X(T),y1:20,x2:X(T),y2:180,stroke:'var(--ink)','stroke-dasharray':'3 3'}));
+ const w=nat(T)>=jit(T);$('#gvTxt').innerHTML=w?`After ${$('#rlV').textContent}, the <b class="pencil">native image</b> has done more work: no JVM startup, no warm-up, and a smaller footprint. Ideal for short-lived tools and functions.`:`After ${$('#rlV').textContent}, the <b class="blue">JIT</b> has pulled ahead: profile-driven C2 code beats the native image's less aggressive ahead-of-time optimization on long runs.`}
+$('#rl').addEventListener('input',drawGV);drawGV();
+cards('#aotCards',[
+ {t:'AOT with jaotc (JDK 11, experimental)',d:'Precompiles chosen classes into a shared library loaded at startup. Helps big programs with long startup; the library is C1-quality code that the JIT later replaces. Loading a large library can itself slow small programs. Class data sharing (chapter 12) is usually the better startup fix.',c:'blue'},
+ {t:'GraalVM as a JIT',d:'A new compiler written in Java that can replace C2 (-XX:+UnlockExperimentalVMOptions -XX:+EnableJVMCI -XX:+UseJVMCICompiler). Versions bundled in the JDK lag behind the separate GraalVM releases.',c:'pencil'},
+ {t:'GraalVM native image',d:'Compiles the whole program to a standalone native binary: very fast startup and small memory footprint, with some restrictions (reflection, dynamic class loading) and less aggressive optimization.',c:'ok'},
+ {t:'CPU-specific code',d:'The JIT emits instructions for the chip it runs on (AVX2, AVX-512). Defaults for AVX-512 flip-flopped across JDK 11 updates; normally you don\'t touch this.',c:'mid'}]);
+
+quiz('#qQuiz','#qScore',[
+ {q:'What is the normal path of a hot method under tiered compilation?',o:['0 → 1 → 4','0 → 3 → 4','0 → 2 → 3'],a:1,why:'Interpreted, then C1 with full profiling, then C2.'},
+ {q:'The log says "made not entrant" a lot. Should you worry?',o:['Yes, always','Usually not'],a:1,why:'Tiered compilation retires level-3 code routinely; type changes cause brief recompiles.'},
+ {q:'What happens when the code cache fills?',o:['JVM crashes','Compilation stops','GC frees it'],a:1,why:'Remaining code stays interpreted. Increase ReservedCodeCacheSize.'},
+ {q:'A 30-byte getter called once. Inlined?',o:['Yes','No'],a:0,why:'Below the 35-byte MaxInlineSize, it can be inlined even on first calls.'},
+ {q:'Declaring methods final makes compiled code faster.',o:['True','False'],a:1,why:'The JIT already knows which methods are effectively overridden; final adds nothing for speed.'}]);
+
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Threading and Synchronization</title>
+<meta name="description" content="More threads help until they don&#x27;t. Size thread pools for the work, understand what a lock really costs, and avoid the cache-line traps that make parallel code slow.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Java Performance companion. Layout: an engineer's notebook column on blueprint grid paper.
+   Blue ink = the JVM and measurement, orange pencil = your application code, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code and terminal snippets */
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)} pre.code .b{color:var(--bad)} pre.code .p{color:var(--pencil)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+button.tag.theme{cursor:pointer}
+button.tag.theme:hover{border-color:var(--blue);color:var(--blue)}
+.meter{height:14px;border-radius:7px;background:var(--paper);border:1px solid var(--line);overflow:hidden}
+.meter>i{display:block;height:100%;width:0;background:var(--blue);transition:width .3s}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.kv>div{border:1px solid var(--line);border-radius:8px;padding:8px 12px;background:var(--paper);display:flex;flex-direction:column;min-width:0}
+.kv b{font-family:var(--mono);font-size:1.1rem}
+.kv span{font-size:.82rem;color:var(--muted)}
+
+/* page */
+
+.g2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+@media (max-width:640px){.g2{grid-template-columns:1fr}}
+.pool label{display:flex;flex-direction:column;gap:2px;font-size:.88rem}
+.cl{display:flex;gap:4px;flex-wrap:wrap}
+.cl i{width:44px;height:40px;border-radius:5px;display:grid;place-items:center;font-style:normal;font-family:var(--mono);font-size:.72rem;color:#fff}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Java Performance · visual companion</a><span class="tag">Part III · Chapter 9 of 12</span><button class="tag theme" type="button" data-theme-toggle aria-label="Switch light or dark theme">Theme</button></div>
+  <h1>Threading and Synchronization</h1>
+  <p class="lede">More threads help until they don't. Size thread pools for the work, understand what a lock really costs, and avoid the cache-line traps that make parallel code slow.</p>
+  <nav class="toc" aria-label="Sections"><a href="#pools">Pool size</a><a href="#tpe">ThreadPoolExecutor</a><a href="#fj">ForkJoinPool</a><a href="#sync">Synchronization cost</a><a href="#avoid">Avoiding locks</a><a href="#false">False sharing</a><a href="#tunings">JVM tunings</a><a href="#monitor">Monitoring</a><a href="#check">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="pools" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>How many threads?</h2></div>
+  <p>Threads are expensive to create, so servers keep them in pools; and a pool is also a throttle on how much work runs at once. The right size depends on what the tasks do. CPU-bound tasks: about one thread per CPU, since extra threads just queue for cores (remember hyper-threads only add ~30%). Tasks that wait on something: more threads keep the CPU busy, <i>unless</i> the thing they wait on is the bottleneck. Then extra threads pile more load onto it and everything gets slower.</p>
+  <div class="sheet">
+    <div class="g2">
+      <label class="rng"><span>Threads in the pool: <b id="ptV">8</b></span><input type="range" id="pt" min="1" max="64" value="8"></label>
+      <label class="rng"><span>Share of each task spent waiting: <b id="pwV">0%</b></span><input type="range" id="pw" min="0" max="90" step="5" value="0"></label>
+    </div>
+    <div class="row"><div class="seg" role="group" aria-label="Wait target"><button data-wt="free" aria-pressed="true">Waits on an idle service</button><button data-wt="busy" aria-pressed="false">Waits on a saturated database</button></div><span class="small">machine: 8 CPUs</span></div>
+    <div class="svgbox"><svg id="ptSvg" viewBox="0 0 640 210" role="img" aria-label="Throughput versus thread count"></svg></div>
+    <p id="ptTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="tpe" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>ThreadPoolExecutor: core, max and the queue</h2></div>
+  <p>A <code>ThreadPoolExecutor</code> has a core size, a maximum size and a task queue, and the rules for when it adds threads surprise people: it starts a thread beyond the core size <b>only when the queue is full</b>. Choose a queue type and feed it tasks.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Queue" id="qSeg"><button data-q="sync" aria-pressed="false">SynchronousQueue</button><button data-q="unb" aria-pressed="false">Unbounded LinkedBlockingQueue</button><button data-q="bnd" aria-pressed="true">ArrayBlockingQueue(10)</button></div>
+    <p class="small">core = 4, max = 8. Each task takes a while.</p>
+    <div class="row"><button class="btn primary" id="tSub">Submit 5 tasks</button><button class="btn" id="tDone">Finish 3 tasks</button><button class="btn" id="tReset">Reset</button></div>
+    <div class="svgbox"><svg id="tpSvg" viewBox="0 0 640 130" role="img" aria-label="Pool threads and queue"></svg></div>
+    <p id="tpTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout blue"><b class="h">Keep it simple</b><span>The book's advice: make core equal to max (the predictable choice), and bound the queue so a flood of requests is rejected instead of quietly eating the heap. <code>Executors.newFixedThreadPool()</code> uses an unbounded queue; build your own executor with an <code>ArrayBlockingQueue</code> when that matters. Idle threads above core retire after the keep-alive time.</span></div>
+</section>
+
+<section id="fj" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>ForkJoinPool and work stealing</h2></div>
+  <p>A <code>ForkJoinPool</code> suits divide-and-conquer: a task splits itself into subtasks and waits for them without blocking a thread (the waiting thread runs other tasks). Each thread has its own deque, and an idle thread <b>steals</b> work from the back of a busy thread's deque. That shines when tasks are uneven. It is also what parallel streams and <code>CompletableFuture</code> use by default: the <b>common pool</b>, sized to CPUs − 1 (set <code>-Djava.util.concurrent.ForkJoinPool.common.parallelism=N</code>; it honours container CPU limits in recent JDKs).</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Scheduler"><button data-ws="0" aria-pressed="true">Fixed split, no stealing</button><button data-ws="1" aria-pressed="false">Work stealing</button></div><button class="btn primary" id="wsRun">Run</button></div>
+    <div class="svgbox"><svg id="wsSvg" viewBox="0 0 640 170" role="img" aria-label="Four threads processing uneven tasks"></svg></div>
+    <p id="wsTxt" aria-live="polite"></p>
+  </div>
+  <p class="small">For small, even tasks a plain loop or ThreadPoolExecutor can beat ForkJoin: splitting into many tiny subtasks costs objects and bookkeeping. Parallel streams help when the per-element work is large and CPUs are idle; on a busy server they just compete with other requests.</p>
+</section>
+
+<section id="sync" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>What synchronization costs</h2></div>
+  <p>Two costs. First, <b>scalability</b>: by Amdahl's law, any part that must run serially caps the speedup no matter how many CPUs you add. Second, the <b>lock itself</b>: uncontended locks are cheap; contended ones mean spinning, then parking threads in the OS. And every synchronized block, <code>volatile</code> write or CAS also forces values out of registers to memory, which matters in tight loops.</p>
+  <div class="sheet">
+    <div class="g2">
+      <label class="rng"><span>Serial fraction of the work: <b id="amV">10%</b></span><input type="range" id="am" min="0" max="50" value="10"></label>
+      <label class="rng"><span>CPUs: <b id="acV">16</b></span><input type="range" id="ac" min="1" max="128" value="16"></label>
+    </div>
+    <div class="svgbox"><svg id="amSvg" viewBox="0 0 640 200" role="img" aria-label="Amdahl's law speedup curve"></svg></div>
+    <p id="amTxt" aria-live="polite"></p>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>Lock vs. CAS vs. adder</h3><span class="small">shape of the trend, not measurements</span></div>
+    <label class="rng"><span>Threads updating one counter: <b id="ccV">1</b></span><input type="range" id="cc" min="1" max="32" value="1"></label>
+    <div class="bars" id="ccBars"></div>
+    <p class="small" id="ccTxt"></p>
+  </div>
+</section>
+
+<section id="avoid" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Avoiding synchronization</h2></div>
+  <div class="cardgrid" id="avCards"></div>
+  <pre class="code"><span class="c">// one SimpleDateFormat per thread instead of one shared, locked instance</span>
+<span class="k">private static final</span> ThreadLocal&lt;SimpleDateFormat&gt; FMT =
+    ThreadLocal.withInitial(() -&gt; <span class="k">new</span> SimpleDateFormat(<span class="s">"yyyy-MM-dd"</span>));
+<span class="c">// a hot shared counter</span>
+<span class="k">private final</span> LongAdder hits = <span class="k">new</span> LongAdder();   <span class="c">// hits.increment(); hits.sum();</span></pre>
+</section>
+
+<section id="false" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>False sharing</h2></div>
+  <p>CPUs cache memory in 64-byte <b>lines</b>. If two threads each write their own variable but those variables sit in the same line, every write invalidates the other core's copy. The data isn't shared; the cache line is. It is worst with <code>volatile</code> fields or values written inside synchronized blocks, since those writes must reach memory. Standard profilers don't show it; you find it by reading code (or with CPU-vendor tools).</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Layout"><button data-fs="0" aria-pressed="true">Counters adjacent</button><button data-fs="1" aria-pressed="false">Padded / @Contended</button><button data-fs="2" aria-pressed="false">Local variables, write once</button></div>
+    <div class="svgbox"><svg id="fsSvg" viewBox="0 0 640 170" role="img" aria-label="Two cores and cache lines"></svg></div>
+    <p id="fsTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="tunings" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>JVM thread tunings</h2></div>
+  <div class="cardgrid" id="tuCards"></div>
+</section>
+
+<section id="monitor" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Seeing what threads are doing</h2></div>
+  <p>A thread dump (<code>jstack &lt;pid&gt;</code> or <code>jcmd &lt;pid&gt; Thread.print</code>) is a snapshot; take several a few seconds apart and look for patterns. JFR's monitor-blocked events go further, naming the lock, the waiting thread and the time lost. Tap a state:</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="State" id="stSeg"></div>
+    <pre class="code" id="stCode"></pre>
+    <p id="stTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">10</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b>Size pools for the bottleneck</b><span>CPU-bound ≈ CPU count; never add threads to a saturated resource.</span></div>
+    <div><b>Core = max, bounded queue</b><span>Predictable executors; reject floods early.</span></div>
+    <div><b>ForkJoin for uneven, splittable work</b><span>Work stealing balances; the common pool is shared by everyone.</span></div>
+    <div><b>Serial parts cap speedup</b><span>Amdahl's law; uncontended locks are cheap, contended ones are not.</span></div>
+    <div><b>Avoid sharing</b><span>Thread-locals, CAS, LongAdder, immutable data.</span></div>
+    <div><b>Mind cache lines</b><span>Pad hot volatile fields or keep writes local.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Java Performance: In-Depth Advice for Tuning and Programming Java 8, 11, and Beyond</i> (2nd edition) by Scott Oaks (O'Reilly, 2020). Explanations, code snippets, simulations and drawings are original summaries; numbers in the drawings are illustrative unless stated.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch08-native.html"><span>Previous · Chapter 8</span><b>Native Memory Best Practices</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch10-servers.html"><span>Next · Chapter 10</span><b>Java Servers</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('jp:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('jp:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle: remembers the choice per viewer */
+(function(){const R=document.documentElement;const saved=store.get('theme',null);if(saved)R.setAttribute('data-theme',saved);
+ $$('[data-theme-toggle]').forEach(b=>b.addEventListener('click',()=>{const cur=R.getAttribute('data-theme');const dark=cur?cur==='dark':matchMedia('(prefers-color-scheme: dark)').matches;const nx=dark?'light':'dark';R.setAttribute('data-theme',nx);store.set('theme',nx)}))})();
+function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+
+
+/* pool size */
+let WT='free';function drawPT(){const n=+$('#pt').value,w=+$('#pw').value/100;$('#ptV').textContent=n;$('#pwV').textContent=Math.round(w*100)+'%';
+ const cpu=8;const tp=k=>{const eff=k*(1-w);let t=Math.min(eff,cpu+Math.max(0,Math.min(eff,cpu*2)-cpu)*0)/(1-w||1);let base=Math.min(k,cpu/(1-w));
+  if(WT==='busy'&&w>0){const cap=6;base=Math.min(base,cap);if(k>cap)base=cap-(k-cap)*0.06*cap/6;}
+  if(w===0&&k>cpu)base=cpu-(k-cpu)*0.01;return Math.max(0.5,base)};
+ const s=$('#ptSvg');s.innerHTML='';const X=k=>50+(k-1)/63*560;const maxY=Math.max(...Array.from({length:64},(_,i)=>tp(i+1)))*1.15;const Y=v=>180-v/maxY*160;
+ s.appendChild(el('line',{x1:50,y1:180,x2:620,y2:180,stroke:'var(--line)'}));
+ s.appendChild(el('polyline',{points:Array.from({length:64},(_,i)=>X(i+1)+','+Y(tp(i+1))).join(' '),fill:'none',stroke:'var(--blue)','stroke-width':2.5}));
+ s.appendChild(el('circle',{cx:X(n),cy:Y(tp(n)),r:6,fill:'var(--pencil)'}));
+ s.appendChild(el('text',{x:620,y:196,'text-anchor':'end','font-size':11,fill:'var(--muted)'},'threads (1–64) →'));s.appendChild(el('text',{x:54,y:16,'font-size':11,fill:'var(--muted)'},'throughput ↑ (relative)'));
+ const best=Array.from({length:64},(_,i)=>i+1).reduce((a,b)=>tp(b)>tp(a)+0.01?b:a,1);
+ $('#ptTxt').innerHTML=w===0?`CPU-bound: throughput peaks near 8 threads (the CPU count). Beyond that, threads just take turns, with a little extra context-switch cost.`:WT==='busy'?`<b class="badc">The database is the bottleneck.</b> Up to about ${best} threads helps; after that each extra thread adds load to the saturated database and total throughput <i>falls</i>. Shrink the pool or fix the database.`:`Tasks wait ${Math.round(w*100)}% of the time on a service with spare capacity, so about ${Math.round(8/(1-w))} threads keep 8 CPUs busy. That is when larger pools pay off.`}
+seg('[data-wt]',b=>{WT=b.dataset.wt;drawPT()});['#pt','#pw'].forEach(i=>$(i).addEventListener('input',drawPT));drawPT();
+
+/* TPE */
+let Q='bnd',P;function tReset(){P={run:0,queue:0,rej:0,msg:''}}tReset();
+const CORE=4,MAX=8,QC={sync:0,unb:Infinity,bnd:10};
+function submit(){for(let i=0;i<5;i++){if(P.run<CORE){P.run++;continue}if(P.queue<QC[Q]){P.queue++;continue}if(P.run<MAX){P.run++;continue}P.rej++}
+ P.msg=Q==='sync'?'SynchronousQueue holds nothing: past the core size, each task gets a new thread up to max, then is rejected.':Q==='unb'?'Unbounded queue: it never fills, so the pool never grows past core. Max size is meaningless and the queue can grow without limit.':'Bounded queue: core threads first, then the queue fills, and only then do extra threads start, up to max. After that, rejection.';drawTP()}
+function done(){for(let i=0;i<3;i++){if(P.queue>0){P.queue--}else if(P.run>0){P.run--}}P.msg='Finished tasks free their threads, which pull from the queue first.';drawTP()}
+function drawTP(){const s=$('#tpSvg');s.innerHTML='';for(let i=0;i<MAX;i++){const x=20+i*40;s.appendChild(el('rect',{x,y:20,width:32,height:40,rx:5,fill:i<P.run?(i<CORE?'var(--blue)':'var(--pencil)'):'var(--paper)',stroke:i<CORE?'var(--blue)':'var(--pencil)','stroke-dasharray':i<CORE?'':'3 3'}))}
+ s.appendChild(el('text',{x:20,y:14,'font-size':11,fill:'var(--muted)'},'threads (solid = core, dashed = up to max)'));
+ const qn=Math.min(P.queue,14);for(let i=0;i<qn;i++)s.appendChild(el('rect',{x:360+i*18,y:28,width:14,height:24,rx:3,fill:'var(--d2)'}));
+ s.appendChild(el('text',{x:360,y:14,'font-size':11,fill:'var(--muted)'},'queue: '+(P.queue)+(QC[Q]===Infinity?' (no limit)':' / '+QC[Q])));
+ s.appendChild(el('text',{x:20,y:90,'font-size':13,fill:'var(--ink)'},`running ${P.run} · queued ${P.queue} · rejected `));s.appendChild(el('text',{x:220,y:90,'font-size':13,'font-weight':700,fill:P.rej?'var(--bad)':'var(--ink)'},String(P.rej)));
+ $('#tpTxt').textContent=P.msg||'Submit some tasks.'}
+seg('[data-q]',b=>{Q=b.dataset.q;tReset();drawTP()});$('#tSub').addEventListener('click',submit);$('#tDone').addEventListener('click',done);$('#tReset').addEventListener('click',()=>{tReset();drawTP()});drawTP();
+
+/* work stealing */
+const TASKS=[[9,2,1,1],[1,1,1,1],[1,1,1,1],[2,1,1,1]];let WS=0,wsAnim=null;
+function drawWS(progress){const s=$('#wsSvg');s.innerHTML='';const unit=22;
+ let lanes;if(!WS){lanes=TASKS.map(t=>t.slice())}else{const all=TASKS.flat().sort((a,b)=>b-a);lanes=[[],[],[],[]];const load=[0,0,0,0];all.forEach(t=>{const k=load.indexOf(Math.min(...load));lanes[k].push(t);load[k]+=t})}
+ const fin=lanes.map(l=>l.reduce((a,b)=>a+b,0));const end=Math.max(...fin);
+ lanes.forEach((l,i)=>{let x=90;s.appendChild(el('text',{x:10,y:34+i*34,'font-size':12,fill:'var(--ink)'},'thread '+(i+1)));l.forEach((t,j)=>{const w=t*unit;const vis=Math.max(0,Math.min(w,progress*end*unit-(x-90)));s.appendChild(el('rect',{x,y:18+i*34,width:w-2,height:24,rx:3,fill:'var(--paper)',stroke:'var(--line)'}));s.appendChild(el('rect',{x,y:18+i*34,width:Math.max(0,vis-2),height:24,rx:3,fill:WS&&TASKS[i].length<=j?'var(--pencil)':'var(--blue)'}));x+=w})});
+ s.appendChild(el('line',{x1:90+end*unit,y1:10,x2:90+end*unit,y2:150,stroke:'var(--bad)','stroke-dasharray':'4 3'}));
+ s.appendChild(el('text',{x:90+end*unit+4,y:160,'font-size':11,fill:'var(--bad)'},'done at '+end+' units'));
+ $('#wsTxt').innerHTML=WS?'Idle threads steal queued tasks from thread 1, so all four finish at about the same time. Total time drops from 13 to about 7 units.':'Thread 1 got the big chunks. The others finish quickly and sit idle while it grinds on: the job takes 13 units.'}
+seg('[data-ws]',b=>{WS=+b.dataset.ws;drawWS(1)});
+$('#wsRun').addEventListener('click',()=>{let p=0;clearInterval(wsAnim);wsAnim=setInterval(()=>{p+=0.04;drawWS(Math.min(1,p));if(p>=1)clearInterval(wsAnim)},40)});drawWS(1);
+
+/* Amdahl */
+function drawAM(){const f=+$('#am').value/100,c=+$('#ac').value;$('#amV').textContent=Math.round(f*100)+'%';$('#acV').textContent=c;
+ const sp=n=>1/(f+(1-f)/n);const s=$('#amSvg');s.innerHTML='';const X=n=>50+(n-1)/127*560;const Y=v=>180-Math.min(v,128)/Math.min(128,Math.max(8,sp(128)*1.2))*160;
+ s.appendChild(el('line',{x1:50,y1:180,x2:620,y2:180,stroke:'var(--line)'}));
+ s.appendChild(el('polyline',{points:Array.from({length:128},(_,i)=>X(i+1)+','+Y(sp(i+1))).join(' '),fill:'none',stroke:'var(--blue)','stroke-width':2.5}));
+ if(f>0){const lim=1/f;s.appendChild(el('line',{x1:50,y1:Y(lim),x2:620,y2:Y(lim),stroke:'var(--bad)','stroke-dasharray':'5 4'}));s.appendChild(el('text',{x:616,y:Y(lim)-5,'text-anchor':'end','font-size':11,fill:'var(--bad)'},'ceiling: '+lim.toFixed(1)+'×'))}
+ s.appendChild(el('circle',{cx:X(c),cy:Y(sp(c)),r:6,fill:'var(--pencil)'}));
+ $('#amTxt').innerHTML=`Speedup on ${c} CPUs: <b>${sp(c).toFixed(1)}×</b>. ${f>0?`No number of CPUs can beat ${(1/f).toFixed(1)}× while ${Math.round(f*100)}% of the work is serialized (by a lock, say).`:'Perfectly parallel work scales linearly; real code never quite does.'}`}
+['#am','#ac'].forEach(i=>$(i).addEventListener('input',drawAM));drawAM();
+function drawCC(){const t=+$('#cc').value;$('#ccV').textContent=t;const lock=t===1?20:20+t*14,cas=t===1?12:12+t*t*0.9,add=t===1?14:14+t*0.6;
+ bars('#ccBars',[{l:'synchronized',v:lock,txt:lock.toFixed(0)+' ns/op',c:'pencil'},{l:'AtomicLong (CAS)',v:cas,txt:cas.toFixed(0)+' ns/op',c:cas>lock?'bad':'blue'},{l:'LongAdder',v:add,txt:add.toFixed(0)+' ns/op',c:'ok'}],Math.max(lock,cas,add)*1.05);
+ $('#ccTxt').textContent=t===1?'Uncontended: CAS is slightly cheaper than a lock; both are cheap.':t<8?'Light contention: CAS usually stays ahead because nothing blocks; failed attempts just retry.':'Heavy contention: CAS retries multiply and can fall behind; LongAdder spreads updates over per-thread cells and sums on read.'}
+$('#cc').addEventListener('input',drawCC);drawCC();
+
+cards('#avCards',[
+ {t:'Don\'t share',d:'Keep objects thread-confined. A ThreadLocal holds a per-thread copy of something that isn\'t thread-safe (a formatter, a buffer, a Random), with no contention at all.',c:'ok'},
+ {t:'CAS-based utilities',d:'Atomic classes and concurrent collections use compare-and-swap: optimistic, never blocking. Faster than locks when contention is light or moderate.',c:'blue'},
+ {t:'Adders and accumulators',d:'LongAdder and LongAccumulator for hot counters many threads update but few read.',c:'blue'},
+ {t:'Immutable data',d:'Objects that never change need no locking to read. Publish them safely once.',c:'pencil'},
+ {t:'Mind hidden locks',d:'Vector, Hashtable, StringBuffer and synchronized wrappers lock on every call. Even single-threaded, a synchronized call in a hot loop forces register flushes.',c:'bad'}]);
+
+/* false sharing */
+function drawFS(k){const s=$('#fsSvg');s.innerHTML='';
+ [0,1].forEach(c=>{const x=40+c*320;s.appendChild(el('rect',{x,y:10,width:240,height:40,rx:6,fill:'var(--surface)',stroke:'var(--line)'}));s.appendChild(el('text',{x:x+120,y:35,'text-anchor':'middle','font-size':12,fill:'var(--ink)'},'core '+(c+1)+' writes count'+(c?'B':'A')))});
+ const lines=k===1?[[0,'countA','pad…'],[1,'countB','pad…']]:[[0,'countA','countB']];
+ lines.forEach((l,i)=>{const y=90+i*36;const shared=k===0;s.appendChild(el('rect',{x:120,y,width:400,height:28,rx:4,fill:shared?'var(--bad-soft)':'var(--ok-soft)',stroke:shared?'var(--bad)':'var(--ok)'}));
+  s.appendChild(el('text',{x:130,y:y+18,'font-size':12,fill:'var(--ink)',class:'t-mono'},'64-byte line: '+l[1]+' | '+l[2]))});
+ if(k===0){[160,480].forEach(x=>s.appendChild(el('line',{x1:x,y1:50,x2:x<300?220:420,y2:90,stroke:'var(--bad)','stroke-width':2,class:'flow'})))}
+ if(k===2){s.appendChild(el('text',{x:120,y:110,'font-size':12,fill:'var(--ok)'},'each thread counts in a local variable (a register), and writes the shared field once at the end'))}
+ $('#fsTxt').innerHTML=['<b class="badc">Ping-pong.</b> Each volatile write invalidates the line in the other core\'s cache, so both cores keep reloading it from memory. Loops that look trivially parallel run slower than single-threaded.','Padding (or <code>@jdk.internal.vm.annotation.Contended</code> with <code>-XX:-RestrictContended</code>) puts each hot field on its own cache line. The JDK pads some of its own classes this way; <code>-XX:-EnableContended</code> turns that off.','The cheapest fix of all: accumulate in a local variable and store into the shared field rarely. No padding needed.'][k]}
+seg('[data-fs]',b=>drawFS(+b.dataset.fs));drawFS(0);
+
+cards('#tuCards',[
+ {t:'Thread stack size',d:'Default 1 MB on 64-bit Linux (-Xss or -XX:ThreadStackSize). Only touched pages are committed, but with thousands of threads or tight memory, 256 KB to 512 KB is often enough. Too small and deep recursion throws StackOverflowError.',c:'blue'},
+ {t:'Biased locking (JDK 8, 11)',d:'Locks lean toward the last thread that held them, making re-acquisition by the same thread nearly free. Thread pools with many threads sharing locks gain nothing and pay for revoking bias; -XX:-UseBiasedLocking can give a small improvement there.',c:'pencil'},
+ {t:'Thread priorities',d:'Java priorities barely matter on Unix, where the OS mostly favours threads that haven\'t run recently; on Windows they nudge things. No thread starves. Prioritize in application logic, not with setPriority().',c:'mid'},
+ {t:'Lock spinning',d:'A contended thread spins briefly hoping the lock frees soon, then is parked by the OS ("inflated" lock). The JVM manages this itself; the old spinning flags are gone.',c:'ok'}]);
+
+/* thread states */
+const TS=[['RUNNABLE','"pool-1-thread-3" #23 prio=5\n   java.lang.Thread.State: RUNNABLE\n\tat java.net.SocketInputStream.socketRead0(Native Method)\n\tat ...','Runnable does not mean using CPU: this thread is blocked inside a native socket read. Normal for a thread waiting for a request; worrying if it is waiting on a slow database.'],
+ ['BLOCKED','"pool-1-thread-7" #27 prio=5\n   java.lang.Thread.State: BLOCKED (on object monitor)\n\tat demo.Cache.get(Cache.java:41)\n\t- waiting to lock &lt;0x7f3a&gt; (a demo.Cache)','Waiting to enter a synchronized block. If many dumps show many threads blocked on the same lock, that lock is your bottleneck.'],
+ ['WAITING','"pool-1-thread-2" #22 prio=5\n   java.lang.Thread.State: WAITING (parking)\n\tat jdk.internal.misc.Unsafe.park(Native Method)\n\t- parking to wait for &lt;0x7f10&gt; (a ...LinkedBlockingQueue$...)','An idle pool thread waiting for a task: harmless. The same state on a lock or a future can mean starvation.'],
+ ['TIMED_WAITING','"scheduler-1" #31 prio=5\n   java.lang.Thread.State: TIMED_WAITING (sleeping)\n\tat java.lang.Thread.sleep(Native Method)','Sleeping or waiting with a timeout. Usually a background task between runs.']];
+$('#stSeg').innerHTML=TS.map((t,i)=>`<button data-ts="${i}" aria-pressed="${i===1}">${t[0]}</button>`).join('');
+seg('[data-ts]',b=>{const t=TS[+b.dataset.ts];$('#stCode').innerHTML=t[1];$('#stTxt').textContent=t[2]});$('#stCode').innerHTML=TS[1][1];$('#stTxt').textContent=TS[1][2];
+
+quiz('#qQuiz','#qScore',[
+ {q:'Threads mostly wait on a database that is already at 100%. Add threads?',o:['Yes','No'],a:1,why:'More load on a saturated resource makes the whole system slower.'},
+ {q:'core=4, max=8, unbounded queue. Max threads ever running?',o:['4','8','Unlimited'],a:0,why:'The queue never fills, so the pool never grows beyond core.'},
+ {q:'10% of work is serial. Best possible speedup?',o:['10×','100×','Unlimited'],a:0,why:'Amdahl: 1 / 0.1 = 10×.'},
+ {q:'Heavily contended counter updated by 32 threads. Best choice?',o:['synchronized','AtomicLong','LongAdder'],a:2,why:'LongAdder spreads contention across cells.'},
+ {q:'Two threads write different volatile fields in one object and scale badly. Suspect…',o:['False sharing','Biased locking'],a:0,why:'Fields in the same cache line ping-pong between cores.'}]);
+
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,496 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Java SE API Tips: Strings to Classes</title>
+<meta name="description" content="Small API choices made millions of times add up: compact strings and interning, buffered streams, faster startup with class data sharing, and the true cost of exceptions and logging.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Java Performance companion. Layout: an engineer's notebook column on blueprint grid paper.
+   Blue ink = the JVM and measurement, orange pencil = your application code, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code and terminal snippets */
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)} pre.code .b{color:var(--bad)} pre.code .p{color:var(--pencil)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+button.tag.theme{cursor:pointer}
+button.tag.theme:hover{border-color:var(--blue);color:var(--blue)}
+.meter{height:14px;border-radius:7px;background:var(--paper);border:1px solid var(--line);overflow:hidden}
+.meter>i{display:block;height:100%;width:0;background:var(--blue);transition:width .3s}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.kv>div{border:1px solid var(--line);border-radius:8px;padding:8px 12px;background:var(--paper);display:flex;flex-direction:column;min-width:0}
+.kv b{font-family:var(--mono);font-size:1.1rem}
+.kv span{font-size:.82rem;color:var(--muted)}
+
+/* page */
+
+.g2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+@media (max-width:640px){.g2{grid-template-columns:1fr}}
+.bytes{display:flex;flex-wrap:wrap;gap:2px;font-family:var(--mono);font-size:.72rem}
+.bytes i{font-style:normal;width:26px;height:26px;display:grid;place-items:center;border-radius:3px;color:#fff}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Java Performance · visual companion</a><span class="tag">Part IV · Chapter 12a of 12</span><button class="tag theme" type="button" data-theme-toggle aria-label="Switch light or dark theme">Theme</button></div>
+  <h1>Java SE API Tips: Strings to Classes</h1>
+  <p class="lede">Small API choices made millions of times add up: compact strings and interning, buffered streams, faster startup with class data sharing, and the true cost of exceptions and logging.</p>
+  <nav class="toc" aria-label="Sections"><a href="#compact">Compact strings</a><a href="#intern">Interning</a><a href="#concat">Concatenation</a><a href="#buffered">Buffered I/O</a><a href="#cds">Class data sharing</a><a href="#random">Random numbers</a><a href="#jni">JNI</a><a href="#exceptions">Exceptions</a><a href="#logging">Logging</a><a href="#check">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="compact" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Strings: compact storage and deduplication</h2></div>
+  <p>Strings are often the biggest consumer of heap. Since JDK 9, <b>compact strings</b> (<code>-XX:+CompactStrings</code>, on by default) store a string whose characters all fit in Latin-1 as one byte per character instead of two. Type a string:</p>
+  <div class="sheet">
+    <label class="rng"><span>Text</span><input id="csIn" value="Hello, JVM" maxlength="24" style="font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink)"></label>
+    <div class="g2">
+      <div class="stack"><span class="small">JDK 8: char[] (2 bytes each)</span><div class="bytes" id="cs8"></div></div>
+      <div class="stack"><span class="small">JDK 11: byte[] (1 byte each if Latin-1)</span><div class="bytes" id="cs11"></div></div>
+    </div>
+    <p id="csTxt" aria-live="polite"></p>
+  </div>
+  <p><b>Duplicate</b> strings (the same text in many separate objects) are another waste. Three fixes: canonicalize them yourself (chapter 7); <code>intern()</code> them; or let G1 do it with <code>-XX:+UseStringDeduplication</code>, which makes duplicate strings share one backing array in the background (it costs some GC time, and the <code>String</code> objects themselves remain).</p>
+</section>
+
+<section id="intern" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Interning and the string table</h2></div>
+  <p><code>intern()</code> returns a canonical copy from a JVM-wide hash table held in native memory. The table has a fixed number of buckets (<code>-XX:StringTableSize</code>; 60,013 in JDK 8 and 65,536 in JDK 11). If you intern far more strings than buckets, the chains get long and every intern slows down. Check with <code>-XX:+PrintStringTableStatistics</code> or <code>jcmd &lt;pid&gt; VM.stringtable</code>.</p>
+  <div class="sheet">
+    <div class="g2">
+      <label class="rng"><span>Strings interned: <b id="inV">1,000,000</b></span><input type="range" id="inN" min="3" max="7" step="0.25" value="6"></label>
+      <label class="rng"><span>StringTableSize: <b id="itV">60,013</b></span><select id="itS"><option value="1009">1,009 (old JDK 7 default)</option><option value="60013" selected>60,013</option><option value="65536">65,536</option><option value="1000003">1,000,003</option><option value="4000037">4,000,037</option></select></label>
+    </div>
+    <div class="kv"><div><b id="inC">16.7</b><span>average chain length</span></div><div><b id="inR">slow</b><span>lookup cost</span></div></div>
+    <p class="small">A prime (or power of two in JDK 11) near the expected number of interned strings keeps chains short. The book's jmh test from chapter 2 grew out of exactly this question.</p>
+  </div>
+</section>
+
+<section id="concat" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>String concatenation</h2></div>
+  <p>A single expression like <code>"a" + b + "c"</code> is compiled efficiently, and JDK 11 compiles it even better (with <code>invokedynamic</code>, so recompiling old code helps, especially when numbers are mixed in). The trap is concatenation in a loop: each <code>+=</code> builds a whole new string.</p>
+  <div class="g2">
+    <pre class="code"><span class="c">// O(n²): copies the growing string every time</span>
+String s = <span class="s">""</span>;
+<span class="k">for</span> (Trade t : trades) s += t.id() + <span class="s">","</span>;</pre>
+    <pre class="code"><span class="c">// O(n): one buffer, appended in place</span>
+StringBuilder sb = <span class="k">new</span> StringBuilder(trades.size() * 8);
+<span class="k">for</span> (Trade t : trades) sb.append(t.id()).append(<span class="s">','</span>);</pre>
+  </div>
+  <div class="sheet">
+    <label class="rng"><span>Pieces appended: <b id="ccV">1,000</b></span><input type="range" id="cc" min="10" max="10000" step="10" value="1000"></label>
+    <div class="bars" id="ccBars"></div>
+  </div>
+</section>
+
+<section id="buffered" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Buffered I/O</h2></div>
+  <p><code>FileInputStream.read()</code> and its friends go to the operating system on every call. Reading a file one byte at a time means one system call per byte. Wrap streams in <code>BufferedInputStream</code>/<code>BufferedOutputStream</code> (or readers/writers) and the JVM moves data in chunks. The same applies inside the JVM: <code>GZIPOutputStream</code>, <code>ObjectOutputStream</code> and character encoders should sit on top of a buffer, and a <code>ByteArrayOutputStream</code> or socket stream benefits too.</p>
+  <div class="sheet">
+    <div class="g2">
+      <label class="rng"><span>File size: <b id="bfV">10 MB</b></span><input type="range" id="bf" min="1" max="200" value="10"></label>
+      <label class="rng"><span>Buffer: <b id="bbV">none</b></span><input type="range" id="bb" min="0" max="5" value="0"></label>
+    </div>
+    <div class="kv"><div><b id="bCalls">10,485,760</b><span>system calls</span></div><div><b id="bTime">5 s</b><span>approx. time at ~0.5 µs per call</span></div></div>
+    <p class="small" id="bTxt"></p>
+  </div>
+  <pre class="code"><span class="c">// compress to a socket: buffer below the compressor, too</span>
+<span class="k">try</span> (ObjectOutputStream out = <span class="k">new</span> ObjectOutputStream(
+        <span class="k">new</span> BufferedOutputStream(<span class="k">new</span> GZIPOutputStream(
+            <span class="k">new</span> BufferedOutputStream(socket.getOutputStream()))))) {
+  out.writeObject(history);
+}</pre>
+</section>
+
+<section id="cds" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Startup: class loading and CDS</h2></div>
+  <p>Big applications load tens of thousands of classes at startup, and each one is read, parsed and verified. <b>Class data sharing</b> stores that work in an archive the JVM maps into memory at startup (and can share between JVMs). JDK 11 ships an archive for core JDK classes; <b>application CDS</b> adds your own classes. No code changes, often a sizable cut in startup time.</p>
+  <div class="sheet">
+    <div class="stepper" id="cdsStep"></div>
+    <pre class="code" id="cdsCode"></pre>
+  </div>
+  <div class="callout"><b class="h">-Xshare:auto vs. on</b><span>The default, <code>auto</code>, silently runs without the archive if it can't be used (for example, the JAR changed since the dump). Use <code>-Xshare:on</code> in testing so you find out. Parallel class loading and making classloaders "parallel capable" also help apps that load many classes from several threads.</span></div>
+</section>
+
+<section id="random" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Random numbers</h2></div>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Class"><button data-rn="0" aria-pressed="true">Random</button><button data-rn="1" aria-pressed="false">ThreadLocalRandom</button><button data-rn="2" aria-pressed="false">SecureRandom</button></div>
+    <div class="detail" id="rnTip" aria-live="polite"></div>
+    <label class="rng"><span>Threads drawing numbers: <b id="rtV">1</b></span><input type="range" id="rt" min="1" max="16" value="1"></label>
+    <div class="bars" id="rnBars"></div>
+  </div>
+</section>
+
+<section id="jni" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>JNI is not a speedup</h2></div>
+  <p>Calling native code to "go faster" usually backfires. The JIT already produces excellent machine code, and crossing the Java–native boundary costs time in both directions; native code can't be inlined or optimized with the caller. If you must use JNI, make few calls that each do a lot, and be careful with arrays and strings: native code that pins a Java array (<code>Get…Critical</code>) can block the garbage collector until it lets go.</p>
+  <div class="sheet">
+    <label class="rng"><span>Work per JNI call: <b id="jwV">10 ns</b></span><input type="range" id="jw" min="0" max="4" value="1"></label>
+    <div class="bars" id="jniBars"></div>
+  </div>
+</section>
+
+<section id="exceptions" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Exceptions: cost depends on the stack</h2></div>
+  <p>Throwing isn't inherently slow; <b>creating the stack trace</b> is, and it grows with stack depth. Use exceptions for exceptional conditions, not control flow. For hot system exceptions (a <code>NullPointerException</code> thrown over and over), the JIT eventually substitutes a preallocated exception with no stack trace (<code>-XX:+OmitStackTraceInFastThrow</code>, on by default). Your own exception classes can skip the trace by overriding <code>fillInStackTrace()</code>, at the cost of debuggability.</p>
+  <div class="sheet">
+    <div class="g2">
+      <label class="rng"><span>Stack depth when thrown: <b id="edV">50</b></span><input type="range" id="ed" min="1" max="500" value="50"></label>
+      <label class="rng"><span>Share of calls that throw: <b id="erV">1%</b></span><input type="range" id="er" min="0" max="100" value="1"></label>
+    </div>
+    <div class="bars" id="exBars"></div>
+  </div>
+</section>
+
+<section id="logging" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Logging</h2></div>
+  <p>Log generously, but keep detailed logging <b>off by default</b>, and make sure disabled log statements cost nothing. Check the level first (or use a supplier lambda) when building the message needs method calls or allocation. Use a framework with buffered, asynchronous appenders, and be wary of costly formatting such as printing the caller's class and line number, which captures a stack trace per line.</p>
+  <div class="g2">
+    <pre class="code"><span class="c">// arguments evaluated even when DEBUG is off</span>
+log.debug(<span class="s">"book: "</span> + book.describe());</pre>
+    <pre class="code"><span class="c">// nothing evaluated unless enabled</span>
+<span class="k">if</span> (log.isDebugEnabled()) log.debug(<span class="s">"book: {}"</span>, book.describe());
+logger.fine(() -&gt; <span class="s">"book: "</span> + book.describe()); <span class="c">// JUL supplier</span></pre>
+  </div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">10</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">11</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b>Strings</b><span>Compact by default; deduplicate or intern repeats; size the string table.</span></div>
+    <div><b>StringBuilder in loops</b><span>One-line + is fine; recompile for JDK 11 gains.</span></div>
+    <div><b>Buffer all I/O</b><span>Files, sockets, compression, object streams.</span></div>
+    <div><b>Archive your classes</b><span>Application CDS for faster startup.</span></div>
+    <div><b>ThreadLocalRandom</b><span>And test SecureRandom under real entropy.</span></div>
+    <div><b>No JNI for speed, no exceptions for flow, no logging by default</b><span>Each has a hidden cost.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Java Performance: In-Depth Advice for Tuning and Programming Java 8, 11, and Beyond</i> (2nd edition) by Scott Oaks (O'Reilly, 2020). Explanations, code snippets, simulations and drawings are original summaries; numbers in the drawings are illustrative unless stated.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch11-database.html"><span>Previous · Chapter 11</span><b>Database Performance Best Practices</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch12b-collections-lambdas.html"><span>Next · Chapter 12b</span><b>Java SE API Tips: Collections to Serialization</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('jp:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('jp:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle: remembers the choice per viewer */
+(function(){const R=document.documentElement;const saved=store.get('theme',null);if(saved)R.setAttribute('data-theme',saved);
+ $$('[data-theme-toggle]').forEach(b=>b.addEventListener('click',()=>{const cur=R.getAttribute('data-theme');const dark=cur?cur==='dark':matchMedia('(prefers-color-scheme: dark)').matches;const nx=dark?'light':'dark';R.setAttribute('data-theme',nx);store.set('theme',nx)}))})();
+function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+
+
+/* compact strings */
+function drawCS(){const t=$('#csIn').value||' ';const latin=[...t].every(c=>c.charCodeAt(0)<256);
+ $('#cs8').innerHTML=[...t].map(c=>`<i style="background:var(--pencil)">${c===' '?'␣':c}</i><i style="background:var(--pencil);opacity:.45">·</i>`).join('');
+ $('#cs11').innerHTML=latin?[...t].map(c=>`<i style="background:var(--ok)">${c===' '?'␣':c}</i>`).join(''):[...t].map(c=>`<i style="background:var(--blue)">${c===' '?'␣':c}</i><i style="background:var(--blue);opacity:.45">·</i>`).join('');
+ const n=[...t].length;$('#csTxt').innerHTML=latin?`${n*2} bytes of character data in JDK 8, <b class="okc">${n} bytes</b> in JDK 11. Applications full of ASCII text often see a noticeably smaller heap.`:'Contains a character outside Latin-1, so JDK 11 falls back to two bytes per character for this string. Try plain ASCII text.'}
+$('#csIn').addEventListener('input',drawCS);drawCS();
+
+/* intern */
+function drawIN(){const n=Math.round(Math.pow(10,+$('#inN').value)),b=+$('#itS').value;$('#inV').textContent=n.toLocaleString();$('#itV').textContent=b.toLocaleString();const c=n/b;
+ $('#inC').textContent=c<10?c.toFixed(2):c.toFixed(0);$('#inR').textContent=c<2?'fast':c<20?'slower':'very slow';$('#inR').style.color=c<2?'var(--ok)':c<20?'var(--mid)':'var(--bad)'}
+['#inN','#itS'].forEach(i=>$(i).addEventListener('input',drawIN));$('#itS').addEventListener('change',drawIN);drawIN();
+
+/* concat */
+function drawCC(){const n=+$('#cc').value;$('#ccV').textContent=n.toLocaleString();const L=6;const plus=L*n*(n+1)/2,sb=L*n*2;
+ bars('#ccBars',[{l:'+= in a loop',v:plus,txt:(plus/1e6).toFixed(2)+' M chars copied',c:'bad'},{l:'StringBuilder',v:sb,txt:(sb/1e3).toFixed(1)+' K chars copied',c:'ok'}],plus*1.02)}
+$('#cc').addEventListener('input',drawCC);drawCC();
+
+/* buffered */
+const BB=[1,512,1024,8192,65536,1048576];const BBL=['none','512 B','1 KB','8 KB (default)','64 KB','1 MB'];
+function drawBF(){const mb=+$('#bf').value,b=BB[+$('#bb').value];$('#bfV').textContent=mb+' MB';$('#bbV').textContent=BBL[+$('#bb').value];
+ const calls=Math.ceil(mb*1048576/b);$('#bCalls').textContent=calls.toLocaleString();const t=calls*0.5e-6+mb*0.002;$('#bTime').textContent=t>=1?t.toFixed(1)+' s':(t*1000).toFixed(0)+' ms';
+ $('#bTxt').textContent=b===1?'Unbuffered byte-at-a-time I/O: the kernel time dominates, exactly the "inefficient writes" pattern iostat revealed in chapter 3.':b>=8192?'Past a few KB, bigger buffers barely help: the cost is now the data itself.':'Much better already.'}
+['#bf','#bb'].forEach(i=>$(i).addEventListener('input',drawBF));drawBF();
+
+/* CDS stepper */
+const CDS=[['Record which classes the application loads during a typical run.','java -XX:DumpLoadedClassList=app.classes -cp app.jar com.example.Main'],
+ ['Dump those classes into a shared archive (JDK 11 needs -XX:+UseAppCDS on some builds; later JDKs simplify this further).','java -Xshare:dump -XX:SharedClassListFile=app.classes \\\n     -XX:SharedArchiveFile=app.jsa -cp app.jar'],
+ ['Start with the archive. The classes are mapped in, already parsed and verified. Keep the classpath identical to the dump.','java -Xshare:on -XX:SharedArchiveFile=app.jsa -cp app.jar com.example.Main']];
+$('#cdsStep').innerHTML=stepHTML();stepper('#cdsStep',CDS.map(c=>c[0]),i=>$('#cdsCode').textContent=CDS[i][1]);
+
+/* random */
+let RN=0;const RNT=['<p><b>java.util.Random</b>: a fast pseudorandom generator, but somewhat costly to create (seeding) and internally synchronized. Fine for one thread; create it once and reuse it.</p>','<p><b>ThreadLocalRandom</b>: the same algorithm with per-thread state, so no contention. <code>ThreadLocalRandom.current().nextInt(…)</code>. The right choice in multithreaded code.</p>','<p><b>SecureRandom</b>: cryptographically strong, seeded from the OS entropy pool. Its speed depends on how much entropy the system has, which can make it block unpredictably, especially on idle servers or VMs. Test with production-like entropy; fix starvation at the OS level (an entropy daemon or hardware source) rather than weakening the configuration.</p>'];
+function drawRN(){const t=+$('#rt').value;$('#rtV').textContent=t;$('#rnTip').innerHTML=RNT[RN];
+ const r=t===1?10:10+t*t*1.8,tl=8,sec=RN===2?(t*40+Math.random()*300):null;
+ bars('#rnBars',[{l:'Random (shared)',v:r,txt:r.toFixed(0)+' ns/op',c:'pencil'},{l:'ThreadLocalRandom',v:tl,txt:tl+' ns/op',c:'ok'},{l:'SecureRandom',v:RN===2?sec:300,txt:RN===2?sec.toFixed(0)+' ns/op (varies)':'unpredictable',c:'bad'}],Math.max(r,sec||300)*1.05)}
+seg('[data-rn]',b=>{RN=+b.dataset.rn;drawRN()});$('#rt').addEventListener('input',drawRN);drawRN();
+
+/* JNI */
+const JW=[1,10,100,1000,10000];function drawJNI(){const w=JW[+$('#jw').value];$('#jwV').textContent=w>=1000?(w/1000)+' µs':w+' ns';
+ bars('#jniBars',[{l:'Java (JIT-compiled)',v:w,txt:w+' ns',c:'ok'},{l:'Same work via JNI',v:w*0.9+60,txt:(w*0.9+60).toFixed(0)+' ns',c:w*0.9+60>w?'bad':'blue'}],Math.max(w,w*0.9+60)*1.05)}
+$('#jw').addEventListener('input',drawJNI);drawJNI();
+
+/* exceptions */
+function drawEX(){const d=+$('#ed').value,r=+$('#er').value/100;$('#edV').textContent=d;$('#erV').textContent=Math.round(r*100)+'%';
+ const normal=20,exc=200+d*25;const avg=normal+r*exc;const noTrace=normal+r*120;
+ bars('#exBars',[{l:'Average call',v:avg,txt:avg.toFixed(0)+' ns',c:r>0.1?'bad':'blue'},{l:'Without stack traces',v:noTrace,txt:noTrace.toFixed(0)+' ns',c:'ok'},{l:'Never throws',v:normal,txt:normal+' ns',c:'ok'}],Math.max(avg,100)*1.05)}
+['#ed','#er'].forEach(i=>$(i).addEventListener('input',drawEX));drawEX();
+
+quiz('#qQuiz','#qScore',[
+ {q:'Bytes for "hello" in JDK 11 (character data only)?',o:['5','10'],a:0,why:'Latin-1 text is stored one byte per character.'},
+ {q:'Interning 4 million strings with a 60,013-bucket table. Problem?',o:['Long hash chains','None'],a:0,why:'About 67 strings per bucket; raise StringTableSize.'},
+ {q:'Reading a file with an unbuffered FileInputStream.read() loop costs…',o:['One syscall per byte','One syscall per file'],a:0,why:'Wrap it in a BufferedInputStream.'},
+ {q:'Best random generator for a multithreaded simulation?',o:['Random','ThreadLocalRandom','SecureRandom'],a:1,why:'No shared state, no contention.'},
+ {q:'Which makes an exception expensive?',o:['The throw statement','Filling in a deep stack trace'],a:1,why:'Cost grows with stack depth.'}]);
+
+})();
+</script>
+</body>
+</html>

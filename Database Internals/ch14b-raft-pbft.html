@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Consensus: Raft and Byzantine Agreement</title>
+<meta name="description" content="Raft repackages the ideas of Multi-Paxos into something people can actually implement. PBFT goes further and keeps agreeing even when some participants lie.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<script>try{var t=localStorage.getItem('dbi:theme');if(t)document.documentElement.dataset.theme=JSON.parse(t)}catch(e){}</script>
+<style>
+/* Shared base for the Database Internals companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+button.tag{cursor:pointer}
+button.tag:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{font-family:var(--mono);font-size:.82rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:0;overflow-x:auto;white-space:pre;max-width:100%}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+pre.code code{border:0;padding:0;background:none}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;max-height:220px;overflow:auto;display:flex;flex-direction:column;gap:2px}
+.log div{white-space:pre-wrap;word-break:break-word}
+.cells{display:flex;flex-wrap:wrap;gap:4px}
+.cell{font-family:var(--mono);font-size:.8rem;min-width:2.4em;padding:4px 6px;text-align:center;border:1px solid var(--line);border-radius:4px;background:var(--paper);transition:background .3s,border-color .3s}
+.cell.hit{background:var(--blue-soft);border-color:var(--blue)}
+.cell.ok{background:var(--ok-soft);border-color:var(--ok)}
+.cell.bad{background:var(--bad-soft);border-color:var(--bad)}
+.cell.mid{background:var(--mid-soft);border-color:var(--mid)}
+.cell.dim{opacity:.35}
+input[type=text],input[type=number]{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+
+/* page */
+
+.rnodes{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.rn{border:1.5px solid var(--line);border-radius:10px;padding:8px;background:var(--surface);display:flex;flex-direction:column;gap:4px;min-width:0}
+.rn.leader{border-color:var(--blue);box-shadow:0 0 0 2px var(--blue-soft)}
+.rn.candidate{border-color:var(--pencil)}
+.rn.dead{opacity:.45;border-style:dashed}
+.rn.cut{background:var(--bad-soft)}
+.rn .hd{display:flex;justify-content:space-between;align-items:baseline;gap:4px}
+.rn .hd b{font-family:var(--display)}
+.rn .role{font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.rn.leader .role{color:var(--blue);font-weight:700}.rn.candidate .role{color:var(--pencil);font-weight:700}
+.rn .tm{height:4px;border-radius:2px;background:var(--line);overflow:hidden}.rn .tm i{display:block;height:100%;background:var(--muted)}
+.rlog{display:flex;flex-wrap:wrap;gap:2px}
+.rlog span{width:20px;height:20px;border-radius:4px;font-family:var(--mono);font-size:.62rem;display:flex;align-items:center;justify-content:center;border:1.5px solid;color:var(--ink)}
+.rlog span.c{color:#fff}
+.rn button{font-size:.72rem;padding:3px 6px}
+.lcells{display:flex;gap:3px;flex-wrap:wrap}
+.lcells span{width:42px;height:34px;border-radius:6px;border:1.5px solid var(--line);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:.75rem;background:var(--surface)}
+.lcells span.bad{border-color:var(--bad);background:var(--bad-soft);text-decoration:line-through}
+.lcells span.new{border-color:var(--ok);background:var(--ok-soft)}
+@media (max-width:640px){.rnodes{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Database Internals · visual companion</a><span class="tag">Part II · Chapter 14b of 14</span><button class="tag themebtn" type="button" aria-label="Toggle light and dark theme">Theme</button></div>
+  <h1>Consensus: Raft and Byzantine Agreement</h1>
+  <p class="lede">Raft repackages the ideas of Multi-Paxos into something people can actually implement. PBFT goes further and keeps agreeing even when some participants lie.</p>
+  <nav class="toc" aria-label="Sections"><a href="#roles">Raft roles</a><a href="#sim">Raft cluster</a><a href="#repair">Log repair</a><a href="#byz">Byzantine faults</a><a href="#pbft">PBFT</a><a href="#partii">Part II wrap-up</a><a href="#quiz">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="roles" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Raft: consensus designed to be understood</h2></div>
+  <p>Raft (Ongaro and Ousterhout, 2014) was built to be easier to understand than Paxos. Each node keeps a <b>log</b> of commands; identical logs applied in the same order give identical state machines. Raft makes the <b>leader</b> central: only the leader accepts writes and entries flow only from leader to followers. Time is split into numbered <b>terms</b>, with at most one leader per term. Any message with a higher term makes the receiver update its term and step down. Click a role.</p>
+  <div class="sheet"><div class="svgbox"><svg id="roleSvg" viewBox="0 0 640 200" role="img" aria-label="Raft role transitions"></svg></div><div class="detail" id="roleInfo" aria-live="polite"></div></div>
+</section>
+
+<section id="sim" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>A live Raft cluster</h2></div>
+  <p>Five nodes. Bars show each node's <b>election timer</b>; the leader's heartbeats (empty AppendEntries) reset them. When a timer runs out, the node becomes a <b>candidate</b>, increments its term, votes for itself and asks for votes. A node grants at most one vote per term, and only to a candidate whose log is at least as up to date as its own. A majority makes a leader. Log boxes show entry terms; filled boxes are <b>committed</b> (stored on a majority, with an entry from the current term).</p>
+  <div class="sheet">
+    <div class="row"><button class="btn primary" id="rfWrite">Client write</button><button class="btn" id="rfKill">Crash leader</button><button class="btn" id="rfPart">Partition leader + 1</button><button class="btn" id="rfHeal">Heal / restart all</button><label class="small"><input type="checkbox" id="rfSame"> identical timeouts</label><button class="btn" id="rfPause" aria-pressed="false">Pause</button></div>
+    <div class="rnodes" id="rfNodes"></div>
+    <div class="log" id="rfLog" aria-live="polite"></div>
+  </div>
+  <div class="callout"><b class="h">Things to try</b><span>Tick <i>identical timeouts</i> and crash the leader: several nodes become candidates at once, each votes for itself, and nobody wins (a <b>split vote</b>). Randomized timeouts make that rare. Then partition the leader with one follower and write: the old leader appends entries it can never commit, while the majority elects a new leader. Heal, and watch the old leader step down and have its uncommitted entries overwritten.</span></div>
+</section>
+
+<section id="repair" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>How a new leader repairs follower logs</h2></div>
+  <p>Each AppendEntries carries the index and term of the entry just before the new ones. A follower rejects it if its log doesn't contain that entry. Because of this check, two logs that agree on an entry's index and term agree on everything before it (<b>log matching</b>). The leader backs off until it finds the last matching entry, then the follower drops everything after it and takes the leader's entries. The leader never rewrites its own log.</p>
+  <div class="sheet stepper" id="lrStep">
+    <div class="row"><b style="width:80px">Leader</b><div class="lcells" id="lrL"></div></div>
+    <div class="row"><b style="width:80px">Follower</b><div class="lcells" id="lrF"></div></div>
+  </div>
+  <div class="cardgrid" id="raftG"></div>
+</section>
+
+<section id="byz" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Byzantine consensus: when nodes may lie</h2></div>
+  <p>Everything so far assumed crashed nodes stay silent and live nodes tell the truth. With <b>Byzantine</b> faults (malice, bugs, corruption), nodes can send conflicting messages. Tolerating f such nodes takes <b>n = 3f + 1</b>: you must make progress with n − f replies (f may be silent), and among those f may be lying, so honest replies must still outnumber liars. Quorums of 2f + 1 overlap in at least f + 1 nodes, so every overlap contains an honest node.</p>
+  <div class="sheet">
+    <label class="rng"><span>Faulty nodes tolerated f = <b id="bfV"></b></span><input type="range" id="bf" min="1" max="4" value="1"></label>
+    <div class="svgbox"><svg id="bfSvg" viewBox="0 0 640 150" role="img" aria-label="Two Byzantine quorums and their overlap"></svg></div>
+    <p id="bfTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="pbft" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Practical Byzantine Fault Tolerance (PBFT)</h2></div>
+  <p>In PBFT, each <b>view</b> has a primary (replica v mod n); the rest are backups. Messages are signed, so they can't be forged. After a client request: <b>pre-prepare</b> (primary assigns a sequence number and sends the request with its digest), <b>prepare</b> (every backup broadcasts the digest; a replica needs 2f matching prepares), <b>commit</b> (everyone broadcasts commit; a replica needs 2f + 1 matching). The client accepts a result once f + 1 replicas give the same reply. All-to-all phases make it O(n²) messages.</p>
+  <div class="sheet">
+    <div class="row"><label class="small"><input type="checkbox" id="pbBad" checked> R4 is Byzantine (sends a wrong digest)</label><button class="btn primary" id="pbGo">Run a request</button></div>
+    <div class="svgbox"><svg id="pbSvg" viewBox="0 0 660 300" role="img" aria-label="PBFT message sequence"></svg></div>
+    <p id="pbTxt" aria-live="polite"></p>
+  </div>
+  <div class="cardgrid" id="pbCards"></div>
+</section>
+
+<section id="partii" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Part II in one picture</h2></div>
+  <p>Storage engines decide how fast one node is; the distributed layer decides how far the system scales. A fast engine under a slow commit protocol is still slow, so the pieces need to be designed together. The distributed building blocks covered, each linked to its page:</p>
+  <div class="cardgrid" id="p2Cards"></div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b class="blue">Terms</b><span>One leader per term; higher term always wins.</span></div>
+    <div><b>Election</b><span>Randomized timeouts; votes only for up-to-date candidates.</span></div>
+    <div><b>Replication</b><span>AppendEntries with previous index/term; commit on majority.</span></div>
+    <div><b class="pencil">Repair</b><span>Find the last matching entry, overwrite the follower's tail.</span></div>
+    <div><b class="badc">Byzantine</b><span>n = 3f + 1; quorums 2f + 1; O(n²) messages.</span></div>
+    <div><b class="okc">PBFT</b><span>Pre-prepare, prepare (2f), commit (2f + 1); client waits for f + 1.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Database Internals: A Deep Dive into How Distributed Data Systems Work</i> by Alex Petrov (O'Reilly, 2019). Explanations, examples, code and drawings are original summaries, not copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch14a-broadcast-paxos.html"><span>Previous · Chapter 14a</span><b>Consensus: Broadcast and Paxos</b></a><a class="home" href="index.html">All chapters</a><span></span></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('dbi:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('dbi:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle */
+$$('.themebtn').forEach(b=>b.addEventListener('click',()=>{const r=document.documentElement;const dark=r.dataset.theme?r.dataset.theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches;r.dataset.theme=dark?'light':'dark';store.set('theme',r.dataset.theme)}));
+function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'})[c])}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
+
+
+/* ---- roles graph ---- */
+graph('#roleSvg',{nodes:[{id:'f',x:110,y:150,t:'Follower',c:'d2',w:140},{id:'c',x:320,y:45,t:'Candidate',c:'pencil',w:140},{id:'l',x:530,y:150,t:'Leader',c:'blue',w:140}],edges:[['f','c'],['c','l'],['c','f'],['l','f']],
+ info:{f:'Everyone starts here. Passive: stores entries the leader sends, answers vote requests. If no heartbeat arrives before its election timeout, it becomes a candidate. Comparable to a Paxos acceptor plus learner.',
+  c:'Increments the term, votes for itself, sends RequestVote (term, last log index and term). Majority: becomes leader. Hears from a valid leader or a higher term: back to follower. Split vote: waits a random time, starts a new term.',
+  l:'Handles client requests, appends to its log, replicates with AppendEntries, decides commits, sends heartbeats. Steps down on seeing a higher term.'},start:'f',kind:'Role'},'#roleInfo');
+
+/* ---- Raft sim ---- */
+const TC=['d1','d3','d2','d4','d5','blue','pencil','bad'];let R,rfTimer=null,rfPaused=false;
+function rnd(i){return $('#rfSame').checked?24:16+Math.floor(Math.random()*16)}
+function rfInit(){R={n:[0,1,2,3,4].map(i=>({role:'follower',term:1,voted:null,log:[{t:1,c:'a'},{t:1,c:'b'}],commit:2,timer:rnd(i),max:32,alive:true})),grp:null,msgs:[],cmd:99};R.n[0].role='leader';R.n.forEach((x,i)=>x.timer=i?rnd(i):0);rfLog('Node 1 leads term 1.')}
+function rfLog(t){R.msgs.unshift(t);R.msgs=R.msgs.slice(0,5)}
+const reach=(a,b)=>R.n[a].alive&&R.n[b].alive&&(!R.grp||R.grp.has(a)===R.grp.has(b));
+const upToDate=(c,v)=>{const lc=R.n[c].log.at(-1),lv=R.n[v].log.at(-1);const tc=lc?lc.t:0,tv=lv?lv.t:0;return tc>tv||(tc===tv&&R.n[c].log.length>=R.n[v].log.length)};
+function rfTick(){if(rfPaused)return;const N=R.n;
+  N.forEach((x,i)=>{if(!x.alive)return;if(x.role==='leader'){N.forEach((y,j)=>{if(x.role!=='leader'||j===i||!reach(i,j))return;if(y.term>x.term){x.role='follower';x.term=y.term;x.timer=rnd(i);rfLog(`Node ${i+1} sees term ${y.term} and steps down.`);return}
+      if(y.term<x.term||y.role!=='follower'){y.term=x.term;y.role='follower';y.voted=null}y.timer=rnd(j);
+      let k=0;while(k<y.log.length&&k<x.log.length&&y.log[k].t===x.log[k].t)k++;if(k<y.log.length){const dropped=y.log.length-k;y.log=y.log.slice(0,k);if(dropped)rfLog(`Leader ${i+1} truncates ${dropped} conflicting entr${dropped>1?'ies':'y'} on node ${j+1}.`)}y.log=y.log.concat(x.log.slice(k).map(e=>({...e})))});
+      if(x.role==='leader'){for(let idx=x.log.length;idx>x.commit;idx--){const cnt=N.filter((y,j)=>(j===i||reach(i,j))&&y.log.length>=idx&&y.log[idx-1].t===x.log[idx-1].t).length;if(cnt>=3&&x.log[idx-1].t===x.term){x.commit=idx;break}}
+        N.forEach((y,j)=>{if(j!==i&&reach(i,j))y.commit=Math.max(y.commit,Math.min(x.commit,y.log.length))})}}});
+  const fired=[];N.forEach((x,i)=>{if(!x.alive||x.role==='leader')return;x.timer--;if(x.timer<=0)fired.push(i)});
+  fired.forEach(i=>{const x=N[i];x.role='candidate';x.term++;x.voted=i;x.votes=1;x.timer=rnd(i)});
+  fired.forEach(i=>{const x=N[i];if(x.role!=='candidate')return;N.forEach((y,j)=>{if(j===i||!reach(i,j))return;if(y.term<x.term){y.term=x.term;y.voted=null;if(y.role!=='follower')y.role='follower'}
+      if(y.term===x.term&&(y.voted===null||y.voted===i)&&upToDate(i,j)){y.voted=i;x.votes++;y.timer=rnd(j)}});
+    if(x.votes>=3){x.role='leader';x.timer=0;N.forEach((y,j)=>{if(j!==i&&y.role==='candidate'&&y.term<=x.term&&reach(i,j))y.role='follower'});rfLog(`Node ${i+1} wins term ${x.term} with ${x.votes} votes.`)}
+    else rfLog(`Node ${i+1} asks for votes in term ${x.term}: only ${x.votes}. ${fired.length>1?'Split vote.':'No majority reachable.'}`)});
+  rfDraw()}
+function rfDraw(){$('#rfNodes').innerHTML=R.n.map((x,i)=>{const cut=R.grp&&!R.grp.has(i);return `<div class="rn ${x.alive?x.role:'dead'}${R.grp&&R.grp.has(i)?' cut':''}"><div class="hd"><b>N${i+1}</b><span class="role">${x.alive?x.role:'down'}</span></div><span class="small mono">term ${x.term}</span><div class="tm"><i style="width:${x.role==='leader'||!x.alive?0:Math.max(0,x.timer/32*100)}%"></i></div>
+  <div class="rlog">${x.log.map((e,k)=>`<span class="${k<x.commit?'c':''}" style="border-color:var(--${TC[(e.t-1)%8]});${k<x.commit?`background:var(--${TC[(e.t-1)%8]})`:''}">${e.t}</span>`).join('')}</div><button class="btn" data-kn="${i}">${x.alive?'Crash':'Restart'}</button></div>`}).join('');
+  $$('[data-kn]').forEach(b=>b.addEventListener('click',()=>{const x=R.n[+b.dataset.kn];x.alive=!x.alive;if(x.alive){x.role='follower';x.timer=rnd()}rfLog(`Node ${+b.dataset.kn+1} ${x.alive?'restarted':'crashed'}.`);rfDraw()}));
+  $('#rfLog').innerHTML=R.msgs.map((m,k)=>k?`<span class="small">${m}</span>`:`<b>${m}</b>`).join('<br>')}
+const leader=()=>{const ls=R.n.map((x,i)=>x.alive&&x.role==='leader'?i:-1).filter(i=>i>=0);return ls.sort((a,b)=>R.n[b].term-R.n[a].term)};
+$('#rfWrite').addEventListener('click',()=>{const ls=leader();if(!ls.length){rfLog('No leader right now: the client retries later.');return rfDraw()}const target=R.grp?ls.find(i=>R.grp.has(i))??ls[0]:ls[0];const x=R.n[target];x.log.push({t:x.term,c:String.fromCharCode(R.cmd++)});rfLog(`Client write appended at node ${target+1} (term ${x.term}).`);rfDraw()});
+$('#rfKill').addEventListener('click',()=>{const ls=leader();if(!ls.length)return;R.n[ls[0]].alive=false;rfLog(`Leader node ${ls[0]+1} crashed. Followers' timers keep running…`);rfDraw()});
+$('#rfPart').addEventListener('click',()=>{const ls=leader();if(!ls.length||R.grp)return;const l=ls[0];R.grp=new Set([l,(l+1)%5]);rfLog(`Partition: {${[...R.grp].map(i=>i+1).join(', ')}} is cut off from the other three.`);rfDraw()});
+$('#rfHeal').addEventListener('click',()=>{R.grp=null;R.n.forEach(x=>{if(!x.alive){x.alive=true;x.role='follower';x.timer=rnd()}});rfLog('Network healed, crashed nodes restarted.');rfDraw()});
+$('#rfPause').addEventListener('click',e=>{rfPaused=!rfPaused;e.target.setAttribute('aria-pressed',rfPaused);e.target.textContent=rfPaused?'Resume':'Pause'});
+rfInit();rfDraw();rfTimer=setInterval(rfTick,160);window.raftState=()=>R;
+
+/* ---- log repair stepper ---- */
+const LR=[{t:'Leader (term 4) has entries with terms 1 1 2 4 4. A follower that once followed a term-3 leader has 1 1 2 3 3 3.',L:'1 1 2 4 4',F:'1 1 2 3 3 3',bad:[],nw:[]},
+ {t:'Leader sends AppendEntries(prev = index 5, term 4). The follower\'s entry 5 has term 3: mismatch, reject.',L:'1 1 2 4 4',F:'1 1 2 3 3 3',bad:[4],nw:[]},
+ {t:'Leader backs off: prev = index 4, term 4. Follower has term 3 there: reject again.',L:'1 1 2 4 4',F:'1 1 2 3 3 3',bad:[3,4],nw:[]},
+ {t:'prev = index 3, term 2. Match! Logs agree up to here, so they agree on everything before it too.',L:'1 1 2 4 4',F:'1 1 2 3 3 3',bad:[3,4,5],nw:[]},
+ {t:'Follower deletes entries after index 3 (never committed) and appends the leader\'s 4 4. Logs are identical.',L:'1 1 2 4 4',F:'1 1 2 4 4',bad:[],nw:[3,4]}];
+$('#lrStep').insertAdjacentHTML('beforeend',stepHTML());stepper('#lrStep',LR.map(l=>l.t),i=>{const c=LR[i];$('#lrL').innerHTML=c.L.split(' ').map(t=>`<span>${t}</span>`).join('');$('#lrF').innerHTML=c.F.split(' ').map((t,k)=>`<span class="${c.bad.includes(k)?'bad':c.nw.includes(k)?'new':''}">${t}</span>`).join('')});
+cards('#raftG',[{t:'Election safety',c:'d1',d:'At most one leader per term.'},{t:'Leader append-only',c:'d2',d:'A leader never deletes or reorders its own entries.'},{t:'Leader completeness',c:'d3',d:'Committed entries appear in every later leader\'s log, because voters reject less up-to-date candidates.'},{t:'Unique IDs',c:'d4',d:'(term, index) identifies one entry forever; duplicate deliveries are harmless.'}]);
+
+/* ---- Byzantine quorums ---- */
+function drawBf(){const f=+$('#bf').value,n=3*f+1,q=2*f+1;$('#bfV').textContent=f;const s=$('#bfSvg');s.innerHTML='';const w=580/n;
+  for(let i=0;i<n;i++){const x=30+i*w;const a=i<q,b=i>=n-q;s.appendChild(el('rect',{x:x+3,y:42,width:w-6,height:48,rx:7,fill:a&&b?'var(--ok-soft)':'var(--surface)',stroke:a&&b?'var(--ok)':'var(--line)','stroke-width':2}));
+    if(a)s.appendChild(el('rect',{x:x+3,y:26,width:w-6,height:9,rx:3,fill:'var(--blue)'}));if(b)s.appendChild(el('rect',{x:x+3,y:97,width:w-6,height:9,rx:3,fill:'var(--pencil)'}));
+    if(i>=n-q&&i<n-q+f&&a)s.appendChild(el('text',{x:x+w/2,y:72,'text-anchor':'middle','font-size':12,fill:'var(--bad)'},'liar?'))}
+  s.appendChild(el('text',{x:30,y:18,'font-size':10.5,fill:'var(--blue)'},`quorum 1 (${q})`));s.appendChild(el('text',{x:610,y:126,'text-anchor':'end','font-size':10.5,fill:'var(--pencil)'},`quorum 2 (${q})`));
+  $('#bfTxt').innerHTML=`n = ${n} replicas, quorums of ${q}. Any two quorums share at least <b>${2*q-n} = f + 1</b> nodes; even if ${f} of those lie, one honest node is in both. With crash faults only, ${2*f+1} nodes would do.`}
+$('#bf').addEventListener('input',drawBf);drawBf();
+
+/* ---- PBFT ---- */
+let pbBusy=false;const PX_=[70,190,320,450,580],PLAB=['Client','R1 (primary)','R2','R3','R4'];
+function pbBase(){const s=$('#pbSvg');s.innerHTML='';PX_.forEach((x,i)=>{s.appendChild(el('text',{x,y:16,'text-anchor':'middle','font-size':11.5,'font-weight':700,fill:i===4&&$('#pbBad').checked?'var(--bad)':'var(--ink)'},PLAB[i]));s.appendChild(el('line',{x1:x,y1:24,x2:x,y2:292,stroke:'var(--line)','stroke-width':2}))});
+  [['request',40],['pre-prepare',75],['prepare',125],['commit',185],['reply',245]].forEach(([t,y])=>s.appendChild(el('text',{x:4,y:y+12,'font-size':9.5,fill:'var(--muted)'},t)));return s}
+function pm(s,a,b,y,c){const x1=PX_[a],x2=PX_[b];s.appendChild(el('line',{x1,y1:y,x2,y2:y+26,stroke:`var(--${c})`,'stroke-width':1.4,opacity:.85}))}
+async function pbRun(){if(pbBusy)return;pbBusy=true;const bad=$('#pbBad').checked;const s=pbBase();let m=0;const w=()=>sleep(420);
+  pm(s,0,1,36,'muted');m++;await w();[2,3,4].forEach(j=>{pm(s,1,j,72,'blue');m++});await w();
+  [2,3,4].forEach(i=>[1,2,3,4].forEach(j=>{if(i!==j){pm(s,i,j,122,i===4&&bad?'bad':'d2');m++}}));await w();
+  [1,2,3,4].forEach(i=>[1,2,3,4].forEach(j=>{if(i!==j){pm(s,i,j,182,i===4&&bad?'bad':'pencil');m++}}));await w();
+  [1,2,3,4].forEach(i=>{pm(s,i,0,242,i===4&&bad?'bad':'ok');m++});await w();
+  $('#pbTxt').innerHTML=`${m} messages for one request with n = 4. ${bad?'R4\'s prepares, commits and reply don\'t match the digest, so they are ignored. R1 to R3 still collect 2f = 2 matching prepares and 2f + 1 = 3 matching commits, and the client gets f + 1 = 2 matching replies (in fact 3). <b class="okc">Committed despite a liar.</b>':'All replicas agree. The client needed only f + 1 = 2 matching replies.'}`;pbBusy=false}
+$('#pbGo').addEventListener('click',pbRun);$('#pbBad').addEventListener('change',()=>{pbBase();$('#pbTxt').textContent=''});pbRun();
+cards('#pbCards',[{t:'View change',c:'d1',d:'If the primary seems dead or misbehaves, backups stop normal processing and broadcast view-change messages. The next primary (v + 1 mod n) takes over after 2f view-change messages.'},{t:'Checkpoints',c:'d2',d:'Every k requests, replicas broadcast a digest of their state. 2f + 1 matching checkpoint messages form a proof; older log entries can then be discarded. Recovering replicas verify state against these digests.'},{t:'Fast paths',c:'d3',d:'Clients may accept 2f + 1 tentative replies after prepare; read-only requests take one round trip with 2f + 1 matching answers.'},{t:'When to use it',c:'d4',d:'Only when parts of the system don\'t trust each other. Inside one organization, authenticated encrypted links plus crash-tolerant consensus are usually enough.'}]);
+
+cards('#p2Cards',[{t:'Failure detection',c:'d1',d:'<a href="ch09-failure-leader.html">Chapters 9–10</a>: heartbeats, phi-accrual, SWIM, gossip.'},{t:'Leader election',c:'d2',d:'<a href="ch09-failure-leader.html">Chapters 9–10</a>: bully, ring, split brain.'},{t:'Consistency models',c:'d3',d:'<a href="ch11-replication-consistency.html">Chapter 11</a>: CAP, linearizability to eventual, CRDTs.'},{t:'Dissemination and anti-entropy',c:'d4',d:'<a href="ch12-anti-entropy.html">Chapter 12</a>: read repair, Merkle trees, gossip.'},{t:'Distributed transactions',c:'d5',d:'<a href="ch13-distributed-transactions.html">Chapter 13</a>: 2PC, 3PC, Calvin, Spanner, Percolator, RAMP.'},{t:'Consensus',c:'blue',d:'<a href="ch14a-broadcast-paxos.html">Chapter 14a</a> (broadcast, Paxos family) and this page (Raft, PBFT).'}]);
+
+quiz('#qQuiz','#qScore',[
+ {q:'A follower with log ending (term 5, index 9) gets RequestVote from a candidate ending (term 4, index 12). It…',o:['grants the vote','denies the vote'],a:1,why:'Higher last term beats a longer log.'},
+ {q:'Why randomize election timeouts?',o:['To avoid repeated split votes','To balance load'],a:0,why:'One node usually times out first and wins.'},
+ {q:'A leader isolated with one follower out of five can…',o:['commit new entries','append entries it can never commit'],a:1,why:'It can\'t reach a majority of three.'},
+ {q:'To tolerate 2 Byzantine replicas PBFT needs…',o:['5 replicas','7 replicas','9 replicas'],a:1,why:'n = 3f + 1 = 7.'},
+ {q:'A PBFT client trusts a result after…',o:['1 reply','f + 1 matching replies','all replies'],a:1,why:'At least one of f + 1 matching replies comes from an honest replica.'}]);
+
+})();
+</script>
+</body>
+</html>

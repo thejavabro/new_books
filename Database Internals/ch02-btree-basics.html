@@ -1,0 +1,529 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>B-Tree Basics</title>
+<meta name="description" content="Binary search trees are fine in memory and terrible on disk. B-Trees fix that with one idea: make every node wide, so the tree stays shallow and each disk read brings back hundreds of keys.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<script>try{var t=localStorage.getItem('dbi:theme');if(t)document.documentElement.dataset.theme=JSON.parse(t)}catch(e){}</script>
+<style>
+/* Shared base for the Database Internals companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+button.tag{cursor:pointer}
+button.tag:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{font-family:var(--mono);font-size:.82rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:0;overflow-x:auto;white-space:pre;max-width:100%}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+pre.code code{border:0;padding:0;background:none}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;max-height:220px;overflow:auto;display:flex;flex-direction:column;gap:2px}
+.log div{white-space:pre-wrap;word-break:break-word}
+.cells{display:flex;flex-wrap:wrap;gap:4px}
+.cell{font-family:var(--mono);font-size:.8rem;min-width:2.4em;padding:4px 6px;text-align:center;border:1px solid var(--line);border-radius:4px;background:var(--paper);transition:background .3s,border-color .3s}
+.cell.hit{background:var(--blue-soft);border-color:var(--blue)}
+.cell.ok{background:var(--ok-soft);border-color:var(--ok)}
+.cell.bad{background:var(--bad-soft);border-color:var(--bad)}
+.cell.mid{background:var(--mid-soft);border-color:var(--mid)}
+.cell.dim{opacity:.35}
+input[type=text],input[type=number]{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+
+/* page */
+
+.ssd{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.ssd .blkx{border:1.5px solid var(--line);border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:6px;background:var(--paper)}
+.ssd .blkx.gc{border-color:var(--mid);background:var(--mid-soft)}
+.ssd .pg{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}
+.ssd .pg span{font-family:var(--mono);font-size:.75rem;text-align:center;padding:6px 0;border-radius:4px;border:1px solid var(--line);background:var(--surface)}
+.ssd .pg span.live{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.ssd .pg span.stale{background:var(--bad-soft);border-color:var(--bad);color:var(--bad);text-decoration:line-through}
+.kv{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.kv input{width:6em}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Database Internals · visual companion</a><span class="tag">Part I · Chapter 2 of 14</span><button class="tag themebtn" type="button" aria-label="Toggle light and dark theme">Theme</button></div>
+  <h1>B-Tree Basics</h1>
+  <p class="lede">Binary search trees are fine in memory and terrible on disk. B-Trees fix that with one idea: make every node wide, so the tree stays shallow and each disk read brings back hundreds of keys.</p>
+  <nav class="toc" aria-label="Sections"><a href="#bst">Binary trees</a><a href="#ondisk">Trees on disk</a><a href="#hw">HDD and SSD</a><a href="#hier">Hierarchy</a><a href="#lookup">Lookup</a><a href="#split">Splits and merges</a><a href="#quiz">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="bst" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Binary search trees and why balance matters</h2></div>
+  <p>A <b>binary search tree</b> keeps smaller keys to the left and larger keys to the right, so each comparison halves what is left to search: about log<sub>2</sub> N steps. That only holds while the tree is <b>balanced</b>. Insert keys in sorted order and it degenerates into a linked list with O(N) lookups. Balanced trees fix this with <b>rotations</b> after inserts and deletes: a middle node is promoted and its parent becomes its child.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn primary" data-bst="sorted">Insert 1..7 in order</button><button class="btn" data-bst="mixed">Insert 4,2,6,1,3,5,7</button><button class="btn" data-bst="rotate">Insert 1,2,3 then rotate</button></div>
+    <div class="svgbox"><svg id="bstSvg" viewBox="0 0 640 260" role="img" aria-label="A binary search tree built from the chosen insertion order"></svg></div>
+    <p id="bstTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="ondisk" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Why binary trees fail on disk</h2></div>
+  <p>On disk two things hurt. <b>Locality</b>: nodes are created in random order, so a child can live in a different page from its parent and every pointer hop may be a seek. <b>Height</b>: with a fanout of two, a lookup crosses log<sub>2</sub> N levels. Constant rebalancing also means relocating nodes and rewriting pointers. A disk-friendly tree needs the opposite: <b>high fanout</b> and <b>low height</b>, which go hand in hand.</p>
+  <div class="sheet">
+    <label class="rng"><span>Records in the index: <b id="nRecV"></b></span><input type="range" id="nRec" min="3" max="12" step="1" value="9"></label>
+    <label class="rng"><span>Fanout (children per node): <b id="fanV"></b></span><input type="range" id="fan" min="1" max="10" step="1" value="7"></label>
+    <div class="bars" id="hBars"></div>
+    <p class="small" id="hTxt"></p>
+  </div>
+</section>
+
+<section id="hw" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>What the hardware wants</h2></div>
+  <div class="two">
+    <div class="stack">
+      <h3>Spinning disks</h3>
+      <p>The expensive part is moving the head and waiting for the platter. Once positioned, reading contiguous bytes is cheap, hence the obsession with <b>sequential I/O</b>. The smallest transfer is a <b>sector</b>, 512 bytes to 4 KB.</p>
+      <h3>Solid state drives</h3>
+      <p>No moving parts. Cells form strings, then arrays, <b>pages</b> (2 to 16 KB), <b>blocks</b> (64 to 512 pages), planes and dies. You read and write pages, but you can only write to <b>erased</b> cells, and the smallest erasable unit is a whole <b>block</b>. The <b>Flash Translation Layer</b> maps logical pages to physical ones and garbage-collects blocks.</p>
+    </div>
+    <div class="sheet">
+      <h3>Play the flash translation layer</h3>
+      <div class="ssd" id="ssd"></div>
+      <div class="row"><button class="btn" id="ssdW">Write new page</button><button class="btn" id="ssdU">Update a page</button><button class="btn primary" id="ssdG">Garbage collect</button><button class="btn" id="ssdR">Reset</button></div>
+      <p class="small" id="ssdTxt" aria-live="polite"></p>
+    </div>
+  </div>
+  <div class="callout blue"><b class="h">Both are block devices</b><span>The OS exposes both as <b>block devices</b>: read one word, get the whole block. On-disk structures should therefore pack useful data into each block, keep out-of-page pointers few, and prefer full-block writes. Random versus sequential matters less on SSDs, but random, unaligned writes still trigger more garbage collection.</span></div>
+</section>
+
+<section id="hier" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>The B-Tree hierarchy</h2></div>
+  <p>A B-Tree is like a library card catalogue: pick the cabinet, then the shelf, then the drawer, then flip through cards. Each node holds up to <b>N keys and N + 1 child pointers</b>. Nodes are the <b>root</b>, <b>internal</b> nodes and <b>leaves</b>. The book, like most literature, uses "B-Tree" for what is strictly a <b>B<sup>+</sup>-Tree</b>: values live only in leaves and internal nodes hold <b>separator keys</b>. Click any key.</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="hSvg" viewBox="0 0 660 250" role="img" aria-label="A three level B+-Tree with separator keys and sibling links"></svg></div>
+    <p id="hInfo" aria-live="polite" class="small">Click a separator key to see which subrange each of its pointers covers.</p>
+  </div>
+  <div class="cardgrid" id="hCards"></div>
+</section>
+
+<section id="lookup" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Lookup: seeks versus comparisons</h2></div>
+  <p>A lookup starts at the root, binary-searches the node for the first separator greater than the search key, follows the pointer to the left of it (or the last pointer), and repeats until it reaches a leaf. Count two things: <b>pages read</b> (one per level, log<sub>N</sub> M) and <b>comparisons</b> (log<sub>2</sub> M in total, because each node is binary-searched). Finding one key among four billion takes about 32 comparisons but only a handful of page reads.</p>
+  <div class="sheet">
+    <div class="kv"><label for="lk">Find key</label><input type="number" id="lk" value="37"><button class="btn primary" id="lkGo">Search</button><button class="btn" id="rgGo">Range scan 20 ≤ k &lt; 45</button></div>
+    <div class="svgbox"><svg id="lSvg" viewBox="0 0 660 260" role="img" aria-label="B-Tree with the lookup path highlighted"></svg></div>
+    <div class="log" id="lLog" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="split" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Insert, split, delete, merge</h2></div>
+  <p>B-Trees grow <b>from the bottom up</b>. An insert goes to the right leaf. If the leaf <b>overflows</b>, it <b>splits</b>: half the keys move to a new sibling, and the first key of the new node is <i>copied</i> to the parent as a separator (in an internal node the middle key is <i>moved</i> up instead). If the parent overflows too, the split propagates. Only a root split makes the tree taller. Deletes do the reverse: when a node <b>underflows</b> and fits together with a neighbour, the two <b>merge</b> and a separator leaves the parent; otherwise a key is borrowed. This tree holds at most 3 keys per node so you can watch it happen.</p>
+  <div class="sheet">
+    <div class="kv"><input type="number" id="sk" value="12" aria-label="Key"><button class="btn primary" id="sIns">Insert</button><button class="btn" id="sDel">Delete</button><button class="btn" id="sRnd">Insert 5 random</button><button class="btn" id="sReset">Reset</button></div>
+    <div class="svgbox"><svg id="sSvg" viewBox="0 0 660 260" role="img" aria-label="Interactive B+-Tree with at most three keys per node"></svg></div>
+    <div class="log" id="sLog" aria-live="polite"></div>
+    <div class="row between"><span class="small" id="sStats"></span></div>
+  </div>
+  <pre class="code"><code>// Leaf split in a B+-Tree (sketch)
+function splitLeaf(leaf, parent, slot) {
+  const mid = Math.ceil(leaf.keys.length / 2);
+  const right = { leaf: true, keys: leaf.keys.slice(mid) };
+  leaf.keys = leaf.keys.slice(0, mid);
+  parent.keys.splice(slot, 0, right.keys[0]);   // copy up
+  parent.kids.splice(slot + 1, 0, right);
+  // if parent now overflows, split it too (move middle key up)
+}</code></pre>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b>BSTs</b><span>O(log N) only when balanced; low fanout and frequent rotations make them a poor fit for disk.</span></div>
+    <div><b class="blue">Disk wants</b><span>High fanout, low height, few out-of-page pointers, full-block writes.</span></div>
+    <div><b>SSDs</b><span>Write pages, erase blocks. The FTL remaps pages and garbage-collects.</span></div>
+    <div><b class="pencil">B<sup>+</sup>-Tree</b><span>Values in leaves; separator keys route searches; leaves may link to siblings for scans.</span></div>
+    <div><b>Cost</b><span>log<sub>N</sub> M page reads, log<sub>2</sub> M comparisons.</span></div>
+    <div><b class="okc">Balance</b><span>Split on overflow, merge on underflow; the tree grows and shrinks at the root.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Database Internals: A Deep Dive into How Distributed Data Systems Work</i> by Alex Petrov (O'Reilly, 2019). Explanations, examples, code and drawings are original summaries, not copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch01-introduction.html"><span>Previous · Chapter 1</span><b>Introduction and Overview</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch03-file-formats.html"><span>Next · Chapter 3</span><b>File Formats</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('dbi:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('dbi:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle */
+$$('.themebtn').forEach(b=>b.addEventListener('click',()=>{const r=document.documentElement;const dark=r.dataset.theme?r.dataset.theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches;r.dataset.theme=dark?'light':'dark';store.set('theme',r.dataset.theme)}));
+function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'})[c])}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
+
+
+/* ---------- BST ---------- */
+function bstBuild(seq){let r=null;for(const k of seq){const n={k,l:null,r:null};if(!r){r=n;continue}let c=r;while(true){if(k<c.k){if(!c.l){c.l=n;break}c=c.l}else{if(!c.r){c.r=n;break}c=c.r}}}return r}
+function bstDraw(r,hl){const s=$('#bstSvg');s.innerHTML='';let i=0;const pos=[];(function walk(n,d){if(!n)return;walk(n.l,d+1);pos.push([n,i++,d]);walk(n.r,d+1)})(r,0);
+  const cnt=pos.length,maxd=Math.max(...pos.map(p=>p[2]));const X=i=>40+i*(560/(Math.max(cnt-1,1))),Y=d=>30+d*(200/Math.max(maxd,3));const P=new Map(pos.map(p=>[p[0],[X(p[1]),Y(p[2])]]));
+  pos.forEach(([n])=>{[n.l,n.r].forEach(c=>{if(c){const a=P.get(n),b=P.get(c);s.appendChild(el('line',{x1:a[0],y1:a[1],x2:b[0],y2:b[1],stroke:'var(--muted)','stroke-width':1.5}))}})});
+  pos.forEach(([n])=>{const [x,y]=P.get(n);s.appendChild(el('circle',{cx:x,cy:y,r:17,fill:hl&&hl.includes(n.k)?'var(--pencil-soft)':'var(--surface)',stroke:hl&&hl.includes(n.k)?'var(--pencil)':'var(--blue)','stroke-width':2}));s.appendChild(el('text',{x,y:y+5,'text-anchor':'middle','font-size':14,'font-weight':700,fill:'var(--ink)'},n.k))});
+  return maxd+1}
+let rotTimer;
+function bstShow(m){clearTimeout(rotTimer);$$('[data-bst]').forEach(b=>b.classList.toggle('primary',b.dataset.bst===m));
+  if(m==='sorted'){const h=bstDraw(bstBuild([1,2,3,4,5,6,7]));$('#bstTxt').innerHTML=`Height ${h}. Finding 7 takes 7 comparisons: the "tree" is a list.`}
+  else if(m==='mixed'){const h=bstDraw(bstBuild([4,2,6,1,3,5,7]));$('#bstTxt').innerHTML=`Height ${h}. Same keys, different order: every lookup takes at most 3 comparisons.`}
+  else{bstDraw(bstBuild([1,2,3]),[2]);$('#bstTxt').innerHTML='The branch 1 → 2 → 3 is unbalanced. 2 is the <b>rotation pivot</b>…';rotTimer=setTimeout(()=>{bstDraw(bstBuild([2,1,3]),[2]);$('#bstTxt').innerHTML='…so 2 is promoted, and its old parent 1 becomes its left child. Height drops from 3 to 2.'},1400)}}
+$$('[data-bst]').forEach(b=>b.addEventListener('click',()=>bstShow(b.dataset.bst)));bstShow('sorted');
+
+/* ---------- height ---------- */
+const FAN=[2,4,8,16,32,64,128,256,512,1024];
+function drawH(){const M=Math.pow(10,+$('#nRec').value),f=FAN[+$('#fan').value-1];$('#nRecV').textContent=M.toLocaleString('en-US');$('#fanV').textContent=f;
+  const hb=Math.ceil(Math.log2(M)),hf=Math.ceil(Math.log(M)/Math.log(f));
+  bars('#hBars',[{l:'Binary tree levels',v:hb,c:'bad'},{l:`Fanout-${f} levels`,v:hf,c:hf<=4?'ok':'mid'},{l:'Comparisons (either)',v:Math.ceil(Math.log2(M)),c:'blue'}],40);
+  $('#hTxt').textContent=`Each level is a potential disk read. With fanout ${f}, ${M.toLocaleString('en-US')} records need ${hf} level${hf>1?'s':''}; the binary tree needs ${hb}. Comparisons stay about the same: high fanout saves seeks, not CPU work.`}
+$('#nRec').addEventListener('input',drawH);$('#fan').addEventListener('input',drawH);drawH();
+
+/* ---------- SSD ---------- */
+let ssd,lp,ssdNext;
+function ssdReset(){ssd=[Array(8).fill(null),Array(8).fill(null)];lp=0;ssdMsg('Two erase blocks of eight pages each. All pages are erased and writable.');drawSsd()}
+function ssdMsg(t){$('#ssdTxt').textContent=t}
+function freeSlot(){for(let b=0;b<2;b++)for(let p=0;p<8;p++)if(ssd[b][p]===null)return[b,p];return null}
+function drawSsd(gc){$('#ssd').innerHTML=ssd.map((blk,b)=>`<div class="blkx${gc===b?' gc':''}"><span class="small mono">erase block ${b}</span><div class="pg">${blk.map(p=>p===null?'<span>·</span>':`<span class="${p.stale?'stale':'live'}">L${p.id}</span>`).join('')}</div></div>`).join('')}
+$('#ssdW').addEventListener('click',()=>{const f=freeSlot();if(!f)return ssdMsg('No erased pages left. Run garbage collection.');ssd[f[0]][f[1]]={id:lp++};ssdMsg(`Logical page L${lp-1} written to block ${f[0]}, page ${f[1]}. Pages in a block are filled in order.`);drawSsd()});
+$('#ssdU').addEventListener('click',()=>{const live=[];ssd.forEach((b,bi)=>b.forEach((p,pi)=>{if(p&&!p.stale)live.push([bi,pi])}));if(!live.length)return ssdMsg('Write something first.');const f=freeSlot();if(!f)return ssdMsg('No erased pages to write the new version to. Garbage-collect first.');
+  const [bi,pi]=live[Math.floor(Math.random()*live.length)];const id=ssd[bi][pi].id;ssd[bi][pi].stale=true;ssd[f[0]][f[1]]={id};ssdMsg(`L${id} can't be overwritten in place. The new version goes to block ${f[0]} page ${f[1]}; the FTL remaps L${id} and marks the old copy stale.`);drawSsd()});
+$('#ssdG').addEventListener('click',()=>{const stale=ssd.map(b=>b.filter(p=>p&&p.stale).length);const v=stale[0]>=stale[1]?0:1;if(!stale[v])return ssdMsg('Nothing stale to reclaim yet.');
+  const live=ssd[v].filter(p=>p&&!p.stale);const other=ssd[1-v];const free=other.filter(p=>p===null).length;if(free<live.length)return ssdMsg('Not enough room to relocate live pages. (Real drives keep spare blocks for exactly this.)');
+  drawSsd(v);setTimeout(()=>{live.forEach(p=>{const i=other.indexOf(null);other[i]={id:p.id}});ssd[v]=Array(8).fill(null);ssdMsg(`Block ${v} had ${stale[v]} stale page(s). Its ${live.length} live page(s) were copied to block ${1-v}, then the whole block was erased. Those copies are extra writes the host never asked for.`);drawSsd()},700)});
+$('#ssdR').addEventListener('click',ssdReset);ssdReset();
+
+/* ---------- B+ tree engine ---------- */
+function BT(cap){this.cap=cap;this.root={leaf:true,keys:[]};this.log=[]}
+BT.prototype.find=function(k){let n=this.root,path=[];while(!n.leaf){let i=0;while(i<n.keys.length&&k>=n.keys[i])i++;path.push([n,i]);n=n.kids[i]}return{n,path}};
+BT.prototype.insert=function(k){const {n,path}=this.find(k);if(n.keys.includes(k)){this.log.push(`${k} already present`);return}
+  n.keys.push(k);n.keys.sort((a,b)=>a-b);this.log.push(`insert ${k} into leaf [${n.keys.join(' ')}]`);let node=n;
+  while(node.keys.length>this.cap){let up,right;
+    if(node.leaf){const rm=this.rightOnly&&path.every(([p,i])=>i===p.kids.length-1)&&node.keys[node.keys.length-1]===k;const m=rm?node.keys.length-1:Math.ceil(node.keys.length/2);if(rm)this.log.push('rightmost append: new key starts a fresh page instead of a half split');right={leaf:true,keys:node.keys.slice(m)};node.keys=node.keys.slice(0,m);up=right.keys[0];this.log.push(`leaf overflow → split into [${node.keys.join(' ')}] and [${right.keys.join(' ')}], copy ${up} up`)}
+    else{const m=Math.floor(node.keys.length/2);up=node.keys[m];right={leaf:false,keys:node.keys.slice(m+1),kids:node.kids.slice(m+1)};node.keys=node.keys.slice(0,m);node.kids=node.kids.slice(0,m+1);this.log.push(`internal overflow → split, move ${up} up`)}
+    right.fresh=true;
+    if(!path.length){this.root={leaf:false,keys:[up],kids:[node,right],fresh:true};this.log.push('root split: tree grows one level');break}
+    const [p,i]=path.pop();p.keys.splice(i,0,up);p.kids.splice(i+1,0,right);node=p}};
+BT.prototype.remove=function(k){const {n,path}=this.find(k);const i=n.keys.indexOf(k);if(i<0){this.log.push(`${k} not found`);return}
+  n.keys.splice(i,1);this.log.push(`delete ${k} from leaf → [${n.keys.join(' ')}]`);this.fix(n,path)};
+BT.prototype.fix=function(node,path){
+  if(!path.length){if(!node.leaf&&node.keys.length===0){this.root=node.kids[0];this.log.push('root has one child left: tree shrinks one level')}return}
+  const minL=Math.ceil((this.cap+1)/2)-0,under=node.leaf?node.keys.length<Math.floor((this.cap+1)/2):node.keys.length<1;if(!under)return;
+  const [p,i]=path[path.length-1];const cap=this.cap;const self=this;
+  function tryMerge(li){const L=p.kids[li],R=p.kids[li+1];const size=L.leaf?L.keys.length+R.keys.length:L.keys.length+R.keys.length+1;if(size>cap)return false;
+    if(L.leaf){L.keys=L.keys.concat(R.keys)}else{L.keys=L.keys.concat([p.keys[li]],R.keys);L.kids=L.kids.concat(R.kids)}
+    self.log.push(`underflow → merge with ${li===i?'right':'left'} sibling into [${L.keys.join(' ')}], remove separator ${p.keys[li]} from parent`);p.keys.splice(li,1);p.kids.splice(li+1,1);L.fresh=true;return true}
+  if((i>0&&tryMerge(i-1))||(i<p.kids.length-1&&tryMerge(i))){path.pop();this.fix(p,path);return}
+  if(i>0){const S=p.kids[i-1];if(node.leaf){node.keys.unshift(S.keys.pop());p.keys[i-1]=node.keys[0]}else{node.keys.unshift(p.keys[i-1]);p.keys[i-1]=S.keys.pop();node.kids.unshift(S.kids.pop())}}
+  else{const S=p.kids[i+1];if(node.leaf){node.keys.push(S.keys.shift());p.keys[i]=S.keys[0]}else{node.keys.push(p.keys[i]);p.keys[i]=S.keys.shift();node.kids.push(S.kids.shift())}}
+  node.fresh=true;this.log.push('underflow, sibling too full to merge → borrow one key and update the separator')};
+BT.prototype.layout=function(){const lv=[];(function w(n,d){(lv[d]=lv[d]||[]).push(n);if(!n.leaf)n.kids.forEach(c=>w(c,d+1))})(this.root,0);
+  const KW=28,G=14;const nw=n=>Math.max(1,n.keys.length)*KW+8;const leaves=lv[lv.length-1];let x=10;leaves.forEach(n=>{n._x=x;n._w=nw(n);x+=n._w+G});
+  for(let d=lv.length-2;d>=0;d--)lv[d].forEach(n=>{n._w=nw(n);const a=n.kids[0],b=n.kids[n.kids.length-1];n._x=(a._x+b._x+b._w)/2-n._w/2});
+  // resolve overlaps on upper levels
+  for(let d=lv.length-2;d>=0;d--){for(let k=1;k<lv[d].length;k++){const p=lv[d][k-1],q=lv[d][k];if(q._x<p._x+p._w+G)q._x=p._x+p._w+G}}
+  let minx=Infinity,maxx=0;lv.flat().forEach(n=>{minx=Math.min(minx,n._x);maxx=Math.max(maxx,n._x+n._w)});lv.flat().forEach(n=>n._x+=10-minx);return{lv,width:Math.max(maxx-minx+20,300),KW}};
+function drawBT(t,svg,opt){opt=opt||{};const s=$(svg);s.innerHTML='';const {lv,width,KW}=t.layout();const H=Math.max(lv.length*80+20,140);const W=Math.max(width,640);s.setAttribute('viewBox',`0 0 ${W} ${H}`);
+  const off=(W-width)/2;const Y=d=>20+d*80;
+  lv.forEach((row,d)=>row.forEach(n=>{if(!n.leaf)n.kids.forEach((c,ci)=>{const px=off+n._x+4+ci*KW,cx=off+c._x+c._w/2;const on=opt.path&&opt.path.includes(n)&&opt.path.includes(c);s.appendChild(el('line',{x1:px,y1:Y(d)+28,x2:cx,y2:Y(d+1),stroke:on?'var(--pencil)':'var(--muted)','stroke-width':on?3:1.2,opacity:on?1:.6}))})}));
+  const leaves=lv[lv.length-1];leaves.forEach((n,i)=>{if(i<leaves.length-1){const a=leaves[i+1];s.appendChild(el('line',{x1:off+n._x+n._w,y1:Y(lv.length-1)+14,x2:off+a._x,y2:Y(lv.length-1)+14,stroke:'var(--d2)','stroke-width':1.2,'stroke-dasharray':'3 3'}))}});
+  lv.forEach((row,d)=>row.forEach(n=>{const x=off+n._x,y=Y(d);const on=opt.path&&opt.path.includes(n);
+    s.appendChild(el('rect',{x,y,width:n._w,height:28,rx:5,fill:n.fresh?'var(--mid-soft)':on?'var(--pencil-soft)':'var(--surface)',stroke:on?'var(--pencil)':n.leaf?'var(--d2)':'var(--blue)','stroke-width':on?2.4:1.6}));
+    n.keys.forEach((k,ki)=>{const hit=opt.hit&&opt.hit.includes(k)&&n.leaf;if(hit)s.appendChild(el('rect',{x:x+4+ki*KW,y:y+3,width:KW-2,height:22,rx:3,fill:'var(--ok-soft)',stroke:'var(--ok)'}));
+      const tx=el('text',{x:x+4+ki*KW+KW/2-1,y:y+19,'text-anchor':'middle','font-size':12.5,'font-weight':n.leaf?400:700,fill:'var(--ink)',class:'t-mono'},k);if(opt.onKey){tx.style.cursor='pointer';tx.addEventListener('click',()=>opt.onKey(n,ki))}s.appendChild(tx);
+      if(ki>0)s.appendChild(el('line',{x1:x+4+ki*KW-1,y1:y+4,x2:x+4+ki*KW-1,y2:y+24,stroke:'var(--line)'}))});
+    if(!n.keys.length)s.appendChild(el('text',{x:x+n._w/2,y:y+19,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},'empty'))}));
+  lv.flat().forEach(n=>delete n.fresh);return lv}
+
+
+/* ---------- hierarchy ---------- */
+const hT=new BT(3);[5,12,20,27,33,41,48,56,63,70,77,85,91].forEach(k=>hT.insert(k));
+function hDraw(sel){const lv=drawBT(hT,'#hSvg',{path:sel?[sel.n,...(sel.n.leaf?[]:[sel.n.kids[sel.i],sel.n.kids[sel.i+1]])]:null,onKey:(n,i)=>{hDraw({n,i});
+  if(n.leaf){$('#hInfo').innerHTML=`<b>${n.keys[i]}</b> is a stored key on the leaf level. In a B<sup>+</sup>-Tree this is where the value (or a pointer to the record) lives. Dashed links join leaf siblings for range scans.`}
+  else{const k=n.keys[i],lo=i>0?n.keys[i-1]:null,hi=i<n.keys.length-1?n.keys[i+1]:null;$('#hInfo').innerHTML=`Separator <b>${k}</b>: the pointer on its left leads to keys ${lo!=null?`≥ ${lo} and `:''}&lt; ${k}; the pointer on its right leads to keys ≥ ${k}${hi!=null?` and &lt; ${hi}`:''}. A node with ${n.keys.length} key${n.keys.length>1?'s':''} has ${n.kids.length} children.`}}})}
+hDraw(null);
+cards('#hCards',[{t:'Occupancy',c:'d1',d:'How full a node is compared with its capacity. Space reserved for future inserts means utilisation can drop to about 50%, though it is usually much higher.'},{t:'Fanout',c:'d2',d:'How many children a node can have. Higher fanout amortises the cost of splits and merges and cuts the number of seeks.'},{t:'Sibling pointers',c:'d3',d:'Links between neighbouring leaves (sometimes both directions) let a range scan move sideways without climbing back to the parent.'},{t:'Point vs range',c:'d4',d:'Equality predicates find one item. Comparison predicates (<, >, ≤, ≥) find a run of items in order, which sorted leaves make cheap.'}]);
+
+/* ---------- lookup ---------- */
+const lT=new BT(3);[3,8,12,17,21,25,29,33,37,41,46,50,55,60,64,68].forEach(k=>lT.insert(k));drawBT(lT,'#lSvg');
+function lookup(k){const path=[];let n=lT.root,cmp=0;const L=[];while(true){path.push(n);let lo=0,hi=n.keys.length;while(lo<hi){const m=(lo+hi)>>1;cmp++;if(n.leaf?n.keys[m]<k:n.keys[m]<=k)lo=m+1;else hi=m}
+  if(n.leaf){L.push(`leaf [${n.keys.join(' ')}]: ${n.keys.includes(k)?'found '+k:k+' not present'}`);break}
+  L.push(`read page [${n.keys.join(' ')}] → binary search → child #${lo}`);n=n.kids[lo]}
+  drawBT(lT,'#lSvg',{path,hit:[k]});L.push(`total: ${path.length} page reads, ${cmp} key comparisons`);$('#lLog').innerHTML=L.map(x=>`<div>${esc(x)}</div>`).join('')}
+$('#lkGo').addEventListener('click',()=>lookup(+$('#lk').value));
+$('#rgGo').addEventListener('click',()=>{const path=[];let n=lT.root;while(!n.leaf){path.push(n);let i=0;while(i<n.keys.length&&20>=n.keys[i])i++;n=n.kids[i]}path.push(n);
+  const hit=[];const {lv}=lT.layout();const leaves=lv[lv.length-1];let li=leaves.indexOf(n),hops=0;outer:for(;li<leaves.length;li++){hops++;for(const k of leaves[li].keys){if(k>=45)break outer;if(k>=20)hit.push(k)}}
+  drawBT(lT,'#lSvg',{path,hit});$('#lLog').innerHTML=`<div>descend once to the leaf holding 20 (${path.length} page reads)</div><div>then follow sibling links across ${hops} leaves</div><div>result: ${hit.join(', ')}</div>`});
+lookup(37);
+
+/* ---------- split / merge ---------- */
+let sT;function sReset(){sT=new BT(3);[10,20,30].forEach(k=>sT.insert(k));sT.log=['start: one leaf [10 20 30], full'];sDraw()}
+function sDraw(){drawBT(sT,'#sSvg');$('#sLog').innerHTML=sT.log.slice(-8).map(x=>`<div>${esc(x)}</div>`).join('');$('#sLog').scrollTop=1e5;
+  const {lv}=sT.layout();const all=lv.flat();const leaves=lv[lv.length-1];const keys=leaves.reduce((a,n)=>a+n.keys.length,0);$('#sStats').textContent=`height ${lv.length} · ${all.length} nodes · ${keys} keys · leaf occupancy ${Math.round(keys/(leaves.length*3)*100)}%`}
+$('#sIns').addEventListener('click',()=>{const v=+$('#sk').value;if(Number.isFinite(v)){sT.insert(v);sDraw();$('#sk').value=v+3}});
+$('#sDel').addEventListener('click',()=>{const v=+$('#sk').value;sT.remove(v);sDraw()});
+$('#sRnd').addEventListener('click',()=>{for(let i=0;i<5;i++){sT.insert(1+Math.floor(Math.random()*99))}sDraw()});
+$('#sReset').addEventListener('click',sReset);sReset();
+
+quiz('#qQuiz','#qScore',[
+ {q:'Why are binary search trees a poor on-disk structure?',o:['They can\'t be sorted','Low fanout means many levels, and nodes scatter across pages','They need hashing'],a:1,why:'Each level may be a seek, and rebalancing keeps relocating nodes and pointers.'},
+ {q:'On an SSD, what is the smallest unit that can be erased?',o:['A cell','A page','A block'],a:2,why:'You write pages but erase whole blocks, which is why the FTL garbage-collects.'},
+ {q:'In a B+-Tree, where are values stored?',o:['Every level','Only leaves','Only the root'],a:1,why:'Internal nodes hold only separator keys that route the search.'},
+ {q:'A lookup in a tree with 1 billion keys and fanout 1000 reads about how many pages?',o:['3','30','1000'],a:0,why:'log base 1000 of 10^9 is 3. Comparisons are still about 30 (log base 2).'},
+ {q:'When does a B-Tree get taller?',o:['When any leaf splits','When the root splits','On every insert'],a:1,why:'Splits propagate upward; only a root split adds a level, so all leaves stay at the same depth.'}]);
+
+})();
+</script>
+</body>
+</html>

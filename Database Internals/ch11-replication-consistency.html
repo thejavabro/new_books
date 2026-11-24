@@ -1,0 +1,533 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Replication and Consistency</title>
+<meta name="description" content="Copies make data survive failures and serve more readers. They also mean different nodes can disagree. Consistency models are the contracts that say how much disagreement clients are allowed to see.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<script>try{var t=localStorage.getItem('dbi:theme');if(t)document.documentElement.dataset.theme=JSON.parse(t)}catch(e){}</script>
+<style>
+/* Shared base for the Database Internals companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+button.tag{cursor:pointer}
+button.tag:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{font-family:var(--mono);font-size:.82rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:0;overflow-x:auto;white-space:pre;max-width:100%}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+pre.code code{border:0;padding:0;background:none}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;max-height:220px;overflow:auto;display:flex;flex-direction:column;gap:2px}
+.log div{white-space:pre-wrap;word-break:break-word}
+.cells{display:flex;flex-wrap:wrap;gap:4px}
+.cell{font-family:var(--mono);font-size:.8rem;min-width:2.4em;padding:4px 6px;text-align:center;border:1px solid var(--line);border-radius:4px;background:var(--paper);transition:background .3s,border-color .3s}
+.cell.hit{background:var(--blue-soft);border-color:var(--blue)}
+.cell.ok{background:var(--ok-soft);border-color:var(--ok)}
+.cell.bad{background:var(--bad-soft);border-color:var(--bad)}
+.cell.mid{background:var(--mid-soft);border-color:var(--mid)}
+.cell.dim{opacity:.35}
+input[type=text],input[type=number]{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+
+/* page */
+
+.reps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.rep{border:1.5px solid var(--line);border-radius:10px;padding:10px;background:var(--surface);display:flex;flex-direction:column;gap:6px;align-items:center;text-align:center}
+.rep .v{font-family:var(--mono);font-size:1.3rem;font-weight:700}
+.rep.cut{border-style:dashed;border-color:var(--bad)}
+.models{display:flex;flex-direction:column;gap:6px}
+.models button{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:8px 12px;text-align:left;display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:center}
+.models button[aria-pressed="true"]{border-color:var(--blue);background:var(--blue-soft)}
+.models button i{font-style:normal;font-family:var(--mono);font-size:.75rem;color:var(--muted)}
+.vc{font-family:var(--mono);font-size:.8rem}
+.ctr{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.ctr>div{border:1.5px solid var(--d2);border-radius:10px;padding:10px;background:var(--surface);display:flex;flex-direction:column;gap:6px;align-items:center}
+.ctr .vec{font-family:var(--mono);font-size:.85rem}
+.ctr .tot{font-family:var(--display);font-size:1.6rem;font-weight:800}
+@media (max-width:560px){.ctr,.reps{grid-template-columns:1fr}}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Database Internals · visual companion</a><span class="tag">Part II · Chapter 11 of 14</span><button class="tag themebtn" type="button" aria-label="Toggle light and dark theme">Theme</button></div>
+  <h1>Replication and Consistency</h1>
+  <p class="lede">Copies make data survive failures and serve more readers. They also mean different nodes can disagree. Consistency models are the contracts that say how much disagreement clients are allowed to see.</p>
+  <nav class="toc" aria-label="Sections"><a href="#avail">Availability</a><a href="#cap">CAP</a><a href="#harvest">Harvest and yield</a><a href="#registers">Registers</a><a href="#linear">Linearizability</a><a href="#models">Model ladder</a><a href="#vclock">Vector clocks</a><a href="#session">Session models</a><a href="#tunable">Quorums</a><a href="#crdt">CRDTs</a><a href="#quiz">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="avail" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Why replicate, and what availability means</h2></div>
+  <p>Replication keeps copies of data on several nodes so the system survives failures and serves more readers. Availability is usually quoted in <b>nines</b>; each extra nine cuts allowed downtime tenfold. But copies can disagree, and keeping them in sync costs coordination. The rest of the chapter is about that trade-off.</p>
+  <div class="sheet">
+    <label class="rng"><span>Availability: <b id="nnV"></b></span><input type="range" id="nn" min="1" max="6" value="3"></label>
+    <div class="row between"><span class="big blue" id="nnDown"></span><span class="small" id="nnTxt"></span></div>
+  </div>
+</section>
+
+<section id="cap" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>CAP: consistency or availability during a partition</h2></div>
+  <p>Brewer's <b>CAP</b> conjecture (proved by Gilbert and Lynch): with a <b>network partition</b>, you can't have both <b>consistency</b> (here: linearizability) and <b>availability</b> (every non-failing node answers). A <b>CP</b> system refuses requests it can't serve consistently, like a consensus group that needs a majority. An <b>AP</b> system answers anyway and may return stale or conflicting data. Partition tolerance isn't a knob: partitions happen. <b>PACELC</b> adds that <i>else</i>, with no partition, you still trade <b>latency</b> against consistency. Note CAP's C is not ACID's C, and CAP's availability has no latency bound.</p>
+  <div class="sheet">
+    <div class="row"><div class="seg" role="group" aria-label="Mode"><button data-cm="CP" aria-pressed="true">CP</button><button data-cm="AP" aria-pressed="false">AP</button></div><label class="small"><input type="checkbox" id="capPart" checked> partition isolates replica C</label></div>
+    <div class="reps" id="reps"></div>
+    <div class="row"><button class="btn" id="wAB">Client writes x=… via A</button><button class="btn" id="wC">Client writes x=… via C</button><button class="btn" id="rC">Client reads via C</button><button class="btn" id="heal">Heal partition</button></div>
+    <p id="capTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="harvest" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Harvest and yield</h2></div>
+  <p>CAP talks only about the extremes. Fox and Brewer's softer metrics: <b>yield</b>, the fraction of requests that complete, and <b>harvest</b>, how complete each answer is. When some shards are down, a search can fail outright (protect harvest) or answer from the shards that are up (protect yield).</p>
+  <div class="sheet">
+    <label class="rng"><span>Shards unavailable: <b id="hvV"></b> of 10</span><input type="range" id="hv" min="0" max="6" value="2"></label>
+    <div class="seg" role="group" aria-label="Policy"><button data-hy="all" aria-pressed="false">All-or-nothing</button><button data-hy="partial" aria-pressed="true">Partial results</button></div>
+    <div class="bars" id="hvBars"></div>
+  </div>
+</section>
+
+<section id="registers" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Shared memory and registers</h2></div>
+  <p>To reason about replicated data, model it as <b>registers</b> supporting read and write. Each operation takes time: an invocation and a completion. What may a read that <i>overlaps</i> a write return? <b>Safe</b>: anything in the register's range (the old value, the new one, or garbage). <b>Regular</b>: the old value or the new one. <b>Atomic</b>: old or new too, but once any read returns the new value, no later read may return the old one: the write appears to happen at a single instant. That is linearizability.</p>
+  <div class="sheet"><div class="row between"><h3>Write(1) is in progress over a register holding 0. A read overlaps it.</h3><span class="score" id="rgScore"></span></div><div class="quiz" id="rgQuiz"></div></div>
+</section>
+
+<section id="linear" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Linearizability</h2></div>
+  <p>A history is <b>linearizable</b> if every operation can be given a single <b>linearization point</b> somewhere between its invocation and completion, such that the resulting sequence is a legal single-copy history. Real-time order is respected: if A finished before B started, A comes first. Move the reads and choose what they returned.</p>
+  <div class="sheet">
+    <label class="rng"><span>Read A starts at: <b id="raV"></b></span><input type="range" id="ra" min="0" max="80" value="25"></label>
+    <div class="row"><span class="small">Read A returns</span><div class="seg" role="group" aria-label="Read A"><button data-ra="0" aria-pressed="false">0</button><button data-ra="1" aria-pressed="true">1</button></div><span class="small">Read B (after A) returns</span><div class="seg" role="group" aria-label="Read B"><button data-rb="0" aria-pressed="true">0</button><button data-rb="1" aria-pressed="false">1</button></div></div>
+    <div class="svgbox"><svg id="lnSvg" viewBox="0 0 660 190" role="img" aria-label="Timeline of a write and two reads with linearization points"></svg></div>
+    <p id="lnTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout"><b class="h">The cost</b><span>Linearizability needs coordination on every operation: real systems use consensus or a single leader. Even a CPU's memory isn't linearizable by default; it takes fences or atomic instructions. Building it from scratch is hard, so systems often lean on <b>reusable infrastructure</b> such as a consensus service or compare-and-swap on a linearizable store.</span></div>
+</section>
+
+<section id="models" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>The ladder of consistency models</h2></div>
+  <p>From strongest to weakest. Click a model to see which outcomes it permits for this history: P1 writes x = 1 then x = 2; P2 writes x = 3 after reading 1 (so its write causally follows P1's first write). Two observers read x repeatedly.</p>
+  <div class="two">
+    <div class="models" id="mdl"></div>
+    <div class="detail" id="mdlInfo" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="vclock" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Vector clocks</h2></div>
+  <p>Causal consistency needs to know which events <i>could</i> have influenced which. A <b>vector clock</b> holds one counter per process. A process increments its own entry on each event and attaches the vector to messages; a receiver takes the element-wise maximum, then increments its own entry. Event a <b>happened before</b> b if a's vector is ≤ b's everywhere and smaller somewhere; if neither is ≤ the other, they are <b>concurrent</b> and may conflict. Dynamo and Riak use them to detect divergent versions and hand both to the application to reconcile.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn" data-ve="0">P1 event</button><button class="btn" data-ve="1">P2 event</button><button class="btn" data-ve="2">P3 event</button><button class="btn" data-vs="0,1">P1 → P2</button><button class="btn" data-vs="1,2">P2 → P3</button><button class="btn" data-vs="2,0">P3 → P1</button><button class="btn" id="vcReset">Reset</button></div>
+    <div class="svgbox"><svg id="vcSvg" viewBox="0 0 660 220" role="img" aria-label="Three process timelines with vector clocks"></svg></div>
+    <p class="small" id="vcTxt" aria-live="polite">Click two events in the drawing to compare them.</p>
+  </div>
+</section>
+
+<section id="session" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Session (client-centric) models</h2></div>
+  <p>Sometimes a global guarantee is overkill and what matters is that <i>one client's</i> view makes sense. Session models describe what a single client sees, often by pinning it to a replica or tracking the versions it has seen. Monotonic reads + monotonic writes + read-own-writes together give <b>PRAM</b> (FIFO) consistency.</p>
+  <div class="cardgrid" id="sesCards"></div>
+</section>
+
+<section id="tunable" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Eventual and tunable consistency</h2></div>
+  <p><b>Eventual consistency</b> only promises that replicas converge if writes stop; conflicts are resolved by last-write-wins or vector clocks. Dynamo-style stores make it <b>tunable</b>: with <b>N</b> replicas, a write waits for <b>W</b> acks and a read queries <b>R</b> replicas. If <b>R + W &gt; N</b>, every read set overlaps every write set, so a read sees the latest acknowledged write. Even then, reads during an in-flight write can alternate between old and new unless reads also repair replicas.</p>
+  <div class="sheet">
+    <div class="row"><label class="rng" style="flex:1"><span>N = <b id="NV"></b></span><input type="range" id="N" min="3" max="9" value="5"></label><label class="rng" style="flex:1"><span>W = <b id="WV"></b></span><input type="range" id="W" min="1" max="9" value="3"></label><label class="rng" style="flex:1"><span>R = <b id="RV"></b></span><input type="range" id="R" min="1" max="9" value="3"></label></div>
+    <div class="svgbox"><svg id="qSvg" viewBox="0 0 660 150" role="img" aria-label="Replicas covered by the write set and read set"></svg></div>
+    <p id="qTxt" aria-live="polite"></p>
+  </div>
+  <div class="sheet stepper" id="wtStep">
+    <h3>Witness replicas</h3>
+    <p class="small">Three replicas: two full copies (1c, 2c) and one witness (3w) that normally stores only "a write happened". Quorums of two still work, at two-thirds of the storage.</p>
+    <div class="reps" id="wtReps"></div>
+  </div>
+</section>
+
+<section id="crdt" class="stack">
+  <div class="sec-head"><span class="num">10</span><h2>Strong eventual consistency and CRDTs</h2></div>
+  <p><b>Conflict-free replicated data types</b> are designed so that merges are commutative, associative and idempotent: replicas can accept updates independently, exchange state in any order, and are guaranteed to converge. That is <b>strong eventual consistency</b>. A <b>G-Counter</b> keeps one slot per node; each node increments only its own slot; merging takes the element-wise maximum; the value is the sum. Try to break it.</p>
+  <div class="sheet">
+    <div class="ctr" id="ctr"></div>
+    <div class="row"><button class="btn" data-mg="0,1">Merge A ↔ B</button><button class="btn" data-mg="1,2">Merge B ↔ C</button><button class="btn" data-mg="0,2">Merge A ↔ C</button><button class="btn" id="ctrReset">Reset</button></div>
+    <p class="small" id="ctrTxt" aria-live="polite"></p>
+  </div>
+  <div class="cardgrid" id="crdtCards"></div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">11</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">12</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b>CAP / PACELC</b><span>Under partition choose C or A; otherwise choose latency or consistency.</span></div>
+    <div><b class="blue">Linearizable</b><span>Single linearization point per operation, real-time order respected.</span></div>
+    <div><b>Sequential</b><span>One total order all agree on, consistent with each process's order.</span></div>
+    <div><b class="pencil">Causal</b><span>Causally related writes seen in the same order everywhere; vector clocks track it.</span></div>
+    <div><b>Sessions</b><span>Read-own-writes, monotonic reads and writes, writes-follow-reads.</span></div>
+    <div><b class="okc">Eventual</b><span>Converge if writes stop. Tunable with R + W &gt; N; CRDTs guarantee convergence.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Database Internals: A Deep Dive into How Distributed Data Systems Work</i> by Alex Petrov (O'Reilly, 2019). Explanations, examples, code and drawings are original summaries, not copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch09-failure-leader.html"><span>Previous · Chapter 9–10</span><b>Failure Detection and Leader Election</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch12-anti-entropy.html"><span>Next · Chapter 12</span><b>Anti-Entropy and Dissemination</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('dbi:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('dbi:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle */
+$$('.themebtn').forEach(b=>b.addEventListener('click',()=>{const r=document.documentElement;const dark=r.dataset.theme?r.dataset.theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches;r.dataset.theme=dark?'light':'dark';store.set('theme',r.dataset.theme)}));
+function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'})[c])}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
+
+
+/* ---- nines ---- */
+function drawNn(){const n=+$('#nn').value;const a=1-Math.pow(10,-n);$('#nnV').textContent=(a*100).toFixed(Math.max(0,n-2))+'%';const m=525960*(1-a);
+  $('#nnDown').textContent=m>=1440?(m/1440).toFixed(1)+' days':m>=60?(m/60).toFixed(1)+' hours':m>=1?m.toFixed(1)+' min':(m*60).toFixed(0)+' s';$('#nnTxt').textContent=`of downtime allowed per year at ${n} nine${n>1?'s':''}`}
+$('#nn').addEventListener('input',drawNn);drawNn();
+
+/* ---- CAP ---- */
+let CM='CP',CS;function capReset(){CS={A:1,B:1,C:1,next:2};capDraw('All replicas hold x = 1.')}
+function capDraw(msg){const part=$('#capPart').checked;$('#reps').innerHTML=['A','B','C'].map(n=>`<div class="rep${part&&n==='C'?' cut':''}"><b>Replica ${n}</b><span class="v">x = ${CS[n]}</span><span class="small">${part?(n==='C'?'minority side':'majority side'):'connected'}</span></div>`).join('');if(msg)$('#capTxt').innerHTML=msg}
+$('#wAB').addEventListener('click',()=>{const v=CS.next++;const part=$('#capPart').checked;CS.A=v;CS.B=v;if(!part)CS.C=v;capDraw(`Write x = ${v} reaches a majority (A, B) and succeeds${part?'; C can\'t hear about it.':' and replicates to C.'}`)});
+$('#wC').addEventListener('click',()=>{const v=CS.next++;const part=$('#capPart').checked;if(!part){CS.A=CS.B=CS.C=v;return capDraw(`Write x = ${v} replicated everywhere.`)}
+  if(CM==='CP')capDraw(`<b class="badc">Rejected.</b> C can't reach a majority, so a CP system refuses the write. Consistent, but unavailable on this side.`);else{CS.C=v;capDraw(`<b class="midc">Accepted locally.</b> AP keeps C available. Now A/B and C disagree; the conflict must be resolved when the partition heals.`)}});
+$('#rC').addEventListener('click',()=>{const part=$('#capPart').checked;if(!part)return capDraw(`Read returns x = ${CS.C}.`);if(CM==='CP')capDraw('<b class="badc">Read refused</b> (or redirected): C can\'t prove its value is current.');else capDraw(`<b class="midc">Read returns x = ${CS.C}</b>, ${CS.C===CS.A?'which happens to be current':'a stale or divergent value'}. Available, not linearizable.`)});
+$('#heal').addEventListener('click',()=>{$('#capPart').checked=false;const div=CS.C!==CS.A;const win=Math.max(CS.A,CS.C);CS.A=CS.B=CS.C=win;capDraw(div?`Healed. Replicas diverged; last-write-wins picks x = ${win} and silently drops the other write. (Vector clocks would surface the conflict instead.)`:'Healed. C catches up from the majority.')});
+seg('[data-cm]',b=>{CM=b.dataset.cm;capReset()});$('#capPart').addEventListener('change',()=>capDraw());capReset();
+
+/* ---- harvest/yield ---- */
+let hy='partial';function drawHv(){const d=+$('#hv').value;$('#hvV').textContent=d;const up=(10-d)/10;const y=hy==='all'?(d?0:1):1,h=hy==='all'?1:up;
+  bars('#hvBars',[{l:'Yield (requests answered)',v:y*100,c:y<1?'bad':'ok',txt:Math.round(y*100)+'%'},{l:'Harvest (completeness of answers)',v:h*100,c:h<1?'mid':'ok',txt:Math.round(h*100)+'%'}],100)}
+seg('[data-hy]',b=>{hy=b.dataset.hy;drawHv()});$('#hv').addEventListener('input',drawHv);drawHv();
+
+/* ---- registers quiz ---- */
+quiz('#rgQuiz','#rgScore',[
+ {q:'Safe register: the overlapping read returns 7',a:0,why:'A safe register may return any value in its range during a concurrent write.'},
+ {q:'Regular register: the overlapping read returns 7',a:1,why:'Regular registers return either the old (0) or the new (1) value.'},
+ {q:'Regular register: read #1 returns 1, then a later read #2 (still overlapping) returns 0',a:0,why:'Regular registers allow this "new-old inversion".'},
+ {q:'Atomic register: read #1 returns 1, then a later read #2 returns 0',a:1,why:'Once the new value has been observed, atomic registers never go back.'}],['Allowed','Not allowed']);
+
+/* ---- linearizability ---- */
+let rA=1,rB=0;function drawLn(){const a0=+$('#ra').value;$('#raV').textContent=a0;const W=[30,120],A=[a0,a0+40],B=[A[1]+10,A[1]+50];const X=t=>40+t*3.6;const s=$('#lnSvg');s.innerHTML='';
+  const bar=(y,iv,lab,c)=>{s.appendChild(el('line',{x1:X(iv[0]),y1:y,x2:X(iv[1]),y2:y,stroke:`var(--${c})`,'stroke-width':6,'stroke-linecap':'round',opacity:.5}));s.appendChild(el('text',{x:X(iv[0]),y:y-10,'font-size':11.5,fill:'var(--ink)',class:'t-mono'},lab))};
+  [['writer',40],['client A',100],['client B',160]].forEach(([n,y])=>s.appendChild(el('text',{x:6,y:y+4,'font-size':10,fill:'var(--muted)'},n.split(' ')[1]||n)));
+  bar(40,W,'write(x, 1)','blue');bar(100,A,`read A → ${rA}`,'pencil');bar(160,B,`read B → ${rB}`,'d2');
+  // find linearization
+  const ok=(()=>{const wEnd=W[1],wSt=W[0];const need=(iv,v)=>v===1?iv[1]>wSt:iv[0]<wEnd;if(!need(A,rA)||!need(B,rB))return null;if(rA===1&&rB===0)return null;
+    let wp,ap,bp;const lo=Math.max(wSt,rA===1?wSt:0);if(rA===1){wp=Math.max(wSt,A[0])+0.5;wp=Math.min(wp,wEnd-0.5,A[1]-1);ap=Math.max(A[0],wp+0.5)}else{ap=A[0]+1;wp=Math.max(wSt,ap+0.5)}
+    if(rB===1){wp=Math.min(wp,B[1]-1);bp=Math.max(B[0],wp+0.5)}else{bp=B[0]+1;if(wp<=bp)wp=Math.max(wp,bp+0.5)}if(wp>wEnd||wp<wSt)return null;return[wp,ap,bp]})();
+  if(ok){[[ok[0],40,'blue'],[ok[1],100,'pencil'],[ok[2],160,'d2']].forEach(([t,y,c])=>{s.appendChild(el('circle',{cx:X(t),cy:y,r:6,fill:`var(--${c})`,stroke:'var(--surface)','stroke-width':2}))});s.appendChild(el('path',{d:`M${X(ok[0])},40 L${X(ok[1])},100 L${X(ok[2])},160`,fill:'none',stroke:'var(--muted)','stroke-dasharray':'3 3'}))}
+  let why;if(ok)why='<b class="okc">Linearizable.</b> Dots mark one valid set of linearization points, each inside its operation\'s interval.';else if(rA===1&&rB===0)why='<b class="badc">Not linearizable.</b> B started after A finished, so B comes later in real time. A saw the new value; B going back to 0 is impossible for a single copy.';
+  else if(rA===1&&A[1]<=W[0])why='<b class="badc">Not linearizable.</b> Read A finished before the write even started, yet returned 1.';else if(rA===0&&A[0]>=W[1])why='<b class="badc">Not linearizable.</b> Read A started after the write completed but returned the old value: a stale read.';else why='<b class="badc">Not linearizable.</b> Read B started after the write completed but returned the old value.';
+  $('#lnTxt').innerHTML=why}
+seg('[data-ra]',b=>{rA=+b.dataset.ra;drawLn()});seg('[data-rb]',b=>{rB=+b.dataset.rb;drawLn()});$('#ra').addEventListener('input',drawLn);drawLn();
+
+/* ---- model ladder ---- */
+const MD=[['Strict','Every write is instantly visible everywhere, by a global clock. Physically unattainable; a theoretical reference.','O1: 1, 2, 3 · O2: 1, 2, 3 (exactly matching real time)','—'],
+ ['Linearizable','Operations take effect at one instant inside their interval; everyone sees one order matching real time.','O1: 1, 2, 3 · O2: 1, 2, 3, if the writes didn\'t overlap in that order','O2: 1, 3, 2 if 2 finished before 3 began'],
+ ['Sequential','One total order everyone agrees on, consistent with each process\'s program order, but not tied to real time.','O1: 1, 3, 2 · O2: 1, 3, 2 (agree on an order; 1 before 2 for P1)','O1: 1, 2, 3 while O2: 1, 3, 2 (observers disagree)'],
+ ['Causal','Causally related writes are seen in the same order by everyone; concurrent ones may be seen in different orders.','O1: 1, 2, 3 · O2: 1, 3, 2 (2 and 3 are concurrent)','O2: 3, 1, … (3 depends on 1, so 1 must come first)'],
+ ['PRAM / FIFO','Writes of one process are seen in that process\'s order; different processes\' writes may interleave arbitrarily.','O1: 3, 1, 2 · O2: 1, 2, 3','O1: 2, 1 (P1 wrote 1 before 2)'],
+ ['Eventual','No ordering promise; if writes stop, replicas converge to the same value.','Anything in between, as long as everyone ends on the same final value','Replicas staying different forever after writes stop']];
+let md=3;function drawMd(){$('#mdl').innerHTML=MD.map((m,i)=>`<button data-md="${i}" aria-pressed="${i===md}"><i>${i+1}</i><b>${m[0]}</b></button>`).join('');$$('#mdl button').forEach(b=>b.addEventListener('click',()=>{md=+b.dataset.md;drawMd()}));
+  const m=MD[md];$('#mdlInfo').innerHTML=`<h3>${m[0]}</h3><p>${m[1]}</p><p><b class="okc">Allowed:</b> <span class="mono small">${m[2]}</span></p><p><b class="badc">Forbidden:</b> <span class="mono small">${m[3]}</span></p>`}drawMd();
+
+/* ---- vector clocks ---- */
+let VC;function vcReset(){VC={cur:[[0,0,0],[0,0,0],[0,0,0]],ev:[],msgs:[],sel:[]};vcDraw();$('#vcTxt').textContent='Click two events in the drawing to compare them.'}
+function vcEvent(p,from){const v=[...VC.cur[p]];if(from)for(let i=0;i<3;i++)v[i]=Math.max(v[i],from[i]);v[p]++;VC.cur[p]=v;const e={p,v,x:40+VC.ev.length*46};VC.ev.push(e);return e}
+function vcDraw(){const s=$('#vcSvg');s.innerHTML='';const Y=p=>40+p*70;for(let p=0;p<3;p++){s.appendChild(el('text',{x:4,y:Y(p)+4,'font-size':12,'font-weight':700,fill:`var(--d${p+1})`},'P'+(p+1)));s.appendChild(el('line',{x1:30,y1:Y(p),x2:650,y2:Y(p),stroke:`var(--d${p+1})`,opacity:.3,'stroke-width':2}))}
+  VC.msgs.forEach(([a,b])=>s.appendChild(el('line',{x1:a.x,y1:Y(a.p),x2:b.x,y2:Y(b.p),stroke:'var(--muted)','stroke-width':1.5,'stroke-dasharray':'4 3'})));
+  VC.ev.forEach((e,i)=>{const sel=VC.sel.includes(i);const g=el('g',{style:'cursor:pointer',tabindex:0,role:'button'});g.appendChild(el('circle',{cx:e.x,cy:Y(e.p),r:sel?9:7,fill:sel?'var(--pencil)':`var(--d${e.p+1})`}));g.appendChild(el('text',{x:e.x,y:Y(e.p)-13,'text-anchor':'middle','font-size':10,fill:'var(--ink)',class:'t-mono'},'['+e.v.join(',')+']'));
+    g.addEventListener('click',()=>{VC.sel.push(i);if(VC.sel.length>2)VC.sel=VC.sel.slice(-2);vcCmp();vcDraw()});s.appendChild(g)})}
+function vcCmp(){if(VC.sel.length<2){$('#vcTxt').textContent='Pick one more event.';return}const [a,b]=VC.sel.map(i=>VC.ev[i]);const le=(x,y)=>x.every((v,i)=>v<=y[i]);
+  $('#vcTxt').innerHTML=le(a.v,b.v)&&!le(b.v,a.v)?`[${a.v}] <b>happened before</b> [${b.v}].`:le(b.v,a.v)&&!le(a.v,b.v)?`[${b.v}] <b>happened before</b> [${a.v}].`:`[${a.v}] and [${b.v}] are <b class="badc">concurrent</b>: neither could have seen the other. If both are writes to the same key, that's a conflict.`}
+$$('[data-ve]').forEach(b=>b.addEventListener('click',()=>{if(VC.ev.length>=13)return;vcEvent(+b.dataset.ve);vcDraw()}));
+$$('[data-vs]').forEach(b=>b.addEventListener('click',()=>{if(VC.ev.length>=12)return;const [f,t]=b.dataset.vs.split(',').map(Number);const s=vcEvent(f);const r=vcEvent(t,s.v);VC.msgs.push([s,r]);vcDraw()}));
+$('#vcReset').addEventListener('click',vcReset);vcReset();[[0],[1],[0,1],[2],[1,2],[2]].forEach(a=>{if(a.length===1)vcEvent(a[0]);else{const s=vcEvent(a[0]);const r=vcEvent(a[1],s.v);VC.msgs.push([s,r])}});vcDraw();
+
+cards('#sesCards',[{t:'Read-own-writes',c:'d1',d:'After you post a comment, your next page load shows it, even if other users don\'t see it yet.'},{t:'Monotonic reads',c:'d2',d:'Once you\'ve seen 5 likes, refreshing never shows 4, even if you hit a lagging replica.'},{t:'Monotonic writes',c:'d3',d:'If you change your name then your avatar, every replica applies them in that order.'},{t:'Writes-follow-reads',c:'d4',d:'You read a question and post an answer; anyone who sees your answer can also see the question it follows. Also called session causality.'}]);
+
+/* ---- quorums ---- */
+function drawQ(){let N=+$('#N').value;$('#W').max=N;$('#R').max=N;let W=Math.min(+$('#W').value,N),R=Math.min(+$('#R').value,N);$('#NV').textContent=N;$('#WV').textContent=W;$('#RV').textContent=R;
+  const s=$('#qSvg');s.innerHTML='';const w=600/N;for(let i=0;i<N;i++){const inW=i<W,inR=i>=N-R;const x=30+i*w;s.appendChild(el('rect',{x:x+4,y:40,width:w-8,height:60,rx:8,fill:inW&&inR?'var(--ok-soft)':'var(--surface)',stroke:inW&&inR?'var(--ok)':'var(--line)','stroke-width':2}));
+    s.appendChild(el('text',{x:x+w/2,y:76,'text-anchor':'middle','font-size':12,fill:'var(--ink)'},'r'+(i+1)));if(inW)s.appendChild(el('rect',{x:x+4,y:24,width:w-8,height:10,rx:3,fill:'var(--blue)'}));if(inR)s.appendChild(el('rect',{x:x+4,y:106,width:w-8,height:10,rx:3,fill:'var(--pencil)'}))}
+  s.appendChild(el('text',{x:30,y:16,'font-size':10.5,fill:'var(--blue)'},'write set (W)'));s.appendChild(el('text',{x:630,y:136,'text-anchor':'end','font-size':10.5,fill:'var(--pencil)'},'read set (R), worst case'));
+  const ov=R+W>N;$('#qTxt').innerHTML=`R + W = ${R+W} ${ov?'&gt;':'≤'} N = ${N}. ${ov?`<b class="okc">Every read overlaps every write</b> in at least ${R+W-N} replica(s), so the newest acknowledged value is always among the answers.`:'<b class="badc">A read can miss every replica that took the write</b> and return stale data.'} ${W<=N/2?'With W ≤ N/2, two concurrent writes can both succeed on disjoint sets, so conflicts need resolution.':''} Tolerates ${N-W} replica failure(s) for writes, ${N-R} for reads.`}
+['N','W','R'].forEach(id=>$('#'+id).addEventListener('input',drawQ));drawQ();
+const WT=[{t:'Normal operation: the write goes to 1c and 2c. 3w only records that a write happened.',r:[['1c','x=5'],['2c','x=5'],['3w','(write seen)']]},
+ {t:'2c times out. To still reach a quorum of two, 3w temporarily stores the full record.',r:[['1c','x=7'],['2c','down','cut'],['3w','x=7 (temp)']]},
+ {t:'A quorum read can be served by {1c, 2c} or {1c, 3w} or {2c, 3w}: the latest value is on a copy or on the witness.',r:[['1c','x=7'],['2c','down','cut'],['3w','x=7 (temp)']]},
+ {t:'2c recovers; repair copies x=7 to it and the witness drops its temporary data. n copies + m witnesses give the availability of n + m copies.',r:[['1c','x=7'],['2c','x=7'],['3w','(write seen)']]}];
+$('#wtStep').insertAdjacentHTML('beforeend',stepHTML());stepper('#wtStep',WT.map(w=>w.t),i=>{$('#wtReps').innerHTML=WT[i].r.map(([n,v,c])=>`<div class="rep${c?' cut':''}"><b>${n}</b><span class="v" style="font-size:1rem">${v}</span><span class="small">${n.endsWith('w')?'witness':'copy'}</span></div>`).join('')});
+
+/* ---- G-counter ---- */
+let GC;function gcReset(){GC=[[0,0,0],[0,0,0],[0,0,0]];gcDraw('Each replica can increment only its own slot.')}
+function gcDraw(msg){$('#ctr').innerHTML=GC.map((v,i)=>`<div><b>Replica ${'ABC'[i]}</b><span class="vec">[${v.join(', ')}]</span><span class="tot">${v.reduce((a,b)=>a+b,0)}</span><button class="btn" data-inc="${i}">+1 here</button></div>`).join('');$$('[data-inc]').forEach(b=>b.addEventListener('click',()=>{GC[+b.dataset.inc][+b.dataset.inc]++;gcDraw(`Replica ${'ABC'[+b.dataset.inc]} incremented locally, no coordination.`)}));
+  const same=GC.every(v=>v.join()===GC[0].join());if(msg)$('#ctrTxt').innerHTML=msg+(same?' <b class="okc">All replicas agree.</b>':'')}
+$$('[data-mg]').forEach(b=>b.addEventListener('click',()=>{const [a,c]=b.dataset.mg.split(',').map(Number);const m=GC[a].map((v,i)=>Math.max(v,GC[c][i]));GC[a]=[...m];GC[c]=[...m];gcDraw(`Merged ${'ABC'[a]} and ${'ABC'[c]} by element-wise max. Merge them again: nothing changes (idempotent). Order doesn't matter (commutative).`)}));
+$('#ctrReset').addEventListener('click',gcReset);gcReset();
+cards('#crdtCards',[{t:'PN-Counter',c:'d1',d:'Two G-Counters, one for increments and one for decrements. Value = P − N.'},{t:'LWW register',c:'d2',d:'Each value carries a unique, globally ordered timestamp; merge keeps the largest. A multivalue register keeps all concurrent values for the application to choose.'},{t:'G-Set and 2P-Set',c:'d3',d:'A grow-only set merges by union. Add a second "removed" set (only elements already added may enter it) to support removal; value = added − removed.'},{t:'JSON CRDT',c:'d4',d:'Nested maps and lists with insert, delete and assign, merged on the client in any delivery order.'}]);
+
+quiz('#qQuiz','#qScore',[
+ {q:'A consensus-based store that needs a majority is…',o:['CP','AP'],a:0,why:'It refuses requests on the minority side of a partition rather than return inconsistent data.'},
+ {q:'Read B starts after read A ends. A returned the new value, B the old one. Linearizable?',o:['Yes','No'],a:1,why:'Real-time order forbids going back after a later-starting read.'},
+ {q:'Which model lets two observers see concurrent writes in different orders?',o:['Sequential','Causal','Linearizable'],a:1,why:'Causal only orders causally related writes.'},
+ {q:'N = 3, W = 2, R = 1. Are reads guaranteed to see the latest acknowledged write?',o:['Yes','No'],a:1,why:'R + W = 3 is not greater than N, so the read replica may not be in the write set.'},
+ {q:'A G-Counter merge takes…',o:['the sum of all slots','the element-wise maximum','the latest timestamp'],a:1,why:'Max is commutative, associative and idempotent, so merges can repeat in any order.'}]);
+
+})();
+</script>
+</body>
+</html>

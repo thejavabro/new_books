@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Partitioning</title>
+<meta name="description" content="Slice data into smaller pieces and each query touches less of it, and work spreads across machines. How you slice, and how requests find the right slice, decides whether it pays off.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Latency companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:560px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+button.tag.themebtn{cursor:pointer}
+button.tag.themebtn:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-family:var(--mono);font-size:.82rem;line-height:1.5;overflow-x:auto;white-space:pre}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.svgbox svg text{font-family:var(--body)}
+.mtx{font-family:var(--mono)}
+.stat span.big{font-size:clamp(1.5rem,5vw,2.2rem);color:var(--ink)}
+.stat span.big.blue{color:var(--blue)} .stat span.big.pencil{color:var(--pencil)} .stat span.big.okc{color:var(--ok)} .stat span.big.badc{color:var(--bad)}
+
+/* page */
+
+.parts{display:flex;flex-wrap:wrap;gap:12px}
+.pt{border:1.5px solid var(--line);border-radius:8px;overflow:hidden;background:var(--surface);transition:border-color .3s,box-shadow .3s,opacity .3s}
+.pt.hit{border-color:var(--pencil);box-shadow:0 0 0 3px var(--pencil-soft)}
+.pt.miss{opacity:.45}
+.pt table{border-collapse:collapse;font-size:.8rem;font-family:var(--mono)}
+.pt th,.pt td{padding:3px 8px;border-bottom:1px solid var(--line);text-align:left}
+.pt th{background:var(--paper);color:var(--muted);font-weight:600}
+.pt .cap{font-size:.72rem;padding:3px 8px;color:var(--muted);font-family:var(--mono)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Latency · visual companion</a><span class="tag">Part 2 · Chapter 5 of 11</span><button class="tag themebtn" type="button" aria-label="Switch colour theme">Theme</button></div>
+  <h1>Partitioning</h1>
+  <p class="lede">Slice data into smaller pieces and each query touches less of it, and work spreads across machines. How you slice, and how requests find the right slice, decides whether it pays off.</p>
+  <nav class="toc" aria-label="Sections"><a href="#why">Why partition</a><a href="#physical">Physical</a><a href="#keys">Keys</a><a href="#logical">Logical</a><a href="#routing">Routing</a><a href="#imbalance">Imbalance</a><a href="#lab">Sharded REST</a><a href="#quiz">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="why" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Why partition: less to coordinate</h2></div>
+  <p>Replicating everything everywhere gets expensive, and keeping many copies consistent can create the very bottleneck you were trying to avoid. <b>Partitioning</b> slices a logical dataset into smaller physical pieces that can be accessed independently. Each request touches less data, concurrent writes rarely collide, and the pieces can live on different cores or machines.</p>
+  <p>The key word is <b>synchronization</b>. A shared table, a distributed lock, or a mutex forces concurrent clients to take turns, and taking turns is what builds tail latency. With partitions, each lock is shared by fewer clients, often nearby ones. Drag the number of partitions and watch the waiting.</p>
+  <div class="sheet">
+    <label class="rng"><span>Partitions (each with its own lock): <b id="cpV"></b></span><input type="range" id="cp" min="1" max="16" value="1"></label>
+    <div class="svgbox"><svg id="cpSvg" viewBox="0 0 640 170" role="img" aria-label="Clients queueing for locks"></svg></div>
+    <div class="three"><div class="stat"><span class="big blue" id="cpU">-</span><span>utilization of each lock</span></div><div class="stat"><span class="big pencil" id="cpW">-</span><span>average wait (queueing model)</span></div><div class="stat"><span class="big badc" id="cpT">-</span><span>p99 wait, roughly</span></div></div>
+    <p class="small">Model: 24 clients, each issuing work that holds a lock for 1 ms, 900 operations per second in total, spread evenly. Queueing formula for a single server; illustrative.</p>
+  </div>
+  <div class="callout"><b class="h">The bookstore example</b><span>One big Orders table is touched by shoppers viewing orders, shoppers checking out and the shipping engine, all at once, so the database coordinates every access. Split orders per customer and shoppers never coordinate with each other, only with the order processor. The price: routing logic, a more complex processor, and no transactions across partitions (a bank transfer between two accounts in different partitions becomes hard).</span></div>
+</section>
+
+<section id="physical" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Horizontal, vertical, hybrid</h2></div>
+  <p><b>Horizontal partitioning</b> (sharding) splits <i>records</i>: rows, documents or key ranges go to different partitions. It suits OLTP, with many short transactions on whole records. <b>Vertical partitioning</b> splits each record by <i>fields</i>, storing columns together. It suits OLAP: aggregates read only the columns they need (less read amplification), similar values sit together and compress well, and SIMD can chew through them. <b>Hybrid</b> does both. Pick a layout, then a query, and see which partitions the query must touch.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Layout"><button data-ly="none" aria-pressed="false">Unpartitioned</button><button data-ly="h" aria-pressed="true">Horizontal by location</button><button data-ly="v" aria-pressed="false">Vertical</button><button data-ly="hy" aria-pressed="false">Hybrid</button></div>
+    <div class="seg" role="group" aria-label="Query"><button data-qq="loc" aria-pressed="true">Users in New York</button><button data-qq="name" aria-pressed="false">Where does alice live?</button><button data-qq="agg" aria-pressed="false">Count users per city</button><button data-qq="ins" aria-pressed="false">Insert a new user</button></div>
+    <div class="parts" id="parts"></div>
+    <p id="ptTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout blue"><b class="h">Why "shard"?</b><span>The word probably comes from the 1996 game Ultima Online, which ran several whole copies of its world and explained them in the story as shards of a shattered crystal, each holding a copy of the world. Read "sharding" as "horizontal partitioning".</span></div>
+</section>
+
+<section id="keys" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Choosing a partition key: hash or range, high cardinality</h2></div>
+  <p><b>Key hash</b> partitioning spreads keys uniformly but scatters neighbours. <b>Key range</b> partitioning keeps ranges together, great for range scans, but follows any lumpiness in the data. And the key needs <b>high cardinality</b> (many distinct values): partition on order status and you get four partitions, one of them huge. Compare the partition sizes.</p>
+  <div class="sheet">
+    <div class="row"><div class="seg" role="group" aria-label="Key"><button data-kk="zip" aria-pressed="true">Key: zip code (clustered)</button><button data-kk="uid" aria-pressed="false">Key: user ID</button><button data-kk="status" aria-pressed="false">Key: order status</button></div></div>
+    <div class="row"><div class="seg" role="group" aria-label="Scheme"><button data-sc="range" aria-pressed="true">Range</button><button data-sc="hash" aria-pressed="false">Hash</button></div><span class="small">8 partitions, 2,000 records</span></div>
+    <div class="svgbox"><svg id="kSvg" viewBox="0 0 640 200" role="img" aria-label="Records per partition"></svg></div>
+    <p id="kTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="logical" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Logical partitioning: shape data around the workload</h2></div>
+  <p>Physical layout says <i>how</i> slices are stored; logical (workload) partitioning says <i>what</i> goes together, based on how the application uses the data. The two combine freely.</p>
+  <div class="cardgrid" id="lgCards"></div>
+</section>
+
+<section id="routing" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Request routing: finding the right partition</h2></div>
+  <p>Partitioning only pays if each request lands where its data lives. Three ways to get it there:</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Routing"><button data-rt="direct" aria-pressed="true">Direct</button><button data-rt="proxy" aria-pressed="false">Proxy</button><button data-rt="forward" aria-pressed="false">Forward</button></div><label class="small row"><input type="checkbox" id="rtCache"> client caches partition location</label></div>
+    <div class="svgbox"><svg id="rtSvg" viewBox="0 0 640 230" role="img" aria-label="Routing a request for partition B"></svg></div>
+    <p id="rtTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="imbalance" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Partition imbalance: hot partitions and skew</h2></div>
+  <p>Imbalance wastes the scheme: one partition is swamped, others idle, and latency follows the busiest one. Two causes. <b>Hot partitions</b>: some partitions hold more data, from a poor scheme or uneven value sizes (big images in an object store). Fixing it usually means rebalancing, which is painful on a live system. <b>Skewed workloads</b>: data is even but access is not, such as a popular product, a launch, Black Friday, or time zones.</p>
+  <div class="sheet">
+    <label class="rng"><span>Access skew: <b id="skV"></b></span><input type="range" id="sk" min="0" max="100" value="30"></label>
+    <div class="row"><button class="btn" id="bf">Black Friday spike on product 3</button><label class="small row"><input type="checkbox" id="ovp"> overpartition: replicate the hottest partition ×3</label></div>
+    <div class="bars" id="skBars"></div>
+    <p id="skTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="lab" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Putting it together: horizontally partitioned REST API</h2></div>
+  <p>The hands-on project reuses chapter 3's SQLite REST server, adds a node ID (node <i>n</i> listens on port 8080 + <i>n</i>), and teaches the benchmark client to spread requests round-robin across a configurable number of nodes. With five nodes instead of one, the tail of the eCDF pulls in, because concurrent requests no longer queue behind each other. Simulate it:</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Nodes"><button data-nd="1" aria-pressed="true">1 node</button><button data-nd="5" aria-pressed="false">5 nodes</button><button data-nd="both" aria-pressed="false">Compare</button></div><button class="btn" id="ndRun">Rerun</button></div>
+    <div class="svgbox"><svg id="ndSvg" viewBox="0 0 640 240" role="img" aria-label="eCDF of request latency for 1 and 5 nodes"></svg></div>
+  </div>
+  <pre class="code"><span class="c">// next step: route by key instead of round-robin (illustrative)</span>
+<span class="k">fn</span> node_for(user_id: u64, nodes: u64) -> u64 {
+    hash(user_id) % nodes        <span class="c">// key hash partitioning</span>
+}
+<span class="k">let</span> port = 8080 + node_for(uid, 5);</pre>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Recap</h2></div>
+  <div class="recap">
+    <div><b>Partition to synchronize less</b><span>Fewer clients per lock, smaller data per query, more parallelism.</span></div>
+    <div><b>Horizontal vs vertical</b><span>Rows for OLTP, columns for OLAP, both for hybrid.</span></div>
+    <div><b>Keys</b><span>High cardinality. Hash for even spread, range for scans.</span></div>
+    <div><b>Logical</b><span>Functional, geographical, user, time; overpartition hot data.</span></div>
+    <div><b>Routing</b><span>Direct is one hop but couples clients; proxy decouples at a hop's cost; forward is in between.</span></div>
+    <div><b>Imbalance</b><span>Hot partitions need a better scheme; skew needs overprovisioning, load balancing or replicas.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Latency: Reduce delay in software systems</i> by Pekka Enberg (Manning, 2026). Explanations, examples, code snippets and drawings are original summaries, not text or figures from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch04-replication.html"><span>Previous · Chapter 4</span><b>Replication</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch06-caching.html"><span>Next · Chapter 6</span><b>Caching</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page (Latency companion). */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){if(!group)return;group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('lat:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('lat:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: cycles auto -> light -> dark; remembered per viewer when storage works */
+(function(){const r=document.documentElement;const t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+ const b=document.querySelector('.themebtn');if(!b)return;
+ const lab=()=>{const v=r.getAttribute('data-theme');b.textContent=v==='dark'?'Dark':v==='light'?'Light':'Auto theme'};lab();
+ b.addEventListener('click',()=>{const v=r.getAttribute('data-theme');const n=v==null?'light':v==='light'?'dark':null;
+  if(n)r.setAttribute('data-theme',n);else r.removeAttribute('data-theme');store.set('theme',n);lab()})})();
+
+
+/* contention */
+(function(){const s=$('#cpSvg');function upd(){const P=+$('#cp').value;$('#cpV').textContent=P;const lam=900/P/1000,svc=1;const rho=Math.min(0.995,lam*svc);
+ const wq=rho/(2*(1-rho))*svc; /* M/D/1 mean wait */const p99=wq*4.6+(rho>0.9?5:0);
+ $('#cpU').textContent=Math.round(rho*100)+'%';$('#cpW').textContent=wq<0.01?'≈0 ms':wq.toFixed(2)+' ms';$('#cpT').textContent=p99<0.05?'≈0 ms':p99.toFixed(1)+' ms';
+ s.innerHTML='';const cols=Math.min(P,8);const per=Math.ceil(24/P);
+ for(let p=0;p<Math.min(P,8);p++){const x=30+p*(580/cols);const w=580/cols-12;s.appendChild(el('rect',{x,y:110,width:w,height:40,rx:6,fill:'var(--surface)',stroke:'var(--pencil)'}));s.appendChild(el('text',{x:x+w/2,y:135,'text-anchor':'middle','font-size':11,fill:'var(--ink)'},P>8&&p===7?`+${P-7} more`:'lock '+(p+1)));
+  const q=Math.min(per,12);for(let k=0;k<q;k++){const cx=x+8+(k%Math.max(1,Math.floor(w/14)))*14,cy=95-Math.floor(k/Math.max(1,Math.floor(w/14)))*14;s.appendChild(el('circle',{cx,cy,r:5,fill:k===0?'var(--ok)':'var(--blue)',opacity:k===0?1:Math.max(.25,rho)}))}}
+ s.appendChild(el('text',{x:30,y:18,'font-size':11,fill:'var(--muted)'},'green: holding the lock · blue: clients sharing this lock'))}
+ $('#cp').addEventListener('input',upd);upd()})();
+
+/* table partitioner */
+(function(){const U=[[1,'alice','New York'],[2,'bob','New York'],[3,'carol','Cape Town'],[4,'dan','Sydney']];let ly='h',qq='loc';
+ const tbl=(cols,rows,cap,hit)=>`<div class="pt ${hit===true?'hit':hit===false?'miss':''}"><div class="cap">${cap}</div><table><tr>${cols.map(c=>`<th>${['ID','Username','Location'][c]}</th>`).join('')}</tr>${rows.map(r=>`<tr>${cols.map(c=>`<td>${r[c]}</td>`).join('')}</tr>`).join('')}</table></div>`;
+ function parts(){if(ly==='none')return[{cols:[0,1,2],rows:U,cap:'Users'}];
+  if(ly==='h')return['New York','Cape Town','Sydney'].map(l=>({cols:[0,1,2],rows:U.filter(r=>r[2]===l),cap:'P: '+l,loc:l}));
+  if(ly==='v')return[{cols:[0,1],rows:U,cap:'P: id, username'},{cols:[0,2],rows:U,cap:'P: id, location'}];
+  return[{cols:[0,1],rows:U.slice(0,2),cap:'P: names · NY',loc:'New York'},{cols:[0,2],rows:U.slice(0,2),cap:'P: locations · NY',loc:'New York'},{cols:[0,1],rows:U.slice(2),cap:'P: names · other'},{cols:[0,2],rows:U.slice(2),cap:'P: locations · other'}]}
+ function hit(p){if(qq==='loc')return ly==='v'?true:p.loc==='New York';
+  if(qq==='name')return true;
+  if(qq==='agg')return p.cols.includes(2)&&(ly!=='h'||true)&&(ly==='h'||!p.cols.includes(1));
+  if(ly==='h')return p.loc==='Sydney';if(ly==='hy')return !p.loc;return true}
+ const T={loc:{none:'Scans one big table.',h:'The partition key is in the WHERE clause, so only the New York partition is read.',v:'Needs both column partitions and a join on ID to return whole rows.',hy:'Only the two New York slices.'},
+  name:{none:'Scans one table.',h:'Username is not the partition key: without an index the query must visit every partition.',v:'Read the username slice, then the location slice for the matching ID.',hy:'Every slice: the key does not help.'},
+  agg:{none:'Reads every column of every row just to count cities: read amplification.',h:'Every partition, though each reports a small count.',v:'Only the location column is read: compact, compressible, SIMD-friendly. The OLAP sweet spot.',hy:'Both location slices, nothing else.'},
+  ins:{none:'One write.',h:'One write into one partition: the OLTP sweet spot.',v:'One write per column partition: writes get slower.',hy:'Two writes, into both slices of the "other" horizontal partition.'}};
+ function draw(){const ps=parts();$('#parts').innerHTML=ps.map(p=>tbl(p.cols,p.rows,p.cap,ly==='none'?true:!!hit(p))).join('');$('#ptTxt').textContent=T[qq][ly]}
+ seg('[data-ly]',b=>{ly=b.dataset.ly;draw()});seg('[data-qq]',b=>{qq=b.dataset.qq;draw()});draw()})();
+
+/* keys */
+(function(){let kk='zip',sc='range';const s=$('#kSvg');let seed=7;const rnd=()=>{seed=(seed*16807)%2147483647;return seed/2147483647};
+ function gen(){seed=7;const out=[];for(let i=0;i<2000;i++){if(kk==='zip'){const c=rnd();out.push(c<.55?10000+Math.floor(rnd()*900):c<.8?94000+Math.floor(rnd()*800):Math.floor(rnd()*99999))}else if(kk==='uid')out.push(Math.floor(rnd()*1e6));else{const c=rnd();out.push(c<.7?2:c<.85?3:c<.95?1:4)}}return out}
+ function h(x){x=Math.imul(x^0x5bd1e995,0x27d4eb2d);x^=x>>>15;return (x>>>0)}
+ function draw(){const k=gen();const P=8,b=Array(P).fill(0);const max=kk==='zip'?100000:kk==='uid'?1e6:5;
+  k.forEach(v=>{let p;if(kk==='status'){p=sc==='hash'?h(v)%P:Math.min(P-1,Math.floor(v/max*P))}else p=sc==='hash'?h(v)%P:Math.min(P-1,Math.floor(v/max*P));b[p]++});
+  s.innerHTML='';const m=Math.max(...b);b.forEach((n,i)=>{const x=40+i*72,hgt=n/m*140;const hot=n>2000/P*1.6;s.appendChild(el('rect',{x,y:160-hgt,width:58,height:hgt,rx:4,fill:hot?'var(--bad)':n===0?'var(--line)':'var(--blue)'}));s.appendChild(el('text',{x:x+29,y:155-hgt,'text-anchor':'middle','font-size':11,fill:'var(--ink)'},n));s.appendChild(el('text',{x:x+29,y:180,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},'P'+i))});
+  s.appendChild(el('line',{x1:36,x2:620,y1:160-250/m*140,y2:160-250/m*140,stroke:'var(--ok)','stroke-dasharray':'4 4'}));s.appendChild(el('text',{x:620,y:156-250/m*140,'text-anchor':'end','font-size':10.5,fill:'var(--ok)'},'perfect balance: 250'));
+  const empty=b.filter(x=>x===0).length;
+  $('#kTxt').textContent=kk==='status'?`Only 4 distinct values: ${empty} partitions sit empty whatever the scheme, and "shipped" makes one partition huge. Low cardinality cannot be fixed by hashing.`:kk==='zip'&&sc==='range'?'Users cluster in a few zip ranges, so a couple of range partitions are hot. Switching to hash, or a different key, fixes it.':sc==='hash'?'Hashing spreads high-cardinality keys almost perfectly; the cost is that range scans now hit every partition.':'Uniform user IDs split evenly even by range, and you keep cheap range scans.'}
+ seg('[data-kk]',b=>{kk=b.dataset.kk;draw()});seg('[data-sc]',b=>{sc=b.dataset.sc;draw()});draw()})();
+
+cards('#lgCards',[
+ {t:'Functional',c:'d1',d:'By how data is used. The read-heavy product catalog in one place, write-heavy orders in another, so browsing never competes with checkout. Each can be partitioned further.'},
+ {t:'Geographical',c:'d2',d:'By user location: a "people near you" search only scans the local partition. Complications: users travel or move, and people near a border need several partitions searched.'},
+ {t:'User-based',c:'d3',d:'One partition per user: settings, orders, permissions. Clean isolation, but huge numbers of partitions make lookup, scans and cross-user transactions expensive. A second, vertically partitioned copy can serve aggregates.'},
+ {t:'Time-based',c:'d4',d:'Hourly or daily partitions for logs and time series. "Last six hours" touches six partitions and nothing else.'},
+ {t:'Overpartitioning',c:'d5',d:'Keep several copies of a partition, typically a hot one such as a viral post, so more nodes can serve it. Needs replication to keep the copies consistent.'}]);
+
+/* routing */
+(function(){let rt='direct';const s=$('#rtSvg');function draw(){const cache=$('#rtCache').checked;s.innerHTML='';const N=[[160,'Node 1','A'],[320,'Node 2','B'],[480,'Node 3','C']];
+ s.appendChild(el('rect',{x:270,y:10,width:100,height:32,rx:6,fill:'var(--surface)',stroke:'var(--blue)'}));s.appendChild(el('text',{x:320,y:31,'text-anchor':'middle','font-size':12,fill:'var(--ink)'},'Client'));
+ const proxy=rt==='proxy'&&!cache;if(rt==='proxy'){s.appendChild(el('rect',{x:220,y:72,width:200,height:30,rx:6,fill:'var(--mid-soft)',stroke:'var(--mid)'}));s.appendChild(el('text',{x:320,y:92,'text-anchor':'middle','font-size':12,fill:'var(--ink)'},'Routing layer (proxy)'))}
+ N.forEach(([x,n,p])=>{s.appendChild(el('rect',{x:x-50,y:128,width:100,height:32,rx:6,fill:'var(--surface)',stroke:'var(--ink)'}));s.appendChild(el('text',{x,y:149,'text-anchor':'middle','font-size':12,fill:'var(--ink)'},n));s.appendChild(el('rect',{x:x-40,y:178,width:80,height:30,rx:4,fill:p==='B'?'var(--pencil-soft)':'var(--paper)',stroke:p==='B'?'var(--pencil)':'var(--line)'}));s.appendChild(el('text',{x,y:198,'text-anchor':'middle','font-size':11.5,fill:'var(--ink)'},'Partition '+p))});
+ const A=(x1,y1,x2,y2)=>s.appendChild(el('line',{x1,y1,x2,y2,stroke:'var(--pencil)','stroke-width':2.5,class:'flow','stroke-dasharray':'7 5'}));
+ let hops;if(rt==='direct'||cache){A(320,42,320,128);hops=1}else if(rt==='proxy'){A(320,42,320,72);A(320,102,320,128);hops=2}else{A(300,42,170,128);A(210,144,270,144);hops=2}
+ s.appendChild(el('text',{x:620,y:28,'text-anchor':'end','font-size':13,'font-weight':700,fill:'var(--pencil)'},hops+' hop'+(hops>1?'s':'')));
+ $('#rtTxt').textContent={direct:'The client knows the topology and goes straight to node 2: one hop, the low-latency choice. But clients must track an up-to-date cluster map, and more of the backend is exposed.',proxy:cache?'With the location of B cached, the client can skip the proxy and behave like direct routing until the topology changes.':'Clients only know the routing layer. Simpler and more secure, but every request pays an extra hop.',forward:cache?'Once the client learns where B lives, it can talk to node 2 directly: forward routing degrades gracefully into direct routing.':'Every node is a router. The client hits any node (here node 1), which forwards to node 2. No separate proxy tier to run.'}[rt]}
+ seg('[data-rt]',b=>{rt=b.dataset.rt;draw()});$('#rtCache').addEventListener('change',draw);draw()})();
+
+/* skew */
+(function(){let bf=false;function upd(){const k=+$('#sk').value/100;$('#skV').textContent=k<.15?'uniform':k<.5?'moderate':'heavy';const P=6;let w=Array.from({length:P},(_,i)=>1/Math.pow(i+1,k*2));
+ if(bf)w[2]*=6;const tot=w.reduce((a,b)=>a+b,0);const ld=w.map(x=>x/tot*600);const ov=$('#ovp').checked;const mi=ld.indexOf(Math.max(...ld));
+ const cap=150;const eff=ld.map((l,i)=>ov&&i===mi?l/3:l);const util=eff.map(l=>Math.min(.99,l/cap));const lat=util.map(u=>1+u/(2*(1-u)));
+ bars('#skBars',ld.map((l,i)=>({l:'Partition '+(i+1)+(ov&&i===mi?' ×3':''),v:Math.min(1,util[i])*100,c:util[i]>.85?'bad':util[i]>.6?'mid':'ok',txt:Math.round(util[i]*100)+'% · '+lat[i].toFixed(1)+' ms'})),100);
+ const worst=Math.max(...lat);$('#skTxt').textContent=`Worst partition latency ${worst.toFixed(1)} ms vs ${Math.min(...lat).toFixed(1)} ms on the quietest. `+(worst>5?'The busiest partition sets the tail. Overprovision for known events, replicate hot data, or rebalance.':'Load is spread well enough that no partition is near saturation.')}
+ $('#sk').addEventListener('input',upd);$('#ovp').addEventListener('change',upd);$('#bf').addEventListener('click',()=>{bf=!bf;$('#bf').classList.toggle('primary',bf);upd()});upd()})();
+
+/* lab sim */
+(function(){let mode='1';const s=$('#ndSvg');function sim(n){const res=[];const free=Array(n).fill(0);let t=0;for(let i=0;i<2000;i++){t+=-Math.log(Math.random())*0.06;const k=i%n;const svc=0.03+(Math.random()<.03?0.4:0)+Math.random()*0.02;const st=Math.max(t,free[k]);free[k]=st+svc;res.push(free[k]-t)}return res.sort((a,b)=>a-b)}
+ function draw(){s.innerHTML='';const W=640,H=240;s.appendChild(el('line',{x1:50,y1:210,x2:630,y2:210,stroke:'var(--muted)'}));s.appendChild(el('line',{x1:50,y1:10,x2:50,y2:210,stroke:'var(--muted)'}));
+  s.appendChild(el('text',{x:340,y:234,'text-anchor':'middle','font-size':12,fill:'var(--muted)'},'latency (ms, log scale)'));
+  const X=v=>50+(Math.log10(Math.max(v,0.02))-Math.log10(0.02))/(Math.log10(20)-Math.log10(0.02))*580,Y=f=>210-f*195;[0.1,1,10].forEach(v=>s.appendChild(el('text',{x:X(v),y:224,'text-anchor':'middle','font-size':10,fill:'var(--muted)'},v)));
+  const sets=mode==='both'?[['1','var(--pencil)'],['5','var(--blue)']]:[[mode,mode==='1'?'var(--pencil)':'var(--blue)']];
+  sets.forEach(([n,c])=>{const d=sim(+n);s.appendChild(el('path',{d:d.map((v,i)=>(i?'L':'M')+X(v).toFixed(1)+','+Y((i+1)/d.length).toFixed(1)).join(''),stroke:c,'stroke-width':2.5,fill:'none'}));const p99=d[Math.floor(d.length*.99)];s.appendChild(el('text',{x:X(p99)+4,y:Y(.99)+(n==='1'?18:-6),'font-size':11,fill:c},`${n} node${n==='1'?'':'s'}: p99 ${p99.toFixed(2)} ms`))})}
+ seg('[data-nd]',b=>{mode=b.dataset.nd;draw()});$('#ndRun').addEventListener('click',draw);draw()})();
+
+quiz('#qQuiz','#qScore',[
+ {q:'"Sharding" means…',o:['horizontal partitioning','vertical partitioning','replication'],a:0,why:'Shards are slices of records.'},
+ {q:'An analytics query sums one column over a billion rows. Best layout?',o:['Horizontal','Vertical (columnar)'],a:1,why:'Read only the needed column, compressed.'},
+ {q:'Partitioning orders by status (4 values) will likely…',o:['balance well','create hot partitions'],a:1,why:'Low cardinality, skewed values.'},
+ {q:'Which routing adds a hop on every request unless clients cache locations?',o:['Direct','Proxy'],a:1,why:'The routing layer sits between client and node.'},
+ {q:'A product launch makes one perfectly sized partition overloaded. That is…',o:['a hot partition from bad keys','a skewed workload'],a:1,why:'Data is even; access is not.'}]);
+
+})();
+</script>
+</body>
+</html>

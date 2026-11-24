@@ -1,0 +1,520 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Asynchronous Processing</title>
+<meta name="description" content="When you cannot make an operation faster, you can stop waiting for it. Asynchronous processing hides latency by overlapping work, but it needs backpressure and good error handling.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Latency companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:560px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+button.tag.themebtn{cursor:pointer}
+button.tag.themebtn:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-family:var(--mono);font-size:.82rem;line-height:1.5;overflow-x:auto;white-space:pre}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.svgbox svg text{font-family:var(--body)}
+.mtx{font-family:var(--mono)}
+.stat span.big{font-size:clamp(1.5rem,5vw,2.2rem);color:var(--ink)}
+.stat span.big.blue{color:var(--blue)} .stat span.big.pencil{color:var(--pencil)} .stat span.big.okc{color:var(--ok)} .stat span.big.badc{color:var(--bad)}
+
+/* page */
+
+.workers{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.workers>div{border:1.5px solid var(--line);border-radius:8px;padding:8px;min-height:150px;display:flex;flex-direction:column-reverse;gap:3px;background:var(--paper)}
+.workers>div b{font-size:.78rem;text-align:center;font-family:var(--mono);order:-1}
+.workers i{display:block;height:12px;border-radius:3px;background:var(--blue)}
+.workers i.st{background:var(--pencil)}
+.pq{display:flex;flex-direction:column;gap:6px}
+.pq div{display:grid;grid-template-columns:6rem minmax(0,1fr);gap:8px;align-items:center;font-size:.88rem}
+.pq span.q{display:flex;gap:3px;flex-wrap:wrap;min-height:20px}
+.pq span.q i{display:inline-block;width:20px;height:18px;border-radius:3px;font-style:normal;font-size:.64rem;color:#fff;text-align:center;line-height:18px;font-family:var(--mono)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Latency · visual companion</a><span class="tag">Part 4 · Chapter 10 of 11</span><button class="tag themebtn" type="button" aria-label="Switch colour theme">Theme</button></div>
+  <h1>Asynchronous Processing</h1>
+  <p class="lede">When you cannot make an operation faster, you can stop waiting for it. Asynchronous processing hides latency by overlapping work, but it needs backpressure and good error handling.</p>
+  <nav class="toc" aria-label="Sections"><a href="#sync">Sync vs async</a><a href="#loop">Event loop</a><a href="#aio">Async I/O</a><a href="#defer">Deferring work</a><a href="#pools">Pools</a><a href="#bp">Backpressure</a><a href="#errors">Errors</a><a href="#quiz">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="sync" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Hiding latency: stop waiting</h2></div>
+  <p>Part 4 is about latency you cannot remove: hardware limits, third-party systems, physics. You can still <b>hide</b> it. In <b>synchronous</b> processing each task runs to completion, including its I/O, before the next starts. In <b>asynchronous</b> processing a task starts its I/O and the program moves on, reacting when the result arrives. A backend calling services A and B finishes when both are done, not after the sum.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Mode"><button data-sm="sync" aria-pressed="true">Synchronous</button><button data-sm="async" aria-pressed="false">Asynchronous</button></div>
+    <div class="svgbox"><svg id="smSvg" viewBox="0 0 640 140" role="img" aria-label="Two tasks with I/O"></svg></div>
+    <p class="small" id="smTxt"></p>
+  </div>
+  <div class="callout"><b class="h">Async, concurrent, parallel</b><span>Concurrency is running many tasks over the same period, parallelism is running them at the same instant, and asynchrony is a way of <i>structuring</i> code around operations that take time. Async code can be concurrent on one core or parallel on many; it guarantees neither. And if the I/O cannot actually overlap, async just adds bookkeeping.</span></div>
+</section>
+
+<section id="loop" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>The event loop</h2></div>
+  <p>The heart of an async system: <b>poll</b> for events (epoll or io_uring on Linux, kqueue on macOS, IOCP on Windows), <b>process</b> each one, <b>run</b> scheduled tasks, repeat. Polling may block, with a timeout so background work still runs (or busy-poll for the lowest latency). Handlers never block; they register interest in the next event and return. Follow one request.</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="elSvg" viewBox="0 0 640 210" role="img" aria-label="Event loop handling one request"></svg></div>
+    <div class="stepper" id="elStep"></div>
+  </div>
+  <pre class="code"><span class="k">loop</span> {
+    <span class="k">let</span> events = poller.poll(timeout);   <span class="c">// the only place we block</span>
+    <span class="k">for</span> ev <span class="k">in</span> events { handle(ev); }       <span class="c">// short, non-blocking</span>
+    run_scheduled_tasks();
+}</pre>
+  <div class="cardgrid" id="pitCards"></div>
+</section>
+
+<section id="aio" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Asynchronous I/O techniques</h2></div>
+  <p><b>I/O multiplexing</b> lets one thread watch thousands of sockets instead of a thread per connection. On top of it, several tricks hide round trips.</p>
+  <div class="sheet">
+    <div class="row between"><h3>Request batching</h3><span class="small">100 requests to a database</span></div>
+    <div class="two">
+      <label class="rng"><span>Round trip: <b id="bRV"></b></span><input type="range" id="bR" min="1" max="100" value="20"></label>
+      <label class="rng"><span>Batch size: <b id="bSV"></b></span><input type="range" id="bS" min="1" max="100" value="10"></label>
+    </div>
+    <div class="bars" id="bBars"></div>
+    <p class="small">Batching responses too means a client waits for the whole batch; send responses individually, or tune the batch size, when they are latency-sensitive.</p>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>Request hedging</h3><span class="small">service: usually 10–20 ms, 5% of calls take 300–1000 ms</span></div>
+    <div class="row"><div class="seg" role="group" aria-label="Copies"><button data-hg="1" aria-pressed="true">1 copy</button><button data-hg="2" aria-pressed="false">2 copies</button><button data-hg="3" aria-pressed="false">3 copies</button></div><button class="btn" id="hgRun">Resample</button></div>
+    <div class="three"><div class="stat"><span class="big blue" id="hgP50">-</span><span>p50</span></div><div class="stat"><span class="big badc" id="hgP99">-</span><span>p99</span></div><div class="stat"><span class="big pencil" id="hgLoad">-</span><span>load on the service</span></div></div>
+    <p class="small">Send identical requests, use the first reply, ignore the rest. Only safe for <b>idempotent</b> operations (reading a profile yes, charging a card no), and only worth it while the extra load does not itself slow the service. Decide what to do when the first reply is an error.</p>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>Buffered I/O</h3><span class="small">writing 1 MB in 100-byte records</span></div>
+    <label class="rng"><span>Buffer size: <b id="bfV"></b></span><input type="range" id="bf" min="0" max="100" value="40"></label>
+    <div class="bars" id="bfBars"></div>
+    <p class="small">Accumulate in memory, issue fewer, bigger system calls; pair with readahead for reads. <b>Memory mapping</b> goes further: the file appears in memory, the OS pages it in on demand and flushes writes in the background. Convenient and often fast, but page faults bring tail latency that is hard to remove, the working set must fit in memory, and a crash can leave writes unflushed.</p>
+  </div>
+</section>
+
+<section id="defer" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Deferring work: priorities and stealing</h2></div>
+  <p>Do what the user waits for now; do the rest later. A social network shows your post immediately and updates engagement metrics afterwards; a shop confirms the order and reconciles inventory off-peak. Deferral moves latency spikes elsewhere, so scheduling matters. <b>Priority queues</b> run urgent work first; <b>aging</b> raises a waiting task's priority so low-priority work does not starve.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn" id="pqAdd">Add mixed tasks</button><button class="btn primary" id="pqRun">Run 3 tasks</button><label class="small row"><input type="checkbox" id="pqAge" checked> aging</label></div>
+    <div class="pq" id="pq"></div>
+    <p class="small" id="pqTxt" aria-live="polite"></p>
+  </div>
+  <p><b>Work stealing</b>: an idle worker takes tasks from the tail of a busy worker's queue (the tail, to stay out of the owner's way), preferring nearby workers for cache locality. Task size matters: too fine and stealing overhead dominates, too coarse and there's nothing to balance.</p>
+  <div class="sheet">
+    <div class="row"><label class="small row"><input type="checkbox" id="wsOn" checked> work stealing</label><button class="btn primary" id="wsTick">Tick</button><button class="btn" id="wsReset">Reset</button><span class="small mono" id="wsT"></span></div>
+    <div class="workers" id="ws"></div>
+  </div>
+</section>
+
+<section id="pools" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Resource pools: pay set-up costs once</h2></div>
+  <p>Creating threads, allocating buffers and opening connections all cost time. Pools pre-create them and lend them out. A fresh connection to a remote database pays DNS, the TCP handshake and TLS before the first query.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Connection"><button data-cn="new" aria-pressed="true">New connection per request</button><button data-cn="pool" aria-pressed="false">From a connection pool</button></div>
+    <label class="rng"><span>Round trip to the server: <b id="cnV"></b></span><input type="range" id="cnR" min="1" max="150" value="30"></label>
+    <div class="svgbox"><svg id="cnSvg" viewBox="0 0 640 120" role="img" aria-label="Connection setup timeline"></svg></div>
+  </div>
+  <div class="cardgrid" id="poolCards"></div>
+</section>
+
+<section id="bp" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Backpressure: async without drowning</h2></div>
+  <p>Async makes it easy to accept work faster than you can finish it. Then queues grow and, by Little's law, so does latency. <b>Backpressure</b> is feedback from consumer to producer. Push the producer past capacity and pick a strategy.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Strategy"><button data-bp="none" aria-pressed="true">Unbounded queue</button><button data-bp="drop" aria-pressed="false">Bounded buffer + drop</button><button data-bp="throttle" aria-pressed="false">Throttle producer</button><button data-bp="rate" aria-pressed="false">Rate limit 100/s</button></div>
+    <label class="rng"><span>Producer rate: <b id="bpV"></b> (consumer handles 100/s)</span><input type="range" id="bpR" min="40" max="200" value="140"></label>
+    <div class="svgbox"><svg id="bpSvg" viewBox="0 0 640 200" role="img" aria-label="Queue length and latency over time"></svg></div>
+    <div class="three"><div class="stat"><span class="big blue" id="bpQ">-</span><span>queue after 10 s</span></div><div class="stat"><span class="big badc" id="bpL">-</span><span>latency of last request</span></div><div class="stat"><span class="big pencil" id="bpD">-</span><span>requests dropped or refused</span></div></div>
+    <p class="small" id="bpTxt"></p>
+  </div>
+</section>
+
+<section id="errors" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Errors, timeouts and observability</h2></div>
+  <p>Async work fails in pieces. Some uploads in a batch succeed and others fail: track each operation's state so you can retry or report precisely. Transient failures want <b>retries with exponential backoff</b>, and retries want <b>idempotent</b> operations (a retried payment must not charge twice). <b>Timeouts</b> stop hung operations from piling up; <b>cancellation</b> stops unwanted ones, and both need robust cleanup.</p>
+  <div class="sheet">
+    <div class="row between"><h3>Retry with exponential backoff</h3><button class="btn primary" id="rtRun">Simulate</button></div>
+    <div class="svgbox"><svg id="rtSvg" viewBox="0 0 640 110" role="img" aria-label="Retry attempts over time"></svg></div>
+    <p class="small" id="rtTxt"></p>
+  </div>
+  <p><b>Tracing</b> follows one request across asynchronous hops by passing a trace ID that every component tags its timing with. <b>Metrics</b> to watch: active tasks, pool utilization, queue depths, work-stealing activity, error rates by category, retry success. Measure queue wait, processing and external wait separately, and keep the instrumentation itself cheap.</p>
+  <div class="sheet">
+    <div class="row between"><h3>One order, traced</h3><span class="small">trace id 7f3a…</span></div>
+    <div class="svgbox"><svg id="trSvg" viewBox="0 0 640 170" role="img" aria-label="Trace waterfall"></svg></div>
+  </div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Recap</h2></div>
+  <div class="recap">
+    <div><b>Hide what you can't cut</b><span>Start work, keep going, react on completion.</span></div>
+    <div><b>Event loop</b><span>Poll, dispatch short handlers, never block in a handler.</span></div>
+    <div><b>Async I/O</b><span>Multiplex, batch, hedge idempotent calls, buffer, memory-map with care.</span></div>
+    <div><b>Defer</b><span>Priorities with aging; work stealing to balance cores.</span></div>
+    <div><b>Pools</b><span>Threads (or thread-per-core), memory, connections, prepared up front.</span></div>
+    <div><b>Control it</b><span>Backpressure, timeouts, retries with backoff, tracing and metrics.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Latency: Reduce delay in software systems</i> by Pekka Enberg (Manning, 2026). Explanations, examples, code snippets and drawings are original summaries, not text or figures from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch09-concurrency.html"><span>Previous · Chapter 9</span><b>Exploiting Concurrency</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch11-predictive.html"><span>Next · Chapter 11</span><b>Predictive Techniques</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page (Latency companion). */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){if(!group)return;group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('lat:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('lat:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: cycles auto -> light -> dark; remembered per viewer when storage works */
+(function(){const r=document.documentElement;const t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+ const b=document.querySelector('.themebtn');if(!b)return;
+ const lab=()=>{const v=r.getAttribute('data-theme');b.textContent=v==='dark'?'Dark':v==='light'?'Light':'Auto theme'};lab();
+ b.addEventListener('click',()=>{const v=r.getAttribute('data-theme');const n=v==null?'light':v==='light'?'dark':null;
+  if(n)r.setAttribute('data-theme',n);else r.removeAttribute('data-theme');store.set('theme',n);lab()})})();
+
+
+function gant(s,rows,X){rows.forEach(r=>{s.appendChild(el('rect',{x:X(r[0]),y:r[2],width:X(r[1])-X(r[0])-1,height:r[4]||20,rx:3,fill:r[5]?'none':`var(--${r[3]})`,stroke:`var(--${r[3]})`,'stroke-dasharray':r[5]?'4 3':null}));if(r[6])s.appendChild(el('text',{x:(X(r[0])+X(r[1]))/2,y:r[2]+14,'text-anchor':'middle','font-size':10.5,fill:r[5]?`var(--${r[3]})`:'#fff','font-weight':700},r[6]))})}
+
+/* sync vs async */
+(function(){const s=$('#smSvg');function draw(m){s.innerHTML='';const X=t=>40+t*5.5;let rows,end;
+ if(m==='sync'){rows=[[0,10,30,'d1',0,0,'A'],[10,50,30,'d1',0,1,'A waits for I/O'],[50,65,30,'d2',0,0,'B'],[65,95,30,'d2',0,1,'B waits for I/O']];end=95}
+ else{rows=[[0,10,30,'d1',0,0,'A'],[10,25,30,'d2',0,0,'B'],[10,50,70,'d1',0,1,'A\'s I/O in flight'],[25,55,95,'d2',0,1,'B\'s I/O']];end=55}
+ gant(s,rows,X);s.appendChild(el('line',{x1:X(end),x2:X(end),y1:20,y2:125,stroke:'var(--ink)','stroke-dasharray':'3 3'}));s.appendChild(el('text',{x:X(end)+4,y:132,'font-size':11.5,'font-weight':700,fill:'var(--ink)'},'done at '+end+' ms'));
+ $('#smTxt').textContent=m==='sync'?'Each task\'s I/O blocks the thread: total = sum of everything.':'A starts its I/O and the thread immediately runs B; both I/Os overlap. Same work, done in ~58% of the time.'}
+ seg('[data-sm]',b=>draw(b.dataset.sm));draw('sync')})();
+
+/* event loop stepper */
+(function(){const s=$('#elSvg');const steps=['The loop calls <b>poll()</b>. It sleeps until something is ready or the timeout fires. Interest list: listening socket readable.','Event: <b>new connection</b>. Handler accepts it and registers interest in "client socket readable". Returns at once.','Meanwhile the loop serves other sockets. The request bytes are still crossing the network.','Event: <b>socket readable</b>. Handler reads and processes the request, then registers interest in "socket writable".','Event: <b>socket writable</b>. Handler writes the response; the OS sends it in the background. Three short tasks, zero blocking.'];
+ function draw(i){s.innerHTML='';const cx=320,cy=105;s.appendChild(el('circle',{cx,cy,r:62,fill:'none',stroke:'var(--blue)','stroke-width':3,'stroke-dasharray':'10 6',class:'flow'}));s.appendChild(el('text',{x:cx,y:cy-4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--ink)'},'event loop'));s.appendChild(el('text',{x:cx,y:cy+14,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},'poll · dispatch · run'));
+  const H=[['accept connection',100,40,1],['other clients',100,170,2],['process request',540,40,3],['send response',540,170,4]];
+  H.forEach(([t,x,y,k])=>{const on=i===k;s.appendChild(el('rect',{x:x-80,y:y-18,width:160,height:36,rx:8,fill:on?'var(--pencil-soft)':'var(--surface)',stroke:on?'var(--pencil)':'var(--line)','stroke-width':on?2.5:1.3}));s.appendChild(el('text',{x,y:y+5,'text-anchor':'middle','font-size':12,fill:'var(--ink)'},t));s.appendChild(el('line',{x1:x+(x<cx?80:-80),y1:y,x2:cx+(x<cx?-58:58),y2:cy+(y<cy?-25:25),stroke:on?'var(--pencil)':'var(--line)','stroke-width':on?2.5:1}))});
+  if(i===0)s.appendChild(el('text',{x:cx,y:200,'text-anchor':'middle','font-size':11,fill:'var(--pencil)','font-weight':700},'blocked in poll(): nothing to do'))}
+ $('#elStep').innerHTML=stepHTML();stepper('#elStep',steps,draw)})();
+cards('#pitCards',[
+ {t:'Complexity',c:'d1',d:'Dependencies between tasks, errors across operations, race conditions.'},
+ {t:'Resource management',c:'d2',d:'Thousands of in-flight tasks consume memory; you need throttling.'},
+ {t:'Debuggability',c:'d3',d:'Execution order is not obvious and stack traces stop at the event loop.'},
+ {t:'Error handling',c:'d4',d:'Decide how one task\'s failure affects the others still running.'}]);
+
+/* batching */
+(function(){function upd(){const r=+$('#bR').value,b=+$('#bS').value;$('#bRV').textContent=r+' ms';$('#bSV').textContent=b;const n=100,per=0.2;const one=n*(r+per),bat=Math.ceil(n/b)*(r+per*b);
+ bars('#bBars',[{l:'One at a time',v:one,c:'bad',txt:Math.round(one)+' ms'},{l:`Batches of ${b}`,v:bat,c:'ok',txt:Math.round(bat)+' ms'},{l:'First reply, batched responses',v:r+per*b,c:'mid',txt:(r+per*b).toFixed(1)+' ms'}],Math.max(one,1))}
+ ['bR','bS'].forEach(k=>$('#'+k).addEventListener('input',upd));upd()})();
+/* hedging */
+(function(){let k=1;function samp(){return Math.random()<.05?300+Math.random()*700:10+Math.random()*10}
+ function run(){const L=[];for(let i=0;i<4000;i++){let m=Infinity;for(let j=0;j<k;j++)m=Math.min(m,samp());L.push(m)}L.sort((a,b)=>a-b);$('#hgP50').textContent=L[2000].toFixed(0)+' ms';$('#hgP99').textContent=L[3960].toFixed(0)+' ms';$('#hgLoad').textContent=k+'×'}
+ seg('[data-hg]',b=>{k=+b.dataset.hg;run()});$('#hgRun').addEventListener('click',run);run()})();
+/* buffered */
+(function(){function upd(){const sz=Math.round(Math.pow(10,2+ +$('#bf').value/100*4));$('#bfV').textContent=sz>=1e6?(sz/1e6).toFixed(1)+' MB':sz>=1000?(sz/1000).toFixed(0)+' KB':sz+' B';const calls=Math.ceil(1e6/Math.max(100,sz));const cost=calls*2+1e6/1e6*300;
+ bars('#bfBars',[{l:'write() system calls',v:Math.log10(calls)+0.1,c:'pencil',txt:calls.toLocaleString()},{l:'Time in syscall overhead (~2 µs each)',v:Math.log10(calls*2)+0.1,c:'bad',txt:(calls*2/1000).toFixed(2)+' ms'}],4.5)}
+ $('#bf').addEventListener('input',upd);upd()})();
+
+/* priority queue */
+(function(){let q=[],tick=0,ran=[];const P=[['High','bad','frame'],['Medium','mid','sub'],['Low','blue','stats']];
+ function add(){for(let i=0;i<6;i++){const p=Math.random()<.45?0:Math.random()<.6?1:2;q.push({p,born:tick,id:P[p][2]+(i+tick)})}render('Added six tasks.')}
+ function eff(t){return $('#pqAge').checked?t.p-Math.floor((tick-t.born)/3):t.p}
+ function run(){const out=[];for(let i=0;i<3&&q.length;i++){q.sort((a,b)=>eff(a)-eff(b)||a.born-b.born);out.push(q.shift())}tick++;add2();render('Ran: '+out.map(t=>P[t.p][0].toLowerCase()).join(', ')+'.'+(q.filter(t=>t.p===2&&tick-t.born>4).length?(' <b class="badc">Low-priority tasks have waited 5+ rounds.</b>'):''))}
+ function add2(){for(let i=0;i<2;i++){const p=Math.random()<.6?0:1;q.push({p,born:tick,id:'n'})}}
+ function render(msg){$('#pq').innerHTML=P.map((p,k)=>`<div><b class="${p[1]==='bad'?'badc':p[1]==='mid'?'midc':'blue'}">${p[0]}</b><span class="q">${q.filter(t=>t.p===k).map(t=>`<i style="background:var(--${p[1]})" title="waited ${tick-t.born}">${tick-t.born}</i>`).join('')}</span></div>`).join('');$('#pqTxt').innerHTML=(msg||'')+' Numbers show rounds waited. Each round, 2 new high/medium tasks arrive.'}
+ $('#pqAdd').addEventListener('click',add);$('#pqRun').addEventListener('click',run);$('#pqAge').addEventListener('change',()=>render(''));add()})();
+/* work stealing */
+(function(){let W,t;function reset(){W=[[...Array(14)].map(()=>0),[...Array(3)].map(()=>0),[...Array(9)].map(()=>0),[]];t=0;render()}
+ function render(){$('#ws').innerHTML=W.map((w,i)=>`<div><b>core ${i}</b>${w.map(x=>`<i class="${x?'st':''}"></i>`).join('')}</div>`).join('');$('#wsT').textContent=`tick ${t} · remaining ${W.reduce((a,w)=>a+w.length,0)}`}
+ function tick(){if(W.every(w=>!w.length))return;t++;W.forEach((w,i)=>{if(w.length)w.pop();else if($('#wsOn').checked){const v=W.reduce((b,x,j)=>x.length>W[b].length?j:b,0);if(W[v].length>1){W[v].shift();w.push(1)}}});render()}
+ $('#wsTick').addEventListener('click',tick);$('#wsReset').addEventListener('click',reset);reset()})();
+
+/* connection pool */
+(function(){let m='new';const s=$('#cnSvg');function draw(){const r=+$('#cnR').value;$('#cnV').textContent=r+' ms';s.innerHTML='';const parts=m==='new'?[['DNS',r*.6,'d4'],['TCP handshake',r,'d3'],['TLS',r,'d5'],['query',r+2,'d1']]:[['query',r+2,'d1']];
+ const tot=parts.reduce((a,b)=>a+b[1],0);const sc=560/Math.max(tot,4*150);let x=40;parts.forEach(([l,d,c])=>{const w=d*sc;s.appendChild(el('rect',{x,y:30,width:Math.max(2,w-2),height:30,rx:4,fill:`var(--${c})`}));if(w>40)s.appendChild(el('text',{x:x+w/2,y:50,'text-anchor':'middle','font-size':10.5,fill:'#fff','font-weight':700},l));x+=w});
+ s.appendChild(el('text',{x:40,y:90,'font-size':12,'font-weight':700,fill:'var(--ink)'},`first byte of the answer after ≈ ${Math.round(tot)} ms`+(m==='pool'?' (the connection was already open)':'')))}
+ seg('[data-cn]',b=>{m=b.dataset.cn;draw()});$('#cnR').addEventListener('input',draw);draw()})();
+cards('#poolCards',[
+ {t:'Thread pools',c:'d1',d:'Reuse pre-started threads. Too few underuse the machine, too many add context switches. Thread-per-core (as in Seastar, used by ScyllaDB) removes switching entirely but demands that nothing ever blocks.'},
+ {t:'Memory pools',c:'d2',d:'Borrow pre-allocated buffers instead of calling the allocator on the hot path. Sizing several pools is tricky: one can starve while another sits idle.'},
+ {t:'Connection pools',c:'d3',d:'Keep connections warm. Combined with asynchronous queries, the app can have several queries in flight on pooled connections, as long as it does not overwhelm the database.'}]);
+
+/* backpressure */
+(function(){let m='none';const s=$('#bpSvg');function run(){const p=+$('#bpR').value;$('#bpV').textContent=p+'/s';const cap=100,dt=0.1;let q=0,drop=0,rate=p;const Q=[],Lt=[];const B=50;
+ for(let t=0;t<=10;t+=dt){let inc=rate*dt;if(m==='rate'){const ok=Math.min(inc,cap*dt);drop+=inc-ok;inc=ok}
+  q+=inc;if(m==='drop'&&q>B){drop+=q-B;q=B}q=Math.max(0,q-cap*dt);if(m==='throttle'){rate=q>20?Math.max(cap*0.95,rate*0.9):Math.min(p,rate*1.05)}Q.push(q);Lt.push(q/cap*1000+10)}
+ s.innerHTML='';s.appendChild(el('line',{x1:40,x2:630,y1:170,y2:170,stroke:'var(--muted)'}));const mx=Math.max(100,...Q);const X=i=>40+i/(Q.length-1)*590,Y=v=>170-v/mx*150;
+ s.appendChild(el('path',{d:Q.map((v,i)=>(i?'L':'M')+X(i).toFixed(1)+','+Y(v).toFixed(1)).join(''),stroke:'var(--pencil)','stroke-width':2.5,fill:'none'}));
+ s.appendChild(el('text',{x:44,y:16,'font-size':11,fill:'var(--pencil)'},'queue length (max '+Math.round(mx)+')'));s.appendChild(el('text',{x:630,y:188,'text-anchor':'end','font-size':10.5,fill:'var(--muted)'},'10 s'));
+ $('#bpQ').textContent=Math.round(q);$('#bpL').textContent=Math.round(Lt[Lt.length-1])+' ms';$('#bpD').textContent=Math.round(drop);
+ $('#bpTxt').textContent={none:'Nothing pushes back: the queue, and every request\'s latency, grows for as long as the overload lasts. Eventually memory runs out.',drop:'A bounded buffer caps latency, but overflow is dropped and clients must cope. Bigger buffers absorb spikes but add latency; smaller ones drop more.',throttle:'The consumer signals capacity and the producer slows, like TCP\'s receive window (a server that stops calling recv() makes senders back off). Latency stays bounded with no drops.',rate:'Requests beyond 100 per second are rejected at the door. Simple to enforce; getting the limit right requires knowing your capacity.'}[m]}
+ seg('[data-bp]',b=>{m=b.dataset.bp;run()});$('#bpR').addEventListener('input',run);run()})();
+
+/* retry */
+(function(){const s=$('#rtSvg');function run(){s.innerHTML='';let t=0,base=50;const X=v=>40+v*0.37;s.appendChild(el('line',{x1:40,x2:630,y1:60,y2:60,stroke:'var(--line)'}));let ok=false,k=0;
+ while(!ok&&k<6){const fail=Math.random()<(k<3?.75:.3);s.appendChild(el('rect',{x:X(t),y:48,width:16,height:24,rx:3,fill:fail?'var(--bad)':'var(--ok)'}));s.appendChild(el('text',{x:X(t)+8,y:88,'text-anchor':'middle','font-size':10,fill:'var(--muted)'},'#'+(k+1)));
+  if(fail){const wait=base*Math.pow(2,k)*(0.8+Math.random()*.4);s.appendChild(el('text',{x:X(t+wait/2)+8,y:42,'text-anchor':'middle','font-size':10,fill:'var(--muted)'},'wait '+Math.round(wait)+' ms'));t+=wait}else ok=true;k++}
+ $('#rtTxt').textContent=ok?`Succeeded on attempt ${k} after ${Math.round(t)} ms. Each wait roughly doubles (with jitter) so a struggling service gets room to recover.`:'Gave up after 6 attempts: report the failure rather than retrying forever.'}
+ $('#rtRun').addEventListener('click',run);run()})();
+/* trace */
+(function(){const s=$('#trSvg');const R=[['web: POST /order',0,120,'d1'],['auth',5,20,'d2'],['inventory check',22,55,'d3'],['payment (async)',22,95,'d4'],['  queue wait',22,60,'mid'],['  processing',60,95,'d4'],['fulfilment (deferred)',100,160,'d5']];
+ R.forEach(([l,a,b,c],i)=>{const y=12+i*22;s.appendChild(el('text',{x:8,y:y+12,'font-size':11,fill:'var(--ink)'},l));s.appendChild(el('rect',{x:180+a*2.7,y,width:(b-a)*2.7,height:16,rx:3,fill:`var(--${c})`,opacity:.85}));s.appendChild(el('text',{x:184+b*2.7,y:y+12,'font-size':10,fill:'var(--muted)'},(b-a)+' ms'))})})();
+
+quiz('#qQuiz','#qScore',[
+ {q:'Which part of an event loop is allowed to block?',o:['Polling for events','Event handlers'],a:0,why:'Handlers must return quickly; polling may wait, with a timeout.'},
+ {q:'Hedging is unsafe for…',o:['reading a user profile','charging a credit card'],a:1,why:'Hedged requests may all execute; they must be idempotent.'},
+ {q:'A producer sends 140/s to a 100/s consumer with an unbounded queue. Latency…',o:['stabilises','keeps growing'],a:1,why:'The queue grows by 40 per second; Little\'s law does the rest.'},
+ {q:'TCP\'s receive window is an example of…',o:['dropping','throttling the producer'],a:1,why:'The receiver tells the sender how much it can accept.'},
+ {q:'Why steal from the tail of another worker\'s queue?',o:['Less contention with the owner','It is always faster'],a:0,why:'The owner works from the head.'}]);
+
+})();
+</script>
+</body>
+</html>

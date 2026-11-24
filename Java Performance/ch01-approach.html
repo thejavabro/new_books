@@ -1,0 +1,603 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>An Approach to Performance</title>
+<meta name="description" content="Tuning flags won&#x27;t rescue a bad algorithm, and a benchmark that measures the wrong thing will send you chasing ghosts. These first two chapters set out how to think about Java performance and how to test it honestly.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Java Performance companion. Layout: an engineer's notebook column on blueprint grid paper.
+   Blue ink = the JVM and measurement, orange pencil = your application code, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code and terminal snippets */
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)} pre.code .b{color:var(--bad)} pre.code .p{color:var(--pencil)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+button.tag.theme{cursor:pointer}
+button.tag.theme:hover{border-color:var(--blue);color:var(--blue)}
+.meter{height:14px;border-radius:7px;background:var(--paper);border:1px solid var(--line);overflow:hidden}
+.meter>i{display:block;height:100%;width:0;background:var(--blue);transition:width .3s}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.kv>div{border:1px solid var(--line);border-radius:8px;padding:8px 12px;background:var(--paper);display:flex;flex-direction:column;min-width:0}
+.kv b{font-family:var(--mono);font-size:1.1rem}
+.kv span{font-size:.82rem;color:var(--muted)}
+
+/* page */
+
+.pipe{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+@media (max-width:640px){.pipe{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.pipe label{display:flex;flex-direction:column;gap:4px;border:1px solid var(--line);border-radius:8px;padding:8px;background:var(--paper);font-size:.82rem;min-width:0}
+.pipe label b{font-family:var(--mono);font-size:1rem}
+.pipe label.neck{border-color:var(--bad);background:var(--bad-soft)}
+.tt{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:640px){.tt{grid-template-columns:1fr}}
+.runs{display:flex;flex-wrap:wrap;gap:6px}
+.runs span{font-family:var(--mono);font-size:.8rem;padding:2px 7px;border-radius:5px;border:1px solid var(--line);background:var(--paper)}
+.stat span.pv{color:var(--ink);font-family:var(--display);font-weight:800;font-size:2rem;line-height:1}
+.benchrow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+@media (max-width:640px){.benchrow{grid-template-columns:1fr}}
+.benchrow button{border:1px solid var(--line);background:var(--paper);border-radius:10px;padding:12px;text-align:left;display:flex;flex-direction:column;gap:4px}
+.benchrow button b{font-family:var(--display)}
+.benchrow button span{font-size:.85rem;color:var(--muted)}
+.benchrow button[aria-pressed="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Java Performance · visual companion</a><span class="tag">Part I · Chapter 1–2 of 12</span><button class="tag theme" type="button" data-theme-toggle aria-label="Switch light or dark theme">Theme</button></div>
+  <h1>An Approach to Performance</h1>
+  <p class="lede">Tuning flags won't rescue a bad algorithm, and a benchmark that measures the wrong thing will send you chasing ghosts. These first two chapters set out how to think about Java performance and how to test it honestly.</p>
+  <nav class="toc" aria-label="Sections"><a href="#art">Art and science</a><a href="#cuts">1,000 cuts</a><a href="#platform">Platforms</a><a href="#real">Test a real app</a><a href="#pipeline">Bottlenecks</a><a href="#metrics">Metrics</a><a href="#variability">Variability</a><a href="#early">Test early</a><a href="#jmh">jmh</a><a href="#check">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="art" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Performance is part art, part science</h2></div>
+  <p>The book covers two things. First, the <b>JVM</b> itself: how flags for the compiler and garbage collector change what your program does. Second, the <b>platform</b>: how you use threads, strings, collections, JDBC and the rest. The JVM side is mostly tuning flags; the platform side is mostly coding practice. Good performance engineers know both, and what looks like "art" from outside is really deep knowledge applied with experience.</p>
+  <p>The JVM is still only one part of the story. Before you touch a single flag, the book lists the outside influences that matter at least as much. Tap each card.</p>
+  <div class="cardgrid" id="storyCards"></div>
+</section>
+
+<section id="cuts" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Death by a thousand cuts</h2></div>
+  <p>Every small feature is "too small to matter". Each one adds code to compile, objects to collect and classes to load. Release after release the slowdowns compound, and hardware upgrades hide it. Drag the sliders to see how quickly small regressions pile up.</p>
+  <div class="sheet">
+    <div class="two">
+      <div class="stack">
+        <label class="rng"><span>Regression added per feature: <b id="cutV">0.5%</b></span><input type="range" id="cut" min="1" max="30" value="5"></label>
+        <label class="rng"><span>Features per release: <b id="fpV">4</b></span><input type="range" id="fp" min="1" max="12" value="4"></label>
+      </div>
+      <div class="kv"><div><b id="cutR3">0%</b><span>slower after 3 releases</span></div><div><b id="cutR10">0%</b><span>slower after 10 releases</span></div></div>
+    </div>
+    <div class="svgbox"><svg id="cutSvg" viewBox="0 0 640 190" role="img" aria-label="Response time creeping up over ten releases"></svg></div>
+  </div>
+  <div class="callout"><b class="h">"Premature optimization" is not a licence to write slow code</b><span>Knuth's warning is about complicated algorithmic tricks before profiling shows they are needed. It is not about avoiding constructs known to be slow. If two simple ways of writing something exist, pick the faster one. The classic case is a debug log line that builds a string and calls methods even when the level is off:</span></div>
+  <div class="tt">
+    <pre class="code"><span class="c">// builds the string and calls calcX(), calcY()</span>
+<span class="c">// even when FINE is disabled</span>
+log.log(Level.FINE, <span class="s">"x="</span> + calcX() + <span class="s">" y="</span> + calcY());</pre>
+    <pre class="code"><span class="k">if</span> (log.isLoggable(Level.FINE)) {
+  log.log(Level.FINE, <span class="s">"x={0} y={1}"</span>,
+          <span class="k">new</span> Object[]{calcX(), calcY()});
+}</pre>
+  </div>
+</section>
+
+<section id="platform" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Hardware, containers and flags</h2></div>
+  <p>The book targets the HotSpot JVM in JDK 8 and 11 (long-term support releases). Flags come in two shapes: booleans, <code>-XX:+Flag</code> to enable and <code>-XX:-Flag</code> to disable, and valued ones, <code>-XX:Flag=value</code>. Many defaults are chosen by <b>ergonomics</b>: the JVM looks at the machine and picks values. That is where hardware and containers come in.</p>
+  <div class="sheet">
+    <div class="row between"><h3>Hyper-threads are not cores</h3><span class="small">4-core machine, 2 hyper-threads per core</span></div>
+    <label class="rng"><span>CPU-bound tasks running: <b id="htV">4</b></span><input type="range" id="ht" min="1" max="8" value="4"></label>
+    <div class="svgbox"><svg id="htSvg" viewBox="0 0 640 200" role="img" aria-label="Throughput rises linearly to four tasks then adds about 30 percent per extra task"></svg></div>
+    <p id="htTxt" aria-live="polite"></p>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>Docker limits and ergonomics</h3><span class="small">host: 64 GB, 32 CPUs. Container limit: 4 GB, 2 CPUs</span></div>
+    <div class="seg" role="group" aria-label="JVM version"><button data-dk="old" aria-pressed="true">Java 8 before update 192</button><button data-dk="new" aria-pressed="false">Java 8u192+ or Java 11</button></div>
+    <div class="svgbox"><svg id="dkSvg" viewBox="0 0 640 170" role="img" aria-label="Default heap compared to container memory"></svg></div>
+    <p id="dkTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="real" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Principle 1: test a real application</h2></div>
+  <p>Benchmarks come in three sizes. Pick one to see what it is good for and how it misleads.</p>
+  <div class="sheet">
+    <div class="benchrow" id="bench"></div>
+    <div class="detail" id="benchTip" aria-live="polite"></div>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>Why microbenchmarks lie: four traps</h3></div>
+    <pre class="code" id="mbCode"></pre>
+    <div class="stepper" id="mbStep"></div>
+  </div>
+</section>
+
+<section id="pipeline" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>The whole system sets the speed</h2></div>
+  <p>Think of an application as a chain of steps. Data leaves each box only as fast as that box can process it, so the slowest box sets the rate for everything. Make the business calculation twice as fast and nothing changes if the database load can only do 100 requests per second. Set each module's capacity (requests per second when tested alone) and watch the flow.</p>
+  <div class="sheet">
+    <div class="pipe" id="pipe"></div>
+    <div class="svgbox"><svg id="pipeSvg" viewBox="0 0 640 120" role="img" aria-label="Request flow through six modules"></svg></div>
+    <p id="pipeTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout blue"><b class="h">The trap of speeding up the wrong box</b><span>If the database is already overloaded, making the Java side more efficient sends it even more load and the whole system can get <i>slower</i>. The wrong conclusion is "that JVM improvement is bad". Also remember several JVMs on one machine compete: one GC can use 100% of every CPU for a moment, which looks like 40% on an average.</span></div>
+</section>
+
+<section id="metrics" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Principle 2: throughput, batch time and response time</h2></div>
+  <p>Three ways to measure, all related. <b>Elapsed time</b> runs a fixed job and times it, warm-up included (users do feel the slow start). <b>Throughput</b> clients send the next request the instant they get an answer (no think time) and count operations per second. <b>Response-time</b> clients pause between requests like a real user, which fixes the load, so what you measure is how quickly the server answers.</p>
+  <div class="sheet">
+    <div class="row between"><h3>Think time vs. cycle time</h3><span class="small">one client, 30-second pause</span></div>
+    <label class="rng"><span>Server response time: <b id="rtV">1 s</b></span><input type="range" id="rt" min="0" max="20" value="1"></label>
+    <div class="tt">
+      <div class="stat"><span>Think time: sleep 30 s after each answer</span><b class="big blue" id="thinkOps">0.032</b><span>ops/s, falls as the server slows down</span></div>
+      <div class="stat"><span>Cycle time: one request every 30 s</span><b class="big okc" id="cycOps">0.033</b><span>ops/s, fixed while response &lt; 30 s</span></div>
+    </div>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>Average vs. 90th percentile</h3><div class="seg" role="group" aria-label="Data set"><button data-out="0" aria-pressed="true">Typical run</button><button data-out="1" aria-pressed="false">One 100 s outlier</button></div></div>
+    <div class="svgbox"><svg id="pctSvg" viewBox="0 0 640 230" role="img" aria-label="Twenty response times with average and 90th percentile lines"></svg></div>
+    <p id="pctTxt" aria-live="polite"></p>
+  </div>
+  <p class="small">A throughput test also reports average response time, but that only matters when throughput is equal: 500 ops/s at 0.5 s beats 400 ops/s at 0.3 s. And check that the load generator itself isn't the bottleneck; a starved client measures the client.</p>
+</section>
+
+<section id="variability" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Principle 3: understand variability</h2></div>
+  <p>Run the same test twice and you get two answers. To decide whether a code change (the <b>specimen</b>) really differs from the old code (the <b>baseline</b>), compare the runs with Student's t-test. Its <b>p-value</b> is the probability you'd see a gap this big if the two were really the same. The book's example: three runs each, the specimen 25% faster on average, yet p is about 0.43. Add runs and watch the confidence change while the averages stay put.</p>
+  <div class="sheet">
+    <div class="tt">
+      <div class="stack"><b class="blue">Baseline runs (s)</b><div class="runs" id="runsB"></div></div>
+      <div class="stack"><b class="pencil">Specimen runs (s)</b><div class="runs" id="runsS"></div></div>
+    </div>
+    <div class="row"><button class="btn primary" id="addRun">Add a run to each</button><button class="btn" id="noisy">Noisier machine</button><button class="btn" id="resetRun">Back to 3 runs</button></div>
+    <div class="tt">
+      <div class="stat"><span>p-value (same performance?)</span><span class="pv" id="pval">0.43</span><span id="pvS"></span></div>
+      <div class="stat"><span>Averages</span><span class="pv" id="avgs">1.00 / 0.75</span><span>baseline / specimen, seconds</span></div>
+    </div>
+    <div class="meter" aria-hidden="true"><i id="pvBar"></i></div>
+    <p class="small" id="pvTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout"><b class="h">Significant is not the same as important</b><span>A steady 1% regression can be highly significant (p = 0.01). A noisy 10% regression with p = 0.2 is "inconclusive", yet it deserves your time first. Inconclusive means get more data, not "no change". Choosing the α cut-off (0.1, 0.05, 0.01) is a judgment call: that is the art.</span></div>
+</section>
+
+<section id="early" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Principle 4: test early, test often</h2></div>
+  <p>Ideally every check-in runs performance tests. In practice good tests take hours or days and schedules push risky code to the feature-freeze deadline. Small, explained regressions can wait; a regression that needs architectural change must be caught before other code depends on it. Three rules make frequent testing work:</p>
+  <div class="cardgrid" id="earlyCards"></div>
+</section>
+
+<section id="jmh" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Microbenchmarks done right with jmh</h2></div>
+  <p>The Java Microbenchmark Harness handles the mechanics you'd otherwise get wrong: warm-up, forked JVMs, consuming results and confidence intervals. You still have to think about what you are measuring. Here is the shape of a benchmark (an original sketch):</p>
+  <pre class="code"><span class="k">@State</span>(Scope.Benchmark)
+<span class="k">public class</span> InternBench {
+  <span class="k">@Param</span>({<span class="s">"1"</span>, <span class="s">"10000"</span>}) <span class="k">int</span> n;
+  String[] words;
+  <span class="k">@Setup</span>(Level.Trial)            <span class="c">// build inputs outside the timed region</span>
+  <span class="k">public void</span> init() { words = makeWords(n); }
+  <span class="k">@Benchmark</span>
+  <span class="k">public void</span> intern(Blackhole bh) {
+    <span class="k">for</span> (String w : words) bh.consume(w.intern()); <span class="c">// results are used</span>
+  }
+}</pre>
+  <div class="sheet">
+    <div class="row between"><h3>How one jmh run is spent</h3><span class="small">defaults: -f 5 -wi 5 -i 5 -r 10s</span></div>
+    <div class="svgbox"><svg id="jmhSvg" viewBox="0 0 640 170" role="img" aria-label="Five forks each with five warm-up and five measurement iterations"></svg></div>
+    <label class="rng"><span>Forks and measurement iterations: <b id="jfV">5 × 5</b></span><input type="range" id="jf" min="1" max="10" value="5"></label>
+    <p id="jmhTxt" aria-live="polite"></p>
+  </div>
+  <p class="small">The book's own lesson from this benchmark: a hand-rolled map looked faster than <code>intern()</code>, but the map was never cleared, so it had a 100% hit rate while the intern table (weakly referenced) kept dropping and re-adding entries. Pre-creating the strings in a static array in a <code>@Setup</code> method fixes both the input range and the hit rate. Use <code>Level.Invocation</code> setup rarely: per-call setup confuses the averaging.</p>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">10</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">11</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b>Algorithms first</b><span>No flag fixes a linear search that should be a hash lookup. Smaller code runs faster.</span></div>
+    <div><b>Find the real bottleneck</b><span>The slowest box sets throughput; it is often the database.</span></div>
+    <div><b>Test the real thing</b><span>Microbenchmarks mislead; mesobenchmarks help; the full app is the truth.</span></div>
+    <div><b>Pick the right metric</b><span>Batch time, throughput or response time. Report a percentile and the average.</span></div>
+    <div><b>Respect variance</b><span>Use a t-test; inconclusive means gather more data.</span></div>
+    <div><b>Automate and measure everything</b><span>CPU, GC logs, JFR, stacks, database stats, on the target hardware.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Java Performance: In-Depth Advice for Tuning and Programming Java 8, 11, and Beyond</i> (2nd edition) by Scott Oaks (O'Reilly, 2020). Explanations, code snippets, simulations and drawings are original summaries; numbers in the drawings are illustrative unless stated.</footer>
+  <nav class="pager" aria-label="Chapters"><span></span><a class="home" href="index.html">All chapters</a><a class="nx" href="ch03-toolbox.html"><span>Next · Chapter 3</span><b>A Java Performance Toolbox</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('jp:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('jp:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle: remembers the choice per viewer */
+(function(){const R=document.documentElement;const saved=store.get('theme',null);if(saved)R.setAttribute('data-theme',saved);
+ $$('[data-theme-toggle]').forEach(b=>b.addEventListener('click',()=>{const cur=R.getAttribute('data-theme');const dark=cur?cur==='dark':matchMedia('(prefers-color-scheme: dark)').matches;const nx=dark?'light':'dark';R.setAttribute('data-theme',nx);store.set('theme',nx)}))})();
+function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+
+
+cards('#storyCards',[
+ {t:'Write better algorithms',d:'The JIT can unroll a loop and remove bounds checks, but if the loop searches for an item, a hash map will win every time. The algorithm matters most.',c:'blue'},
+ {t:'Write less code',d:'More code means more to compile, more objects for GC, more classes to load, and less of it fits in CPU caches. A small, well-written program beats a large one.',c:'blue'},
+ {t:'Go ahead, prematurely optimize',d:'Choosing the faster of two equally clear options is not premature optimization. Avoid known-slow constructs as a habit.',c:'pencil'},
+ {t:'Look elsewhere: the database',d:'In a multitier system the Java server may be the least of your problems. Measure every tier first; often the database is the bottleneck.',c:'bad'},
+ {t:'Optimize for the common case',d:'Profile and fix the operations that take the most time. Apply Occam\'s razor: a bug in new code is likelier than a JVM or OS bug.',c:'ok'},
+ {t:'Any part can be the culprit',d:'The book recalls a case where the load generator itself slowed down because it reprocessed every past response to compute a percentile.',c:'mid'}]);
+
+/* death by 1000 cuts */
+function drawCuts(){const c=+$('#cut').value/10,f=+$('#fp').value;$('#cutV').textContent=c.toFixed(1)+'%';$('#fpV').textContent=f;
+ const per=Math.pow(1+c/100,f);const v=k=>(Math.pow(per,k)-1)*100;$('#cutR3').textContent='+'+v(3).toFixed(0)+'%';$('#cutR10').textContent='+'+v(10).toFixed(0)+'%';
+ const s=$('#cutSvg');s.innerHTML='';const max=Math.max(2,Math.pow(per,10));const X=i=>60+i*55,Y=r=>160-(r-1)/(max-1)*130;
+ s.appendChild(el('line',{x1:50,y1:160,x2:620,y2:160,stroke:'var(--line)'}));
+ for(let i=0;i<=10;i++){const r=Math.pow(per,i);const h=160-Y(r);s.appendChild(el('rect',{x:X(i)-14,y:Y(r),width:28,height:Math.max(1,h),rx:3,fill:i===0?'var(--ok)':'var(--bad)',opacity:.35+.065*i}));
+  s.appendChild(el('text',{x:X(i),y:178,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},i===0?'v1':'r'+i))}
+ s.appendChild(el('text',{x:56,y:18,'font-size':11,fill:'var(--muted)'},'relative response time ('+max.toFixed(2)+'× at top)'))}
+['#cut','#fp'].forEach(i=>$(i).addEventListener('input',drawCuts));drawCuts();
+
+/* hyper-threading */
+function drawHT(){const n=+$('#ht').value;$('#htV').textContent=n;const s=$('#htSvg');s.innerHTML='';
+ const thr=k=>k<=4?k:4+(k-4)*0.3;const X=k=>60+(k-1)*75,Y=v=>170-v*20;
+ s.appendChild(el('line',{x1:50,y1:170,x2:620,y2:170,stroke:'var(--line)'}));
+ for(let k=1;k<=8;k++){const on=k<=n;s.appendChild(el('rect',{x:X(k)-22,y:Y(thr(k)),width:44,height:170-Y(thr(k)),rx:4,fill:k<=4?'var(--blue)':'var(--pencil)',opacity:on?.9:.15}));
+  s.appendChild(el('text',{x:X(k),y:Y(thr(k))-6,'text-anchor':'middle','font-size':11,fill:'var(--ink)',opacity:on?1:.3},thr(k).toFixed(1)+'×'));
+  s.appendChild(el('text',{x:X(k),y:186,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},k+' task'+(k>1?'s':'')))}
+ $('#htTxt').innerHTML=n<=4?`<b>${n} task${n>1?'s':''}</b> on ${n} separate core${n>1?'s':''}: throughput scales almost linearly to <b>${n}×</b>.`:`Task ${n} has to share a core with another thread. It only runs when that thread stalls (on a memory load, say), about 20 to 40% of the time. Total: about <b>${thr(n).toFixed(1)}×</b>, not ${n}×. The OS still reports 8 CPUs.`}
+$('#ht').addEventListener('input',drawHT);drawHT();
+
+/* docker */
+function drawDK(m){const s=$('#dkSvg');s.innerHTML='';const W=560/64;const heap=m==='old'?16:1;
+ s.appendChild(el('rect',{x:40,y:30,width:64*W,height:34,rx:5,fill:'var(--paper)',stroke:'var(--line)'}));
+ s.appendChild(el('text',{x:44,y:22,'font-size':11,fill:'var(--muted)'},'host memory: 64 GB'));
+ s.appendChild(el('rect',{x:40,y:30,width:4*W,height:34,rx:5,fill:'var(--ok-soft)',stroke:'var(--ok)'}));
+ s.appendChild(el('text',{x:40+4*W+6,y:52,'font-size':11,fill:'var(--ok)'},'container limit 4 GB'));
+ s.appendChild(el('rect',{x:40,y:90,width:heap*W,height:30,rx:5,fill:m==='old'?'var(--bad)':'var(--blue)',opacity:.85}));
+ s.appendChild(el('text',{x:40+heap*W+8,y:110,'font-size':12,'font-weight':700,fill:m==='old'?'var(--bad)':'var(--blue)'},'max heap '+heap+' GB'+(m==='old'?'  (1/4 of what it sees)':'')));
+ s.appendChild(el('line',{x1:40+4*W,y1:24,x2:40+4*W,y2:140,stroke:'var(--ok)','stroke-dasharray':'4 4'}));
+ s.appendChild(el('text',{x:40,y:150,'font-size':11,fill:'var(--muted)'},m==='old'?'GC threads sized for 32 CPUs':'GC threads sized for 2 CPUs'));
+ $('#dkTxt').innerHTML=m==='old'?'Older Java 8 sees the whole host: it plans a heap of a quarter of 64 GB and starts GC threads for 32 CPUs. When the heap grows past 4 GB the container is <b class="badc">killed</b>. Set <code>-Xmx</code> and thread counts by hand, or better, upgrade.':'Newer JVMs read the container limits, so the default heap (a quarter of 4 GB) and the thread counts fit the container. Fractional CPU limits are rounded up.'}
+seg('[data-dk]',b=>drawDK(b.dataset.dk));drawDK('old');
+
+/* bench sizes */
+const BS=[['micro','Microbenchmark','one small operation'],['meso','Mesobenchmark','one real feature, some real work'],['macro','Macrobenchmark','the whole application']];
+const BT={micro:'<h3 class="blue">Microbenchmark</h3><p>Compares two tiny implementations: thread pool vs. new thread, one arithmetic method vs. another. JIT compilation and GC make these easy to get wrong: dead code is removed, the profile differs from production, and GC behaves differently under real load. Differences are often nanoseconds; ask if that matters. Use a harness (jmh).</p>',meso:'<h3 class="blue">Mesobenchmark</h3><p>Real work but not the whole product, for example timing a simple REST call. Less dead code, easier to thread, and its bottlenecks are ones the real app will eventually hit. But it misses features: a server that is fast on a bare call may be slow once authorization is on. Good for automated, module-level tests.</p>',macro:'<h3 class="blue">Macrobenchmark</h3><p>The application itself with its real database, directory service and network. Mocking the database hides its buffers, network saturation and how the JDBC driver gets compiled. It is the only way to know where time is really spent, so it is the only way to set priorities.</p>'};
+$('#bench').innerHTML=BS.map((b,i)=>`<button data-b="${b[0]}" aria-pressed="${i===0}"><b>${b[1]}</b><span>${b[2]}</span></button>`).join('');
+seg('[data-b]',b=>$('#benchTip').innerHTML=BT[b.dataset.b]);$('#benchTip').innerHTML=BT.micro;
+
+const MB=[
+ ['<span class="k">for</span> (<span class="k">int</span> i = 0; i < N; i++) {\n  <span class="k">double</span> r = fib(50);   <span class="b">// r is never read</span>\n}','<b>Results must be used.</b> Nothing reads <code>r</code>, so the compiler may skip the call entirely and you time an empty loop. Store into a volatile field or hand the value to a jmh Blackhole.'],
+ ['<span class="k">for</span> (<span class="k">int</span> i = 0; i < N; i++) {\n  sink = fib(50);       <span class="b">// same input every time</span>\n}','<b>Test a range of inputs.</b> One constant input invites the compiler to skip redundant work, and fib(1) behaves nothing like fib(1000).'],
+ ['<span class="k">for</span> (<span class="k">int</span> i = 0; i < N; i++) {\n  sink = fib(rnd.nextInt(100)); <span class="b">// times the RNG too</span>\n}\n<span class="c">// better: int[] in = precomputed before timing</span>','<b>Precompute inputs</b>, otherwise you time the random number generator as well. And use inputs real callers send: an implementation that rejects bad input fast can look quicker only because your test is full of bad input.'],
+ ['<span class="c">// fast but allocates lots of short-lived objects</span>\nresult = fastButGarbageHeavy(x);\n<span class="c">// slightly slower, allocates little</span>\nresult = leanImplementation(x);','<b>Production is different.</b> Alone, the garbage-heavy version wins: its objects die young. In a busy multithreaded server, the young generation fills faster, objects get promoted, and expensive full GCs make the "fast" one lose. The JIT\'s profile also differs.']];
+$('#mbStep').innerHTML=stepHTML();stepper('#mbStep',MB.map(m=>m[1]),i=>$('#mbCode').innerHTML=MB[i][0]);
+
+/* pipeline */
+const PM=[['User input',400],['LDAP auth',250],['Business calc',100],['DB load',100],['More calc',300],['DB store',200]];
+$('#pipe').innerHTML=PM.map((m,i)=>`<label id="pl${i}"><span>${m[0]}</span><b id="pv${i}">${m[1]}</b><input type="range" min="25" max="400" step="25" value="${m[1]}" data-p="${i}" aria-label="${m[0]} capacity"></label>`).join('');
+function drawPipe(){const cap=PM.map((_,i)=>+document.querySelector(`[data-p="${i}"]`).value);cap.forEach((c,i)=>$('#pv'+i).textContent=c+' rps');
+ let flow=cap[0];const out=cap.map(c=>flow=Math.min(flow,c));const tot=out[out.length-1];const neck=cap.indexOf(Math.min(...cap));
+ cap.forEach((c,i)=>$('#pl'+i).classList.toggle('neck',i===neck));
+ const s=$('#pipeSvg');s.innerHTML='';const bw=86,gap=(640-6*bw)/7;
+ out.forEach((o,i)=>{const x=gap+i*(bw+gap);s.appendChild(el('rect',{x,y:30,width:bw,height:50,rx:6,fill:i===neck?'var(--bad-soft)':'var(--surface)',stroke:i===neck?'var(--bad)':'var(--line)'}));
+  s.appendChild(el('text',{x:x+bw/2,y:52,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},PM[i][0]));
+  s.appendChild(el('text',{x:x+bw/2,y:70,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--ink)',class:'t-mono'},o+' out'));
+  if(i<5){const ln=el('line',{x1:x+bw+2,y1:55,x2:x+bw+gap-2,y2:55,stroke:'var(--blue)','stroke-width':Math.max(1,o/40),class:'flow'});s.appendChild(ln)}});
+ s.appendChild(el('text',{x:320,y:108,'text-anchor':'middle','font-size':13,fill:'var(--ink)'},'System throughput: '+tot+' requests/second'));
+ $('#pipeTxt').innerHTML=`The bottleneck is <b class="badc">${PM[neck][0]}</b> at ${cap[neck]} rps. Speeding up any other box changes nothing until that one improves.`}
+$$('[data-p]').forEach(r=>r.addEventListener('input',drawPipe));drawPipe();
+
+/* think vs cycle */
+function drawRT(){const r=+$('#rt').value;$('#rtV').textContent=r+' s';$('#thinkOps').textContent=(1/(30+r)).toFixed(3);$('#cycOps').textContent=(1/30).toFixed(3)}
+$('#rt').addEventListener('input',drawRT);drawRT();
+
+/* percentiles */
+const base=[1,1.2,1.5,2,1,1.3,2.8,4,1.6,1.1,3.5,2.2,1.8,5,2.4,1.4,3,2.6,1.9,4];
+function pct(a,p){const s=[...a].sort((x,y)=>x-y);return s[Math.ceil(p*s.length)-1]}
+function drawPct(o){const d=o?base.map((v,i)=>i===13?100:Math.min(v,1)):base;const avg=d.reduce((a,b)=>a+b,0)/d.length,p90=pct(d,.9);
+ const s=$('#pctSvg');s.innerHTML='';const top=o?10:6;const Y=v=>200-Math.min(v,top)/top*170;
+ s.appendChild(el('line',{x1:40,y1:200,x2:630,y2:200,stroke:'var(--line)'}));
+ d.forEach((v,i)=>{const x=50+i*29;s.appendChild(el('rect',{x,y:Y(v),width:20,height:200-Y(v),rx:3,fill:v>top?'var(--bad)':'var(--blue)',opacity:.75}));if(v>top)s.appendChild(el('text',{x:x+10,y:Y(v)-4,'text-anchor':'middle','font-size':11,fill:'var(--bad)','font-weight':700},'100 s ↑'))});
+ [[avg,'average '+avg.toFixed(2)+' s','var(--pencil)'],[p90,'90th % '+p90.toFixed(1)+' s','var(--ok)']].forEach(([v,t,c],k)=>{s.appendChild(el('line',{x1:40,y1:Y(v),x2:630,y2:Y(v),stroke:c,'stroke-width':2.5,'stroke-dasharray':'6 4'}));s.appendChild(el('text',{x:626,y:Y(v)-5-(k&&Math.abs(Y(avg)-Y(p90))<14?12:0),'text-anchor':'end','font-size':12,'font-weight':700,fill:c},t))});
+ $('#pctTxt').innerHTML=o?'One request took 100 seconds and the rest were quick. Now the average (5.95 s in the book\'s version) sits far above the 90th percentile: fix the outlier. GC pauses are a common source of such outliers in Java.':'A well-behaved run: the average is below the 90th percentile, as you would expect. Report both, so outliers can\'t hide.'}
+seg('[data-out]',b=>drawPct(+b.dataset.out));drawPct(0);
+
+/* t-test */
+function lgamma(x){const c=[76.18009172947146,-86.50532032941677,24.01409824083091,-1.231739572450155,.1208650973866179e-2,-.5395239384953e-5];let y=x,t=x+5.5;t-=(x+.5)*Math.log(t);let s=1.000000000190015;for(const k of c)s+=k/++y;return -t+Math.log(2.5066282746310005*s/x)}
+function betacf(a,b,x){let qab=a+b,qap=a+1,qam=a-1,c=1,d=1-qab*x/qap;d=1/(Math.abs(d)<1e-30?1e-30:d);let h=d;for(let m=1;m<200;m++){const m2=2*m;let aa=m*(b-m)*x/((qam+m2)*(a+m2));d=1+aa*d;d=1/(Math.abs(d)<1e-30?1e-30:d);c=1+aa/c;h*=d*c;aa=-(a+m)*(qab+m)*x/((a+m2)*(qap+m2));d=1+aa*d;d=1/(Math.abs(d)<1e-30?1e-30:d);c=1+aa/c;const del=d*c;h*=del;if(Math.abs(del-1)<3e-7)break}return h}
+function ibeta(a,b,x){if(x<=0)return 0;if(x>=1)return 1;const bt=Math.exp(lgamma(a+b)-lgamma(a)-lgamma(b)+a*Math.log(x)+b*Math.log(1-x));return x<(a+1)/(a+b+2)?bt*betacf(a,b,x)/a:1-bt*betacf(b,a,1-x)/b}
+function ttest(A,B){const m=a=>a.reduce((x,y)=>x+y,0)/a.length,v=a=>{const mu=m(a);return a.reduce((x,y)=>x+(y-mu)**2,0)/(a.length-1)};const na=A.length,nb=B.length;
+ const sp=((na-1)*v(A)+(nb-1)*v(B))/(na+nb-2);const t=(m(A)-m(B))/Math.sqrt(sp*(1/na+1/nb));const df=na+nb-2;return ibeta(df/2,.5,df/(df+t*t))}
+const B0=[1.0,0.8,1.2],S0=[0.5,1.25,0.5],BX=[1.1,0.7,1.2,0.9,1.15,0.85,1.05,0.95,1.0,1.0,0.9,1.1],SX=[0.8,0.7,0.75,0.95,0.6,0.85,0.7,0.8,0.75,0.65,0.8,0.7];
+let RB=[...B0],RS=[...S0],noise=1;
+function shift(a,mu){const m=a.reduce((x,y)=>x+y,0)/a.length;return a.map(v=>+(mu+(v-m)*noise).toFixed(2))}
+function drawT(){$('#runsB').innerHTML=RB.map(v=>`<span>${v.toFixed(2)}</span>`).join('');$('#runsS').innerHTML=RS.map(v=>`<span>${v.toFixed(2)}</span>`).join('');
+ const p=ttest(RB,RS);const ma=RB.reduce((a,b)=>a+b,0)/RB.length,mb=RS.reduce((a,b)=>a+b,0)/RS.length;
+ $('#pval').textContent=p<0.001?'<0.001':p.toFixed(2);$('#avgs').textContent=ma.toFixed(2)+' / '+mb.toFixed(2);
+ const sig=p<0.1;$('#pvS').innerHTML=sig?'<b class="okc">significant at α = 0.1</b>':'<b class="midc">inconclusive at α = 0.1</b>';
+ $('#pvBar').style.width=((1-p)*100)+'%';$('#pvBar').style.background=sig?'var(--ok)':'var(--mid)';
+ $('#pvTxt').textContent=`${RB.length} runs each. There is a ${((1-p)*100).toFixed(0)}% probability the two differ; the best estimate of the difference is ${((1-mb/ma)*100).toFixed(0)}%. (Strictly, that is not "${((1-p)*100).toFixed(0)}% confident of a ${((1-mb/ma)*100).toFixed(0)}% gain", but that is the usual shorthand.)`}
+$('#addRun').addEventListener('click',()=>{if(RB.length>=15)return;const k=RB.length-3;RB.push(BX[k%BX.length]);RS.push(SX[k%SX.length]);if(noise!==1){RB=shift(RB,1);RS=shift(RS,.75)}drawT()});
+$('#noisy').addEventListener('click',()=>{noise=noise===1?1.8:1;RB=shift(RB,1);RS=shift(RS,.75);$('#noisy').textContent=noise===1?'Noisier machine':'Quieter machine';drawT()});
+$('#resetRun').addEventListener('click',()=>{RB=[...B0];RS=[...S0];noise=1;$('#noisy').textContent='Noisier machine';drawT()});
+drawT();
+
+cards('#earlyCards',[
+ {t:'Automate everything',d:'Scripts install the build, set up databases and accounts, check the machine is in a known state, run the test several times, apply the t-test and write the report.',c:'blue'},
+ {t:'Measure everything',d:'CPU, disk, network and memory over time; application and GC logs; Flight Recorder recordings; periodic thread stacks; heap histograms; database reports. More data, more clues when you play detective.',c:'pencil'},
+ {t:'Run on the target system',d:'A laptop hides the lock contention a 72-core server shows, and flag defaults, compilation and caches all depend on the hardware. Extrapolations are just predictions.',c:'ok'}]);
+
+/* jmh */
+function drawJ(){const n=+$('#jf').value;$('#jfV').textContent=n+' × '+n;const s=$('#jmhSvg');s.innerHTML='';
+ const tot=n*(5+n)*10;
+ for(let f=0;f<n;f++){const y=20+f*(120/n);const h=Math.max(6,120/n-4);for(let k=0;k<5+n;k++){
+   s.appendChild(el('rect',{x:20+k*(600/(5+n)),y,width:600/(5+n)-2,height:h,rx:2,fill:k<5?'var(--mid)':'var(--blue)',opacity:k<5?.45:.85}))}}
+ s.appendChild(el('text',{x:20,y:160,'font-size':11,fill:'var(--muted)'},'each row = a freshly forked JVM (a trial); amber = warm-up, discarded; blue = measured'));
+ const m=Math.floor(tot/60),sec=tot%60;$('#jmhTxt').innerHTML=`${n} fork${n>1?'s':''}, 5 warm-up and ${n} measured 10-second iterations each: <b>${m} min ${sec} s</b> of run time. ${n<=2?'Fast, but the error bars will be wide: in the book a 2×2 run could not tell the two approaches apart.':n>=8?'Narrow confidence interval, long wait. Worth it only if the two candidates are close.':'A middle ground; widen it if the candidates are close.'}`}
+$('#jf').addEventListener('input',drawJ);drawJ();
+
+quiz('#qQuiz','#qScore',[
+ {q:'Your microbenchmark result is suspiciously close to zero. Most likely cause?',o:['The method is very fast','Its result is never used','GC was off'],a:1,why:'Unused results let the JIT eliminate the work. Consume the value.'},
+ {q:'Business logic doubles in speed but throughput stays at 100 rps. Why?',o:['Warm-up was too short','Another module is the bottleneck','The t-test failed'],a:1,why:'The slowest box (here the database load) caps the whole flow.'},
+ {q:'A test adds think time between requests. What is now fixed?',o:['Response time','Throughput','CPU usage'],a:1,why:'With think or cycle time, load is set by the clients; you measure how fast the server answers.'},
+ {q:'p = 0.11 with α = 0.1. What should you conclude?',o:['No difference','Inconclusive: get more data','Definitely 25% faster'],a:1,why:'Not significant at 90% does not mean no change. More runs usually settle it.'},
+ {q:'Which number best reflects what most users feel?',o:['The average','A high percentile','The maximum'],a:1,why:'A 90th, 95th or 99th percentile; still look at the average to spot outliers.'}]);
+
+})();
+</script>
+</body>
+</html>

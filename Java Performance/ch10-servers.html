@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Java Servers</title>
+<meta name="description" content="A Java server spends its life waiting on sockets. Nonblocking I/O, asynchronous request handling and a sensible approach to JSON keep threads busy doing real work.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Java Performance companion. Layout: an engineer's notebook column on blueprint grid paper.
+   Blue ink = the JVM and measurement, orange pencil = your application code, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code and terminal snippets */
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)} pre.code .b{color:var(--bad)} pre.code .p{color:var(--pencil)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+button.tag.theme{cursor:pointer}
+button.tag.theme:hover{border-color:var(--blue);color:var(--blue)}
+.meter{height:14px;border-radius:7px;background:var(--paper);border:1px solid var(--line);overflow:hidden}
+.meter>i{display:block;height:100%;width:0;background:var(--blue);transition:width .3s}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.kv>div{border:1px solid var(--line);border-radius:8px;padding:8px 12px;background:var(--paper);display:flex;flex-direction:column;min-width:0}
+.kv b{font-family:var(--mono);font-size:1.1rem}
+.kv span{font-size:.82rem;color:var(--muted)}
+
+/* page */
+
+.g2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+@media (max-width:640px){.g2{grid-template-columns:1fr}}
+.jopt{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+@media (max-width:640px){.jopt{grid-template-columns:1fr}}
+.jopt button{border:1px solid var(--line);background:var(--paper);border-radius:10px;padding:12px;text-align:left;display:flex;flex-direction:column;gap:4px}
+.jopt button b{font-family:var(--display)}
+.jopt button span{font-size:.85rem;color:var(--muted)}
+.jopt button[aria-pressed="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Java Performance · visual companion</a><span class="tag">Part IV · Chapter 10 of 12</span><button class="tag theme" type="button" data-theme-toggle aria-label="Switch light or dark theme">Theme</button></div>
+  <h1>Java Servers</h1>
+  <p class="lede">A Java server spends its life waiting on sockets. Nonblocking I/O, asynchronous request handling and a sensible approach to JSON keep threads busy doing real work.</p>
+  <nav class="toc" aria-label="Sections"><a href="#nio">Blocking vs. NIO</a><a href="#asyncsrv">Async server</a><a href="#clients">Async clients</a><a href="#json">JSON</a><a href="#check">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="nio" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>One thread per connection, or a selector?</h2></div>
+  <p>Classic Java servers gave each client connection its own thread, which sat blocked in <code>read()</code> waiting for the next request. Thousands of mostly idle keep-alive connections meant thousands of threads. <b>Nonblocking I/O</b> (NIO) flips this: a few <b>selector</b> threads watch all sockets and hand a connection to a <b>worker</b> thread only when it actually has a request to process. Worker pools are then sized for simultaneous <i>requests</i>, not connections.</p>
+  <div class="sheet">
+    <div class="g2">
+      <label class="rng"><span>Open client connections: <b id="ncV">600</b></span><input type="range" id="nc" min="50" max="5000" step="50" value="600"></label>
+      <label class="rng"><span>Share actively sending a request: <b id="naV">5%</b></span><input type="range" id="na" min="1" max="50" value="5"></label>
+    </div>
+    <div class="seg" role="group" aria-label="Model"><button data-md="b" aria-pressed="true">Blocking: thread per connection</button><button data-md="n" aria-pressed="false">NIO: selectors + workers</button></div>
+    <div class="svgbox"><svg id="nioSvg" viewBox="0 0 640 200" role="img" aria-label="Threads needed per model"></svg></div>
+    <p id="nioTxt" aria-live="polite"></p>
+  </div>
+  <p class="small">Server frameworks (Netty, Grizzly, Tomcat's NIO connector, and the Java EE / Jakarta servers built on them) set this up for you. Your tunings are the worker pool size (enough for the requests the box can handle at once) and, sometimes, the number of selector threads (one or two per CPU is typical, but the defaults are usually fine).</p>
+</section>
+
+<section id="asyncsrv" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Asynchronous responses</h2></div>
+  <p>Suppose a request takes 100 ms of CPU work and 900 ms waiting on a backend. A worker thread holding the request throughout is idle 90% of the time. JAX-RS and servlets let the worker <b>suspend</b> the request, hand it to another pool, and go back to accept more. The response is written later from that other thread. It doesn't make one request faster; it frees workers and lets you throttle the slow part separately, rejecting work early when the async pool is full.</p>
+  <pre class="code"><span class="k">@GET</span> <span class="k">@Path</span>(<span class="s">"/quote"</span>)
+<span class="k">public void</span> quote(<span class="k">@QueryParam</span>(<span class="s">"sym"</span>) String sym, <span class="k">@Suspended</span> AsyncResponse ar) {
+  <span class="k">if</span> (!slowPool.hasCapacity()) { ar.resume(Response.status(503).build()); <span class="k">return</span>; }
+  slowPool.submit(() -&gt; ar.resume(lookUp(sym)));   <span class="c">// worker thread returns at once</span>
+}</pre>
+  <div class="sheet">
+    <div class="row between"><h3>Worker threads busy over 2 seconds</h3><div class="seg" role="group" aria-label="Mode"><button data-as="0" aria-pressed="true">Synchronous</button><button data-as="1" aria-pressed="false">Async hand-off</button></div></div>
+    <div class="svgbox"><svg id="asSvg" viewBox="0 0 640 190" role="img" aria-label="Thread timelines for synchronous and asynchronous handling"></svg></div>
+    <p id="asTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="clients" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Outbound calls: concurrency and client pools</h2></div>
+  <p>Many REST handlers call other services. If one request needs three independent calls, making them <b>concurrently</b> with an async HTTP client cuts the wait to the slowest call instead of the sum. Two practical rules: reuse client objects (they hold connection pools), and size the client's connection pool; many default to only a couple of connections per host, which silently serializes your calls.</p>
+  <div class="sheet">
+    <div class="g2">
+      <label class="rng"><span>Call A: <b id="caV">200 ms</b></span><input type="range" id="ca" min="20" max="600" step="10" value="200"></label>
+      <label class="rng"><span>Call B: <b id="cbV">350 ms</b></span><input type="range" id="cb" min="20" max="600" step="10" value="350"></label>
+      <label class="rng"><span>Call C: <b id="ccxV">150 ms</b></span><input type="range" id="ccx" min="20" max="600" step="10" value="150"></label>
+      <label class="rng"><span>Client connections per host: <b id="cpV">3</b></span><input type="range" id="cp" min="1" max="3" value="3"></label>
+    </div>
+    <div class="svgbox"><svg id="clSvg" viewBox="0 0 640 170" role="img" aria-label="Sequential versus concurrent outbound calls"></svg></div>
+    <p id="clTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout blue"><b class="h">Async databases and reactive code</b><span>JDBC is blocking, so a "truly asynchronous" relational call needs a different driver model; usually you just run blocking JDBC in its own sized pool. Reactive frameworks push the async style through the whole stack; the performance gains come from the same place: fewer idle threads and more concurrency.</span></div>
+</section>
+
+<section id="json" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Processing JSON</h2></div>
+  <p>JSON is everywhere and easy to make slow. There are three ways to handle a document, and what matters most is how many objects you create and how much of the document you actually need.</p>
+  <div class="sheet">
+    <div class="jopt" id="jOpts"></div>
+    <pre class="code" id="jCode"></pre>
+    <div class="detail" id="jTip" aria-live="polite"></div>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>Read only what you need</h3><span class="small">relative cost, illustrative</span></div>
+    <label class="rng"><span>Items needed from a 1,000-item document: <b id="jnV">10</b></span><input type="range" id="jn" min="1" max="1000" value="10"></label>
+    <div class="bars" id="jBars"></div>
+    <p class="small">A streaming (pull) parser can stop after the 10th item; the object model and data binding must build the whole document first. For a full pass, data binding and direct parsing are close and the object model costs more garbage.</p>
+  </div>
+  <div class="cardgrid" id="jCards"></div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b>NIO scales connections</b><span>Size workers for concurrent requests, not open sockets.</span></div>
+    <div><b>Async frees workers</b><span>Suspend long waits; throttle and reject in the async pool.</span></div>
+    <div><b>Fan out concurrently</b><span>Wait for the slowest call, not the sum.</span></div>
+    <div><b>Tune client pools</b><span>Reuse clients; check connections per host.</span></div>
+    <div><b>JSON: fewer objects</b><span>Reuse factories and mappers, parse only what you need, prefer a fast parser.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Java Performance: In-Depth Advice for Tuning and Programming Java 8, 11, and Beyond</i> (2nd edition) by Scott Oaks (O'Reilly, 2020). Explanations, code snippets, simulations and drawings are original summaries; numbers in the drawings are illustrative unless stated.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch09-threading.html"><span>Previous · Chapter 9</span><b>Threading and Synchronization</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch11-database.html"><span>Next · Chapter 11</span><b>Database Performance Best Practices</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('jp:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('jp:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle: remembers the choice per viewer */
+(function(){const R=document.documentElement;const saved=store.get('theme',null);if(saved)R.setAttribute('data-theme',saved);
+ $$('[data-theme-toggle]').forEach(b=>b.addEventListener('click',()=>{const cur=R.getAttribute('data-theme');const dark=cur?cur==='dark':matchMedia('(prefers-color-scheme: dark)').matches;const nx=dark?'light':'dark';R.setAttribute('data-theme',nx);store.set('theme',nx)}))})();
+function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+
+
+/* NIO */
+let MD='b';function drawNIO(){const c=+$('#nc').value,a=+$('#na').value/100;$('#ncV').textContent=c.toLocaleString();$('#naV').textContent=Math.round(a*100)+'%';
+ const active=Math.ceil(c*a);const thr=MD==='b'?c:Math.ceil(active*1.2)+2;const s=$('#nioSvg');s.innerHTML='';
+ const cols=50;const show=Math.min(c,500);for(let i=0;i<show;i++){const x=20+(i%cols)*12,y=20+Math.floor(i/cols)*12;s.appendChild(el('rect',{x,y,width:9,height:9,rx:2,fill:i<show*a?'var(--pencil)':'var(--line)'}))}
+ s.appendChild(el('text',{x:20,y:150,'font-size':11,fill:'var(--muted)'},`connections (${show<c?'first 500 shown; ':''}orange = sending a request now)`));
+ s.appendChild(el('text',{x:20,y:180,'font-size':15,'font-weight':700,fill:MD==='b'?'var(--bad)':'var(--ok)'},`threads needed: ${thr.toLocaleString()}`+(MD==='n'?' (2 selectors + workers)':' (one per connection)')));
+ $('#nioTxt').innerHTML=MD==='b'?`Every connection pins a thread, idle or not: ${c.toLocaleString()} threads, each with a stack, most blocked in read().`:`Only ${active} requests are in flight at once, so a worker pool of about ${Math.ceil(active*1.2)} (with headroom) plus a couple of selector threads serves all ${c.toLocaleString()} connections.`}
+seg('[data-md]',b=>{MD=b.dataset.md;drawNIO()});['#nc','#na'].forEach(i=>$(i).addEventListener('input',drawNIO));drawNIO();
+
+/* async server timeline */
+function drawAS(m){const s=$('#asSvg');s.innerHTML='';const X=t=>90+t*0.26;const lanes=m?[['worker 1'],['worker 2'],['async 1'],['async 2'],['async 3']]:[['worker 1'],['worker 2'],['worker 3'],['worker 4']];
+ lanes.forEach((l,i)=>s.appendChild(el('text',{x:10,y:28+i*30,'font-size':11,fill:'var(--muted)'},l[0])));
+ const reqs=[0,250,500,750,1000,1250];
+ if(!m){reqs.forEach((t,k)=>{const lane=k%4;const y=16+lane*30;if(k>=4&&t<1000+(k-4)*250){}const st=k<4?t:Math.max(t,reqs[k-4]+1000);s.appendChild(el('rect',{x:X(st),y,width:100*0.26,height:18,fill:'var(--blue)'}));s.appendChild(el('rect',{x:X(st+100),y,width:900*0.26,height:18,fill:'var(--paper)',stroke:'var(--line)'}))})}
+ else{reqs.forEach((t,k)=>{const w=k%2;const y=16+w*30;s.appendChild(el('rect',{x:X(t),y,width:20*0.26+2,height:18,fill:'var(--blue)'}));const a=k%3;const ya=16+(2+a)*30;s.appendChild(el('rect',{x:X(t+20),y:ya,width:80*0.26,height:18,fill:'var(--pencil)'}));s.appendChild(el('rect',{x:X(t+100),y:ya,width:900*0.26,height:18,fill:'var(--paper)',stroke:'var(--line)'}))})}
+ s.appendChild(el('text',{x:90,y:180,'font-size':11,fill:'var(--muted)'},'solid = CPU work · outlined = waiting on backend · 0–2 s'));
+ $('#asTxt').innerHTML=m?'Workers only parse the request and hand it off (a few ms each), so two workers keep accepting traffic. The async pool holds the waiting requests; its size is your throttle, and when it is full you can answer 503 straight away instead of letting requests pile up.':'Each worker is pinned for a full second per request, idle 90% of it. With 4 workers, the 5th request waits for a free thread even though the CPU is nearly idle.'}
+seg('[data-as]',b=>drawAS(+b.dataset.as));drawAS(0);
+
+/* fan-out */
+function drawCL(){const a=+$('#ca').value,b=+$('#cb').value,c=+$('#ccx').value,p=+$('#cp').value;$('#caV').textContent=a+' ms';$('#cbV').textContent=b+' ms';$('#ccxV').textContent=c+' ms';$('#cpV').textContent=p;
+ const s=$('#clSvg');s.innerHTML='';const W=0.4;const seqT=a+b+c;
+ const calls=[['A',a,'var(--d1)'],['B',b,'var(--d2)'],['C',c,'var(--d3)']];let x=90;
+ s.appendChild(el('text',{x:10,y:34,'font-size':11,fill:'var(--muted)'},'sequential'));calls.forEach(k=>{s.appendChild(el('rect',{x,y:20,width:k[1]*W,height:20,fill:k[2]}));s.appendChild(el('text',{x:x+4,y:34,'font-size':11,fill:'#fff'},k[0]));x+=k[1]*W});
+ s.appendChild(el('text',{x:10,y:84,'font-size':11,fill:'var(--muted)'},'concurrent'));const free=Array(p).fill(0);let end=0;
+ calls.forEach((k,i)=>{const lane=free.indexOf(Math.min(...free));const st=free[lane];free[lane]=st+k[1];end=Math.max(end,free[lane]);s.appendChild(el('rect',{x:90+st*W,y:62+i*22,width:k[1]*W,height:18,fill:k[2]}));s.appendChild(el('text',{x:94+st*W,y:75+i*22,'font-size':11,fill:'#fff'},k[0]))});
+ $('#clTxt').innerHTML=`Sequential: <b>${seqT} ms</b>. Concurrent with ${p} connection${p>1?'s':''} per host: <b>${end} ms</b>. ${p<3?'The client\'s pool is the bottleneck: calls queue for a connection. Raise the per-host limit.':'Total time ≈ the slowest call.'}`}
+['#ca','#cb','#ccx','#cp'].forEach(i=>$(i).addEventListener('input',drawCL));drawCL();
+
+/* JSON */
+const JO=[['model','Object model (JSON-P)','generic JsonObject tree','JsonObject doc = Json.createReader(in).readObject();\nString title = doc.getJsonArray("items")\n                  .getJsonObject(0).getString("title");','Builds a tree of generic objects for the whole document, then you navigate it. Flexible, and the most garbage.'],
+ ['bind','Data binding (JSON-B, Jackson)','straight into your classes','Catalog cat = mapper.readValue(in, Catalog.class);\nString title = cat.getItems().get(0).getTitle();','Maps JSON straight into application objects. Convenient and often as fast as anything for a full read, but it still materializes everything.'],
+ ['pull','Direct (streaming) parsing','read events, keep what you need','JsonParser p = factory.createParser(in);\nwhile (p.hasNext() && found < 10) {\n  if (p.next() == KEY_NAME && "title".equals(p.getString())) {\n    p.next(); titles.add(p.getString()); found++;\n  }\n}','Pull tokens from the stream and stop when done. Fewest objects, can filter or quit early. More code to write.']];
+$('#jOpts').innerHTML=JO.map((j,i)=>`<button data-jo="${i}" aria-pressed="${i===0}"><b>${j[1]}</b><span>${j[2]}</span></button>`).join('');
+seg('[data-jo]',b=>{const j=JO[+b.dataset.jo];$('#jCode').textContent=j[3];$('#jTip').innerHTML='<p>'+j[4]+'</p>'});$('#jCode').textContent=JO[0][3];$('#jTip').innerHTML='<p>'+JO[0][4]+'</p>';
+function drawJ(){const n=+$('#jn').value;$('#jnV').textContent=n;const full=100;bars('#jBars',[{l:'Object model',v:full*1.4,txt:'builds all 1,000',c:'pencil'},{l:'Data binding',v:full,txt:'builds all 1,000',c:'blue'},{l:'Streaming parser',v:5+full*0.9*n/1000,txt:'stops after '+n,c:'ok'}],150)}
+$('#jn').addEventListener('input',drawJ);drawJ();
+cards('#jCards',[
+ {t:'Reuse factories and mappers',d:'Creating a JsonParserFactory, JsonReaderFactory or Jackson ObjectMapper is expensive (configuration, introspection, caches). They are thread-safe: keep one in a static field.',c:'blue'},
+ {t:'Pick a fast parser',d:'Implementations differ a lot. In the book\'s tests Jackson was generally fastest; prefer it over default implementations when JSON processing is hot.',c:'ok'},
+ {t:'Large documents, large garbage',d:'Building huge object trees creates GC pressure (and possibly humongous arrays). Stream them instead.',c:'pencil'}]);
+
+quiz('#qQuiz','#qScore',[
+ {q:'NIO server, 5,000 connections, ~100 active at a time. Worker pool size?',o:['~5,000','~100 plus headroom','2'],a:1,why:'Size for simultaneous requests, not connections.'},
+ {q:'What does an async server response mainly buy you?',o:['Faster single requests','Free workers and better throttling'],a:1,why:'The request still waits, but not on a worker thread.'},
+ {q:'Three independent 200 ms calls made concurrently take about…',o:['200 ms','600 ms'],a:0,why:'If the client pool allows three connections.'},
+ {q:'Should you create an ObjectMapper per request?',o:['Yes','No'],a:1,why:'They are expensive and thread-safe: reuse one.'},
+ {q:'You need the first 10 of 10,000 items. Best approach?',o:['Data binding','Streaming parser'],a:1,why:'Stop parsing as soon as you have what you need.'}]);
+
+})();
+</script>
+</body>
+</html>

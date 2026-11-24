@@ -1,0 +1,493 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Database Performance Best Practices</title>
+<meta name="description" content="The database is usually the bottleneck, and the Java code that talks to it decides how much it hurts. Pool connections, batch statements, fetch wisely and keep transactions short.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Java Performance companion. Layout: an engineer's notebook column on blueprint grid paper.
+   Blue ink = the JVM and measurement, orange pencil = your application code, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code and terminal snippets */
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)} pre.code .b{color:var(--bad)} pre.code .p{color:var(--pencil)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+button.tag.theme{cursor:pointer}
+button.tag.theme:hover{border-color:var(--blue);color:var(--blue)}
+.meter{height:14px;border-radius:7px;background:var(--paper);border:1px solid var(--line);overflow:hidden}
+.meter>i{display:block;height:100%;width:0;background:var(--blue);transition:width .3s}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.kv>div{border:1px solid var(--line);border-radius:8px;padding:8px 12px;background:var(--paper);display:flex;flex-direction:column;min-width:0}
+.kv b{font-family:var(--mono);font-size:1.1rem}
+.kv span{font-size:.82rem;color:var(--muted)}
+
+/* page */
+
+.g2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+@media (max-width:640px){.g2{grid-template-columns:1fr}}
+.iso{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+@media (max-width:640px){.iso{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.iso button{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:10px;text-align:left;font-size:.85rem;display:flex;flex-direction:column;gap:2px}
+.iso button b{font-family:var(--mono);font-size:.78rem}
+.iso button[aria-pressed="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Java Performance · visual companion</a><span class="tag">Part IV · Chapter 11 of 12</span><button class="tag theme" type="button" data-theme-toggle aria-label="Switch light or dark theme">Theme</button></div>
+  <h1>Database Performance Best Practices</h1>
+  <p class="lede">The database is usually the bottleneck, and the Java code that talks to it decides how much it hurts. Pool connections, batch statements, fetch wisely and keep transactions short.</p>
+  <nav class="toc" aria-label="Sections"><a href="#drivers">Drivers</a><a href="#pool">Connection pools</a><a href="#stmts">Statements</a><a href="#tx">Transactions</a><a href="#fetch">Result sets</a><a href="#jpa">JPA</a><a href="#l2">L2 cache</a><a href="#check">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="drivers" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>JDBC drivers: where does the work happen?</h2></div>
+  <p>Everything starts with the driver. A <b>thin</b> driver does little in Java and leaves the work to the database; a <b>thick</b> driver does more on the application side (caching, processing). Which is better depends on where you have spare CPU. Driver <i>types</i> are a separate axis: type 1 bridges to ODBC (avoid), type 2 calls native libraries, type 3 uses a middleware server, type 4 is pure Java and talks the wire protocol. Neither type 2 nor 4 always wins: test the drivers in your deployment.</p>
+  <div class="sheet">
+    <div class="g2">
+      <label class="rng"><span>Application servers sharing the database: <b id="dsV">4</b></span><input type="range" id="ds" min="1" max="12" value="4"></label>
+      <div class="seg" role="group" aria-label="Driver style"><button data-dr="thin" aria-pressed="true">Thin driver</button><button data-dr="thick" aria-pressed="false">Thick driver</button></div>
+    </div>
+    <div class="svgbox"><svg id="drSvg" viewBox="0 0 640 170" role="img" aria-label="CPU load on app servers and database"></svg></div>
+    <p id="drTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="pool" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Connection pools</h2></div>
+  <p>Opening a database connection takes a network round trip, authentication and session setup, so connections are pooled, in the driver, the app server, or the JPA layer. A pool's size is a throttle on the <b>database</b>, not just your app: one connection per thread that needs one, and no more than the database can handle. Like any pool, connections are long-lived objects that sit in the old generation with their buffers.</p>
+  <div class="sheet">
+    <div class="g2">
+      <label class="rng"><span>Pool size: <b id="cpV">20</b></span><input type="range" id="cp" min="2" max="100" value="20"></label>
+      <label class="rng"><span>Worker threads that need a connection: <b id="ctV">20</b></span><input type="range" id="ct" min="2" max="100" value="20"></label>
+    </div>
+    <p class="small">The database can process about 30 queries in parallel before it saturates (illustrative).</p>
+    <div class="bars" id="cpBars"></div>
+    <p id="cpTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="stmts" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Prepared statements and statement pooling</h2></div>
+  <p>A <code>PreparedStatement</code> is parsed and planned once and executed many times with new bind values, and it closes the door on SQL injection. But the reuse only pays if the statement object survives: it belongs to a connection, so pooling has to be <b>per connection</b>. Most drivers and frameworks do it for you once you set a statement cache size. The cost: each cached statement holds memory, so cache roughly the number of distinct SQL statements the app actually runs, per connection.</p>
+  <div class="sheet">
+    <div class="row between"><h3>Running the same query 1,000 times</h3><div class="seg" role="group" aria-label="Approach"><button data-st="0" aria-pressed="true">Statement, string SQL</button><button data-st="1" aria-pressed="false">PreparedStatement, not cached</button><button data-st="2" aria-pressed="false">Cached PreparedStatement</button></div></div>
+    <pre class="code" id="stCode"></pre>
+    <div class="bars" id="stBars"></div>
+  </div>
+</section>
+
+<section id="tx" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Transactions: commit cost vs. lock time</h2></div>
+  <p>Transactions cost in two opposite ways. Each <b>commit</b> is expensive (it forces a durable write), so many tiny transactions are slow. But every lock a transaction takes is held until commit, so huge transactions block other users. JDBC defaults to <b>autocommit</b>: every statement is its own transaction. Find the balance:</p>
+  <div class="sheet">
+    <div class="g2">
+      <label class="rng"><span>Rows to insert: <b id="txNV">1,000</b></span><input type="range" id="txN" min="100" max="10000" step="100" value="1000"></label>
+      <label class="rng"><span>Rows per commit: <b id="txBV">1</b></span><input type="range" id="txB" min="0" max="4" value="0"></label>
+    </div>
+    <div class="kv"><div><b id="txC">1,000</b><span>commits</span></div><div><b id="txT">0 ms</b><span>total time (illustrative)</span></div><div><b id="txL">0 ms</b><span>longest time locks are held</span></div></div>
+    <pre class="code">con.setAutoCommit(<span class="k">false</span>);
+<span class="k">try</span> (PreparedStatement ps = con.prepareStatement(<span class="s">"INSERT INTO price VALUES (?,?,?)"</span>)) {
+  <span class="k">for</span> (Price p : prices) {
+    ps.setString(1, p.sym()); ps.setDate(2, p.day()); ps.setBigDecimal(3, p.close());
+    ps.addBatch();                       <span class="c">// sent in one round trip</span>
+    <span class="k">if</span> (++n % 500 == 0) { ps.executeBatch(); con.commit(); }
+  }
+  ps.executeBatch(); con.commit();
+}</pre>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>Isolation levels, most to least expensive</h3></div>
+    <div class="iso" id="isoBtns"></div>
+    <div class="detail" id="isoTip" aria-live="polite"></div>
+  </div>
+  <div class="callout blue"><b class="h">Optimistic locking</b><span>When conflicts are rare, read without locks (READ_COMMITTED or even lower) and add a <b>version</b> column. Updates say <code>WHERE id=? AND version=?</code>; if zero rows change, someone else got there first and you retry. JPA does this with <code>@Version</code>. When conflicts are frequent, retries cost more than locks: lock pessimistically (<code>SELECT … FOR UPDATE</code>) only the rows that need it.</span></div>
+</section>
+
+<section id="fetch" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Result sets and fetch size</h2></div>
+  <p>A query's rows come back in chunks of the <b>fetch size</b>. Each chunk is a round trip; each row held is heap. Defaults differ per driver (some fetch 10 rows at a time, others try to fetch everything). If <code>next()</code> is occasionally slow, that's a round trip: raise the fetch size with <code>setFetchSize()</code>. If a big query blows up the heap, lower it.</p>
+  <div class="sheet">
+    <div class="g2">
+      <label class="rng"><span>Rows returned: <b id="frV">10,000</b></span><input type="range" id="fr" min="100" max="100000" step="100" value="10000"></label>
+      <label class="rng"><span>Fetch size: <b id="fsV">10</b></span><input type="range" id="fs" min="0" max="5" value="0"></label>
+    </div>
+    <div class="kv"><div><b id="fTrips">1,000</b><span>round trips</span></div><div><b id="fNet">0 s</b><span>network wait (1 ms each)</span></div><div><b id="fHeap">0 KB</b><span>rows buffered at once (~200 B each)</span></div></div>
+  </div>
+</section>
+
+<section id="jpa" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>JPA: same rules, more layers</h2></div>
+  <p>JPA sits on JDBC, so everything above still applies: pooled connections, cached statements, batched writes, short transactions. Some JPA providers also need bytecode <b>enhancement</b> (weaving) to track changes and load fields lazily; make sure it is on. Then JPA adds its own knobs:</p>
+  <div class="sheet">
+    <div class="row between"><h3>Loading stocks and their option prices</h3><div class="seg" role="group" aria-label="Strategy"><button data-jp="lazy" aria-pressed="true">Lazy</button><button data-jp="eager" aria-pressed="false">Eager</button><button data-jp="join" aria-pressed="false">JOIN FETCH</button><button data-jp="batch" aria-pressed="false">Lazy + batch fetch</button></div></div>
+    <label class="rng"><span>Stocks loaded: <b id="jnV">50</b>; share whose options are actually used: <b id="juV">100%</b></span><input type="range" id="ju" min="0" max="100" step="10" value="100"></label>
+    <div class="kv"><div><b id="jQ">51</b><span>SQL calls</span></div><div><b id="jR">0</b><span>option rows loaded</span></div></div>
+    <p id="jTxt" aria-live="polite"></p>
+  </div>
+  <div class="cardgrid" id="jpaCards"></div>
+</section>
+
+<section id="l2" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>The JPA L2 cache</h2></div>
+  <p>Each EntityManager has its own (L1) cache for a transaction. The <b>L2 cache</b> is shared across the application and keeps entities between transactions. The trap: it holds entities loaded by <code>find()</code> or by navigating relationships, but <b>not</b> results of queries. A clever JOIN query can be faster on the first call and slower forever after, because it always goes to the database.</p>
+  <div class="sheet">
+    <div class="row between"><h3>Ten requests for the same 50 stocks</h3><div class="seg" role="group" aria-label="Access"><button data-l2="q" aria-pressed="true">Named query each time</button><button data-l2="f" aria-pressed="false">find() by key</button></div></div>
+    <div class="svgbox"><svg id="l2Svg" viewBox="0 0 640 170" role="img" aria-label="Database calls per request"></svg></div>
+    <p id="l2Txt" aria-live="polite"></p>
+  </div>
+  <p class="small">Size the L2 cache like any cache: big enough for the hot set, with an eviction policy, or with soft references so it yields to memory pressure. Some providers offer a query cache too, which caches IDs; entities still come from the L2 cache. Spring Data and other frameworks layered on JPA inherit all of this.</p>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b>Test drivers in place</b><span>Thin vs. thick depends on where CPU is spare. Avoid ODBC bridges.</span></div>
+    <div><b>Pool connections, sized for the DB</b><span>More connections than the DB can serve slows everyone.</span></div>
+    <div><b>Prepare and cache statements</b><span>Per connection; watch the memory.</span></div>
+    <div><b>Batch and commit in groups</b><span>Few commits, short locks.</span></div>
+    <div><b>Tune fetch size</b><span>Round trips vs. heap.</span></div>
+    <div><b>JPA: load what you use</b><span>Lazy vs. eager vs. join fetch; prefer find() for L2 hits.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Java Performance: In-Depth Advice for Tuning and Programming Java 8, 11, and Beyond</i> (2nd edition) by Scott Oaks (O'Reilly, 2020). Explanations, code snippets, simulations and drawings are original summaries; numbers in the drawings are illustrative unless stated.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch10-servers.html"><span>Previous · Chapter 10</span><b>Java Servers</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch12a-strings-io-classes.html"><span>Next · Chapter 12a</span><b>Java SE API Tips: Strings to Classes</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('jp:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('jp:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle: remembers the choice per viewer */
+(function(){const R=document.documentElement;const saved=store.get('theme',null);if(saved)R.setAttribute('data-theme',saved);
+ $$('[data-theme-toggle]').forEach(b=>b.addEventListener('click',()=>{const cur=R.getAttribute('data-theme');const dark=cur?cur==='dark':matchMedia('(prefers-color-scheme: dark)').matches;const nx=dark?'light':'dark';R.setAttribute('data-theme',nx);store.set('theme',nx)}))})();
+function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+
+
+/* drivers */
+let DR='thin';function drawDR(){const n=+$('#ds').value;$('#dsV').textContent=n;const s=$('#drSvg');s.innerHTML='';
+ const appLoad=DR==='thin'?25:45,dbLoad=Math.min(100,n*(DR==='thin'?20:9));
+ const show=Math.min(n,8);for(let i=0;i<show;i++){const x=20+i*48;s.appendChild(el('rect',{x,y:110-appLoad,width:36,height:appLoad,fill:'var(--blue)',opacity:.8}));s.appendChild(el('rect',{x,y:10,width:36,height:100,fill:'none',stroke:'var(--line)'}));s.appendChild(el('text',{x:x+18,y:126,'text-anchor':'middle','font-size':10,fill:'var(--muted)'},'app'+(i+1)))}
+ if(n>8)s.appendChild(el('text',{x:410,y:60,'font-size':12,fill:'var(--muted)'},'+'+(n-8)));
+ s.appendChild(el('rect',{x:470,y:110-dbLoad,width:120,height:dbLoad,fill:dbLoad>=90?'var(--bad)':'var(--pencil)',opacity:.85}));s.appendChild(el('rect',{x:470,y:10,width:120,height:100,fill:'none',stroke:'var(--line)'}));
+ s.appendChild(el('text',{x:530,y:126,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},'database CPU '+dbLoad+'%'));
+ s.appendChild(el('text',{x:20,y:155,'font-size':11,fill:'var(--muted)'},'bars = CPU used by driver work (illustrative)'));
+ $('#drTxt').innerHTML=DR==='thin'?(dbLoad>=90?'<b class="badc">The database is saturated.</b> With many app servers feeding one database, moving work into a thick driver on the (scalable) app tier would help.':'Thin driver: the app servers stay light and the database does the work. Fine while the database has room.'):(n<=2?'With only one or two app servers on big machines and a busy database, a thick driver shifts work to spare app CPU.':'Thick driver: each app server works harder, sparing the shared database. Scales better as app servers are added.')}
+seg('[data-dr]',b=>{DR=b.dataset.dr;drawDR()});$('#ds').addEventListener('input',drawDR);drawDR();
+
+/* pool */
+function drawCP(){const p=+$('#cp').value,t=+$('#ct').value;$('#cpV').textContent=p;$('#ctV').textContent=t;const dbCap=30;const active=Math.min(p,t);
+ const per=active<=dbCap?10:10*active/dbCap*1.3;const thr=active/per*1000;const wait=t>p?(t-p)/p*per:0;
+ bars('#cpBars',[{l:'Throughput',v:thr,txt:thr.toFixed(0)+' q/s',c:active>dbCap?'bad':'ok'},{l:'Query time',v:per,txt:per.toFixed(1)+' ms',c:'blue'},{l:'Wait for a connection',v:wait,txt:wait.toFixed(1)+' ms',c:'pencil'}],Math.max(3000,thr*1.05));
+ $('#cpTxt').innerHTML=p>dbCap&&t>dbCap?'<b class="badc">Overloading the database.</b> More concurrent queries than it can run: each query slows down and total throughput drops. A smaller pool would be faster.':t>p?`Threads queue for one of ${p} connections. Fine if the database is the limit; otherwise grow the pool toward the number of threads.`:p>t?'More connections than threads can use: idle connections just hold memory on both sides.':'Balanced: one connection per thread that needs one, within the database\'s capacity.'}
+['#cp','#ct'].forEach(i=>$(i).addEventListener('input',drawCP));drawCP();
+
+/* statements */
+const ST=[['String sql = "SELECT * FROM price WHERE sym=\'" + sym + "\'";\nrs = con.createStatement().executeQuery(sql);   <span class="b">// injection risk</span>','The database parses and plans every distinct SQL string.'],['ps = con.prepareStatement("SELECT * FROM price WHERE sym=?");\nps.setString(1, sym); rs = ps.executeQuery();\nps.close();   <span class="c">// prepared again next time</span>','Safe, but prepared afresh each time unless the driver caches it.'],['<span class="c">// e.g. statement cache size configured on the pool/driver</span>\nps = con.prepareStatement("SELECT * FROM price WHERE sym=?");  <span class="c">// cache hit</span>\nps.setString(1, sym); rs = ps.executeQuery();\nps.close();   <span class="c">// returned to the per-connection cache</span>','Parsed once per connection, reused 1,000 times.']];
+function drawST(k){$('#stCode').innerHTML=ST[k][0];const v=[[1000,1000],[1000,1000],[1,1000]][k];const t=[2400,2100,900][k];
+ bars('#stBars',[{l:'Prepares / parses',v:v[0],txt:v[0].toLocaleString(),c:k===2?'ok':'pencil'},{l:'Relative time',v:t,txt:(t/100).toFixed(1)+' s (illustrative)',c:'blue'}],2500)}
+seg('[data-st]',b=>drawST(+b.dataset.st));drawST(0);
+
+/* transactions */
+const TB=[1,10,100,500,10000];function drawTX(){const n=+$('#txN').value,b=Math.min(n,TB[+$('#txB').value]);$('#txNV').textContent=n.toLocaleString();$('#txBV').textContent=TB[+$('#txB').value]===10000?'all':b.toLocaleString();
+ const commits=Math.ceil(n/b);const t=commits*5+n*0.3;$('#txC').textContent=commits.toLocaleString();$('#txT').textContent=t>=1000?(t/1000).toFixed(1)+' s':t.toFixed(0)+' ms';$('#txL').textContent=(b*0.3+5).toFixed(0)+' ms';
+ $('#txL').style.color=b>=5000?'var(--bad)':'var(--ink)';$('#txC').style.color=commits>500?'var(--bad)':'var(--ink)'}
+['#txN','#txB'].forEach(i=>$(i).addEventListener('input',drawTX));drawTX();
+const ISO=[['SERIALIZABLE','As if transactions ran one after another. Locks everything read; least concurrency.'],['REPEATABLE_READ','Rows you read can\'t change under you, though new rows may appear (phantoms). MySQL\'s default.'],['READ_COMMITTED','You see only committed data, but a re-read may differ. Default for Oracle and Db2.'],['READ_UNCOMMITTED','You may see other transactions\' uncommitted changes. Cheapest; pair with explicit locks on the few rows that matter.']];
+$('#isoBtns').innerHTML=ISO.map((x,i)=>`<button data-iso="${i}" aria-pressed="${i===2}"><b>${x[0]}</b></button>`).join('');
+seg('[data-iso]',b=>$('#isoTip').innerHTML=`<p><code>TRANSACTION_${ISO[+b.dataset.iso][0]}</code>: ${ISO[+b.dataset.iso][1]}</p>`);$('#isoTip').innerHTML=`<p><code>TRANSACTION_${ISO[2][0]}</code>: ${ISO[2][1]}</p>`;
+
+/* fetch */
+const FS=[10,50,100,500,1000,5000];function drawFS(){const r=+$('#fr').value,f=FS[+$('#fs').value];$('#frV').textContent=r.toLocaleString();$('#fsV').textContent=f;
+ const trips=Math.ceil(r/f);$('#fTrips').textContent=trips.toLocaleString();$('#fNet').textContent=(trips/1000).toFixed(2)+' s';$('#fHeap').textContent=(Math.min(r,f)*200/1024).toFixed(0)+' KB'}
+['#fr','#fs'].forEach(i=>$(i).addEventListener('input',drawFS));drawFS();
+
+/* JPA loading */
+let JP='lazy';function drawJP(){const u=+$('#ju').value/100;$('#juV').textContent=Math.round(u*100)+'%';const n=50,per=20;const used=Math.round(n*u);let q,r,t;
+ if(JP==='lazy'){q=1+used;r=used*per;t=used>5?`The classic N+1: one query for stocks, then one per stock whose options you touch (${used}). Great if few are used, terrible if all are.`:'Lazy wins when relationships are rarely used: you only pay for what you touch.'}
+ else if(JP==='eager'){q=1+n;r=n*per;t='Eager loading fetches every stock\'s options whether used or not. Providers often still issue one query per stock, so it can be both wasteful and chatty.'}
+ else if(JP==='join'){q=1;r=n*per;t='One query brings back stocks and options together. Best when you\'ll use most of them; the result rows are wider and, being a query, it bypasses the L2 cache.'}
+ else{q=1+Math.ceil(used/10);r=used*per;t='Lazy, but when one relationship is touched the provider loads the next batch of 10 together (Hibernate @BatchSize, EclipseLink batch hints). Few queries and no unused data.'}
+ $('#jQ').textContent=q;$('#jR').textContent=r.toLocaleString();$('#jTxt').textContent=t}
+seg('[data-jp]',b=>{JP=b.dataset.jp;drawJP()});$('#ju').addEventListener('input',drawJP);drawJP();
+cards('#jpaCards',[
+ {t:'Batch writes',d:'Turn on JDBC batching in the provider (persistence.xml properties) or flush in groups, and commit sensibly. Same trade-off as JDBC: fewer round trips vs. longer-held locks.',c:'blue'},
+ {t:'Read only what you need',d:'Mark big, rarely used columns (BLOBs, long text) as lazily fetched. Use projections or DTO queries when you only need a few fields.',c:'ok'},
+ {t:'Named queries',d:'Defined once, they are typically executed as prepared statements with bind parameters and benefit from the statement cache.',c:'pencil'},
+ {t:'Statement caching layer',d:'Can live in JPA or JDBC; try the JDBC layer first.',c:'mid'}]);
+
+/* L2 */
+function drawL2(m){const s=$('#l2Svg');s.innerHTML='';const X=i=>40+i*58;const calls=i=>m==='q'?1+0:i===0?50:0;const rows=i=>m==='q'?50:(i===0?50:0);
+ for(let i=0;i<10;i++){const h=m==='q'?60:(i===0?120:4);s.appendChild(el('rect',{x:X(i),y:140-h,width:40,height:h,rx:3,fill:m==='q'?'var(--pencil)':i===0?'var(--blue)':'var(--ok)'}));s.appendChild(el('text',{x:X(i)+20,y:156,'text-anchor':'middle','font-size':10.5,fill:'var(--muted)'},'req '+(i+1)))}
+ s.appendChild(el('text',{x:40,y:14,'font-size':11,fill:'var(--muted)'},'bar height = database work per request'));
+ $('#l2Txt').innerHTML=m==='q'?'One efficient query per request, but <b>every</b> request goes to the database, because query results bypass the L2 cache.':'The first request does 50 primary-key lookups (slower than one query), which fill the L2 cache. Every later request is served from memory: <b>zero</b> database calls. Over a long run, this wins.'}
+seg('[data-l2]',b=>drawL2(b.dataset.l2));drawL2('q');
+
+quiz('#qQuiz','#qScore',[
+ {q:'Ten app servers share one busy database. Thin or thick driver?',o:['Thin','Thick'],a:1,why:'Shift work to the app tier, which scales out.'},
+ {q:'Doubling the connection pool past what the DB can run concurrently…',o:['Raises throughput','Can lower throughput'],a:1,why:'Overloading the database slows every query.'},
+ {q:'Inserting 10,000 rows with autocommit on means…',o:['1 transaction','10,000 transactions'],a:1,why:'Each statement commits separately. Batch and commit in groups.'},
+ {q:'next() is slow every 10th row. Likely fix?',o:['Increase fetch size','Use SERIALIZABLE'],a:0,why:'Each pause is a round trip for the next chunk.'},
+ {q:'Which access path benefits from the JPA L2 cache?',o:['A JPQL query','em.find() by key'],a:1,why:'Query results are not cached as entities; finds and relationships are.'}]);
+
+})();
+</script>
+</body>
+</html>

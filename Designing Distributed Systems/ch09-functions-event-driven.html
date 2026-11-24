@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Functions and Event-Driven Processing</title>
+<meta name="description" content="Functions-as-a-service run your code only when an event arrives. That makes some jobs trivially simple and others painfully expensive. Here is where the line sits.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Designing Distributed Systems companion. Layout: an engineer's notebook on blueprint grid paper.
+   Blue ink = containers, services and requests, orange pencil = the pattern being added, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code listings (short, original) */
+pre.code{margin:0;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-family:var(--mono);font-size:.82rem;line-height:1.5;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)} pre.code .p{color:var(--pencil)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+/* log console used by simulations */
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;height:150px;overflow-y:auto;display:flex;flex-direction:column;gap:2px}
+.log div{white-space:pre-wrap;word-break:break-word}
+.log .ok{color:var(--ok)} .log .bad{color:var(--bad)} .log .mid{color:var(--mid)} .log .blue{color:var(--blue)}
+.note-missing{border:1px dashed var(--line);border-radius:10px;padding:14px 16px;font-size:.93rem;color:var(--muted);background:var(--surface)}
+.stat span.big{font-size:clamp(1.5rem,4.5vw,2.1rem);color:var(--ink)}
+.stat span.big.blue{color:var(--blue)} .stat span.big.badc{color:var(--bad)} .stat span.big.okc{color:var(--ok)} .stat span.big.midc{color:var(--mid)} .stat span.big.pencil{color:var(--pencil)}
+:root{--d1-soft:color-mix(in srgb,var(--d1) 15%,var(--surface));--d2-soft:color-mix(in srgb,var(--d2) 15%,var(--surface));--d3-soft:color-mix(in srgb,var(--d3) 15%,var(--surface));--d4-soft:color-mix(in srgb,var(--d4) 15%,var(--surface));--d5-soft:color-mix(in srgb,var(--d5) 15%,var(--surface));--muted-soft:color-mix(in srgb,var(--muted) 12%,var(--surface));--ink-soft:color-mix(in srgb,var(--ink) 8%,var(--surface))}
+
+/* page */
+
+.quad{display:grid;grid-template-columns:auto 1fr 1fr;grid-template-rows:auto 1fr 1fr;gap:6px;font-size:.9rem}
+.quad .ax{font-family:var(--mono);font-size:.72rem;color:var(--muted);display:grid;place-items:center;text-align:center;padding:4px}
+.quad button{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:12px;text-align:left;display:flex;flex-direction:column;gap:4px;min-height:96px}
+.quad button[aria-pressed="true"]{background:var(--blue-soft);border-color:var(--blue)}
+.quad button b{font-family:var(--display)}
+.quad button span{font-size:.85rem;color:var(--muted)}
+.jsonio{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:10px;align-items:stretch}
+@media (max-width:640px){.jsonio{grid-template-columns:1fr}}
+.jsonio textarea{font-family:var(--mono);font-size:.82rem;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);padding:10px;min-height:120px;resize:vertical;width:100%}
+.jsonio .fn{display:grid;place-items:center;font-family:var(--mono);font-size:.78rem;color:var(--pencil);border:1.5px dashed var(--pencil);border-radius:8px;padding:8px;text-align:center}
+.chk{display:flex;flex-wrap:wrap;gap:14px;font-size:.92rem}
+.chk label{display:flex;gap:6px;align-items:center}
+.chk input{accent-color:var(--blue);width:18px;height:18px}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Designing Distributed Systems · visual companion</a><span class="tag">Part III · Chapter 9</span></div>
+  <h1>Functions and Event-Driven Processing</h1>
+  <p class="lede">Functions-as-a-service run your code only when an event arrives. That makes some jobs trivially simple and others painfully expensive. Here is where the line sits.</p>
+  <nav class="toc" aria-label="Sections"><a href="#what">FaaS vs serverless</a><a href="#tradeoffs">Benefits and challenges</a><a href="#fit">When FaaS fits</a><a href="#decorator">Decorator</a><a href="#events">Handling events</a><a href="#pipelines">Event pipelines</a><a href="#check">Quick check</a></nav>
+</header>
+
+<section id="what" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Event-driven is not the same as serverless</h2></div>
+  <p class="note-missing"><b>Missing from the source PDF:</b> Chapters 7 (Sharded Services) and 8 (Scatter/Gather) come before this one in the book but are absent (a placeholder page) in the copy used here, so they are skipped.</p>
+  <p>Everything so far has been long-running servers. Some work only needs to exist for one request or one event. <b>Functions-as-a-service</b> (FaaS) runs your code when an event arrives and bills per request. People call it "serverless", but the book separates two ideas: <i>event-driven</i> (code triggered by events) and <i>serverless</i> (you never see the machines). You can have either without the other. Click the quadrants.</p>
+  <div class="sheet">
+    <div class="quad" id="quad">
+      <span></span><span class="ax">serverless</span><span class="ax">you run the servers</span>
+      <span class="ax" style="writing-mode:vertical-rl;transform:rotate(180deg)">event-driven</span>
+      <button data-q="0" aria-pressed="true"><b>Cloud FaaS</b><span>Functions on a public cloud, billed per call.</span></button>
+      <button data-q="1" aria-pressed="false"><b>Open source FaaS</b><span>A FaaS framework on your own Kubernetes cluster.</span></button>
+      <span class="ax" style="writing-mode:vertical-rl;transform:rotate(180deg)">long-running</span>
+      <button data-q="2" aria-pressed="false"><b>Containers-as-a-service</b><span>A multitenant orchestrator runs your containers.</span></button>
+      <button data-q="3" aria-pressed="false"><b>Classic servers</b><span>Your own VMs or cluster, always on.</span></button>
+    </div>
+    <p id="quadTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="tradeoffs" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Benefits for developers, headaches for operators</h2></div>
+  <p>FaaS shrinks the distance from code to running service: no image to build, automatic scaling and restarts, and a building block even finer than a container. The same radical decoupling is its weakness. Functions share no memory, so all state lives in storage; and nobody holds a map of who calls whom. The book's cautionary example: A calls B, B calls C, C calls A. Start a request and watch.</p>
+  <div class="sheet">
+    <div class="row between"><div class="row"><button class="btn primary" id="loopGo">Send one request to A</button><button class="btn" id="loopStop">Stop</button></div>
+    <label class="row small"><input type="checkbox" id="guard" style="accent-color:var(--blue);width:18px;height:18px"> add a hop-count guard (max 10)</label></div>
+    <div class="svgbox"><svg id="loopSvg" viewBox="0 0 640 200" role="img" aria-label="Three functions calling each other in a cycle"></svg></div>
+    <div class="row between"><span>Invocations: <b id="invN">0</b></span><span>Bill: <b id="billN">$0.00</b></span></div>
+    <p class="small" id="loopTxt">The loop ends only when a timeout hits, or your budget does. Lesson: FaaS demands rigorous monitoring and alerting, which eats into its simplicity.</p>
+  </div>
+</section>
+
+<section id="fit" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Three places FaaS fits badly</h2></div>
+  <p>Functions are short-lived and triggered by discrete events. So they suit some jobs and fight others. The book names three warning signs.</p>
+  <div class="cardgrid" id="badFit"></div>
+  <div class="sheet">
+    <div class="row between"><h3>Cold starts and in-memory data</h3><span class="small">a function that needs data loaded before it can answer</span></div>
+    <label class="rng"><span>Data to load on start: <b id="dataV">200 MB</b></span><input type="range" id="data" min="0" max="4000" step="50" value="200"></label>
+    <div class="bars" id="coldBars"></div>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>Pay per request vs. pay for a machine</h3><span class="small">illustrative prices</span></div>
+    <label class="rng"><span>Traffic: <b id="rpsV">5</b> requests per second, sustained</span><input type="range" id="rps" min="0" max="200" value="5"></label>
+    <div class="svgbox"><svg id="costSvg" viewBox="0 0 640 230" role="img" aria-label="Monthly cost of FaaS versus virtual machines as traffic grows"></svg></div>
+    <p id="costTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="decorator" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Pattern: the decorator</h2></div>
+  <p>FaaS shines at small, stateless transformations of a request or response on its way to or from a service, much like a Python decorator wraps a function. Example: defaults. JSON makes "missing" look like <code>null</code>, which reads as false, so a field that should default to true is awkward. Rather than mixing defaulting into the API server, a function fills in the gaps and forwards the call. Edit the request.</p>
+  <div class="sheet">
+    <div class="jsonio"><textarea id="jin" aria-label="Incoming request JSON" spellcheck="false">{
+  "name": "garden-gnome"
+}</textarea><div class="fn">add-defaults<br>function<br>→</div><pre class="code" id="jout" aria-live="polite"></pre></div>
+  </div>
+  <pre class="code"><span class="k">def</span> add_defaults(ctx):
+    req = ctx.json
+    req.setdefault(<span class="s">"color"</span>, <span class="s">"blue"</span>)
+    <span class="k">if</span> req.get(<span class="s">"name"</span>) <span class="k">is</span> None:
+        req[<span class="s">"name"</span>] = random_name()
+    <span class="k">return</span> forward_to_api(req)   <span class="c"># the real service</span></pre>
+  <div class="callout blue"><b class="h">Why not an adapter container?</b><span>You could. But an adapter in the API's pod scales with the API. Defaulting is cheap and needs far fewer instances. A function also makes it easy to try several decorators (validation, defaulting) before baking the winner into the service.</span></div>
+</section>
+
+<section id="events" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Pattern: event handlers (two-factor login)</h2></div>
+  <p>The book draws a line between <b>requests</b>, which belong to a session of interactions, and <b>events</b>, which are one-off and asynchronous: a user signed up, a file was uploaded, a machine is about to reboot. Events are independent and bursty: a natural fit for functions. Example: after a correct password, send a one-time code by text. Doing it inline makes the login page wait on the SMS provider; firing an async webhook does not.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Design"><button data-tf="inline" aria-pressed="false">Inline in the login server</button><button data-tf="faas" aria-pressed="true">Async function</button></div>
+    <div class="svgbox"><svg id="tfSvg" viewBox="0 0 640 210" role="img" aria-label="Timeline of a two-factor login"></svg></div>
+    <p id="tfTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="pipelines" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Pattern: event pipelines</h2></div>
+  <p>Some workflows read like an old flowchart: a directed graph where each node is a function or webhook and each edge a network call. Unlike a microservice mesh of long-running servers, a pipeline is event-driven and can include very slow, very different steps, even a human closing a ticket. Step through a build pipeline and pick the outcome.</p>
+  <div class="sheet stepper" id="plStep">
+    <div class="row"><div class="seg" role="group" aria-label="Build result"><button data-br="ok" aria-pressed="true">Build passes</button><button data-br="fail" aria-pressed="false">Build fails</button></div></div>
+    <div class="svgbox"><svg id="plSvg" viewBox="0 0 640 200" role="img" aria-label="Event pipeline from commit to production"></svg></div>
+  </div>
+  <p>The same idea tidies up a signup flow. The create-user function knows nothing about what happens next; it holds a list of <b>required</b> webhooks and a list of <b>optional</b> ones, each a tiny function. Fill in the form.</p>
+  <div class="sheet">
+    <div class="chk"><label><input type="checkbox" id="optNews"> subscribe me to product news</label><label><input type="checkbox" id="optSms"> text me about my orders</label></div>
+    <div class="svgbox"><svg id="suSvg" viewBox="0 0 640 190" role="img" aria-label="Signup function fanning out to webhooks"></svg></div>
+  </div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Good fit for FaaS?</h3><span class="score" id="fScore"></span></div><div class="quiz" id="fQuiz"></div></div>
+  <div class="sheet"><div class="row between"><h3>Three more</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Designing Distributed Systems: Patterns and Paradigms for Scalable, Reliable Systems Using Kubernetes</i>, 2nd edition, by Brendan Burns (O'Reilly, 2025). Explanations, code snippets, diagrams and simulations are original summaries, not copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch06-replicated-load-balanced.html"><span>Previous · Chapter 6</span><b>Replicated Load-Balanced Services</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch10-ownership-election.html"><span>Next · Chapter 10</span><b>Ownership Election</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('dds:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('dds:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+
+function bx(s,x,y,w,h,t,sub,c,soft,ex){s.appendChild(el('rect',Object.assign({x,y,width:w,height:h,rx:8,fill:soft===false?'var(--surface)':`var(--${c}-soft)`,stroke:`var(--${c})`,'stroke-width':1.6},ex||{})));s.appendChild(el('text',{x:x+w/2,y:y+h/2+(sub?-3:5),'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},t));if(sub)s.appendChild(el('text',{x:x+w/2,y:y+h/2+13,'text-anchor':'middle','font-size':10.5,class:'t-mono',fill:'var(--muted)'},sub))}
+function ln(s,x1,y1,x2,y2,c,fl,w){s.appendChild(el('line',{x1,y1,x2,y2,stroke:`var(--${c})`,'stroke-width':w||2,class:fl?'flow':''}))}
+
+const QT=['Event-driven and serverless: the classic FaaS. Great for developers; per-request billing.','Event-driven but not serverless: you own the cluster, but developers still just deploy functions. The book\'s suggested home as traffic grows.','Serverless but not event-driven: someone else runs the orchestrator; your containers run continuously.','Neither: always-on servers you operate. Right for heavy load, big in-memory data and background work.'];
+seg('#quad button',b=>{$('#quadTxt').textContent=QT[+b.dataset.q]});$('#quadTxt').textContent=QT[0];
+
+/* infinite loop */
+let lt=null,inv=0,hop=0;const P=[[110,100],[320,40],[530,100]];
+function drawLoop(act){const s=$('#loopSvg');s.innerHTML='';[[0,1],[1,2],[2,0]].forEach(([a,b])=>{const on=act===a;ln(s,P[a][0],P[a][1],P[b][0],P[b][1],on?'bad':'line',on,on?3:2)});
+ ['A','B','C'].forEach((t,i)=>{s.appendChild(el('circle',{cx:P[i][0],cy:P[i][1],r:30,fill:act===i?'var(--pencil-soft)':'var(--surface)',stroke:'var(--pencil)','stroke-width':2}));s.appendChild(el('text',{x:P[i][0],y:P[i][1]+6,'text-anchor':'middle','font-size':18,'font-weight':700,fill:'var(--ink)'},'f'+t))});
+ s.appendChild(el('text',{x:320,y:170,'text-anchor':'middle','font-size':12,fill:'var(--muted)'},'no component knows the whole graph, so the cycle is invisible in any one function\'s code'))}
+function stopLoop(msg){clearInterval(lt);lt=null;if(msg)$('#loopTxt').innerHTML=msg;drawLoop(-1)}
+$('#loopGo').addEventListener('click',()=>{if(lt)return;inv=0;hop=0;const g=$('#guard').checked;lt=setInterval(()=>{inv++;hop++;$('#invN').textContent=inv;$('#billN').textContent='$'+(inv*0.0004).toFixed(4);drawLoop(inv%3);
+ if(g&&hop>=10)stopLoop('<b class="okc">Guard tripped after 10 hops.</b> Passing a hop count or request ID along with each call is a cheap defence; monitoring for runaway invocation rates is the general one.');
+ else if(inv>=120)stopLoop('<b class="badc">Stopped by the demo after 120 invocations.</b> In production this runs until a timeout (if that even stops it) or the money runs out.')},120)});
+$('#loopStop').addEventListener('click',()=>stopLoop());drawLoop(-1);
+
+cards('#badFit',[{t:'Background processing',d:'Function runtimes are time-bounded. Video transcoding or log compression need a long-running environment; a scheduled trigger is fine for "send an alarm at 7:00" but not for generic background work.',c:'bad'},{t:'Lots of data in memory',d:'A search index must be loaded before the first answer. If the function is spun up while the user waits, so does the user.',c:'mid'},{t:'Sustained traffic',d:'Per-request pricing is great when you are idle most of the time. When requests keep a processor busy, VMs (with volume discounts) are cheaper.',c:'blue'}]);
+function drawCold(){const mb=+$('#data').value;$('#dataV').textContent=mb>=1000?(mb/1000).toFixed(1)+' GB':mb+' MB';const load=mb/400*1000;const cold=120+load,warm=25;
+ bars('#coldBars',[{l:'Cold request (start + load data)',v:cold,c:cold>1000?'bad':'mid',txt:Math.round(cold)+' ms'},{l:'Warm request',v:warm,c:'ok',txt:warm+' ms'}],Math.max(cold,600))}
+$('#data').addEventListener('input',drawCold);drawCold();
+function drawCost(){const r=+$('#rps').value;$('#rpsV').textContent=r;const s=$('#costSvg');s.innerHTML='';const X=v=>60+v/200*560,Y=v=>200-v/1200*180;
+ const faas=v=>v*2.6e6*0.0000004*1e2/10+0,vm=v=>120*Math.max(1,Math.ceil(v/40))*Math.pow(.97,Math.ceil(v/40)-1);
+ s.appendChild(el('line',{x1:60,y1:200,x2:620,y2:200,stroke:'var(--line)'}));s.appendChild(el('line',{x1:60,y1:20,x2:60,y2:200,stroke:'var(--line)'}));
+ [0,50,100,150,200].forEach(v=>s.appendChild(el('text',{x:X(v),y:216,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},v+' rps')));[0,400,800,1200].forEach(v=>s.appendChild(el('text',{x:54,y:Y(v)+4,'text-anchor':'end','font-size':11,fill:'var(--muted)'},'$'+v)));
+ let d1='',d2='';for(let v=0;v<=200;v+=2){d1+=(v?'L':'M')+X(v)+','+Y(Math.min(1250,faas(v)));d2+=(v?'L':'M')+X(v)+','+Y(vm(v))}
+ s.appendChild(el('path',{d:d1,fill:'none',stroke:'var(--pencil)','stroke-width':2.5}));s.appendChild(el('path',{d:d2,fill:'none',stroke:'var(--blue)','stroke-width':2.5}));
+ s.appendChild(el('text',{x:X(150),y:Y(Math.min(1250,faas(150)))-8,'font-size':12,'font-weight':700,fill:'var(--pencil)'},'FaaS: linear in requests'));s.appendChild(el('text',{x:X(120),y:Y(vm(120))+18,'font-size':12,'font-weight':700,fill:'var(--blue)'},'VMs: step-wise, discounted'));
+ s.appendChild(el('line',{x1:X(r),y1:20,x2:X(r),y2:200,stroke:'var(--muted)','stroke-dasharray':'3 3'}));const f=faas(r),m=vm(r);
+ $('#costTxt').innerHTML=`At ${r} req/s: FaaS ≈ <b class="pencil">$${Math.round(f)}</b>/month, an always-on VM pool ≈ <b class="blue">$${Math.round(m)}</b>/month. `+(f<m?'Mostly idle: FaaS wins.':'Busy enough to keep machines warm: VMs win. Running an open source FaaS on Kubernetes keeps the developer experience with VM pricing.')}
+$('#rps').addEventListener('input',drawCost);drawCost();
+
+/* decorator */
+const NAMES=['quiet-otter','brave-kettle','amber-fjord','lucky-comet'];
+function deco(){let out;try{const o=JSON.parse($('#jin').value||'{}');if(typeof o!=='object'||Array.isArray(o)||o===null)throw 0;const add=[];
+ if(o.color==null){o.color='blue';add.push('color')}if(o.name==null){o.name=NAMES[(Math.random()*4)|0];add.push('name')}
+ out=JSON.stringify(o,null,2).replace(/&/g,'&amp;').replace(/</g,'&lt;');add.forEach(k=>{out=out.replace(new RegExp('("'+k+'": [^\\n]+)'),'<span class="p">$1</span>')});
+ $('#jout').innerHTML='<span class="c">// forwarded to the API'+(add.length?'; filled: '+add.join(', '):'')+'</span>\n'+out}catch(e){$('#jout').innerHTML='<span class="p">400 Bad Request</span>\n<span class="c">// not a JSON object. A validation decorator could catch this before the API ever sees it.</span>'}}
+$('#jin').addEventListener('input',deco);deco();
+
+/* two factor */
+function drawTF(m){const s=$('#tfSvg');s.innerHTML='';const X=t=>110+t/4000*500;s.appendChild(el('line',{x1:110,y1:190,x2:610,y2:190,stroke:'var(--line)'}));[0,1,2,3,4].forEach(k=>s.appendChild(el('text',{x:X(k*1000),y:205,'text-anchor':'middle','font-size':10.5,fill:'var(--muted)'},k+' s')));
+ const lane=(y,t)=>s.appendChild(el('text',{x:100,y:y+18,'text-anchor':'end','font-size':11.5,fill:'var(--ink)'},t));lane(20,'browser');lane(70,'login server');lane(120,m==='faas'?'2FA function':'SMS provider');
+ const seg=(y,a,b,c,t)=>{s.appendChild(el('rect',{x:X(a),y,width:Math.max(2,X(b)-X(a)),height:28,rx:4,fill:`var(--${c}-soft)`,stroke:`var(--${c})`}));if(t)s.appendChild(el('text',{x:(X(a)+X(b))/2,y:y+18,'text-anchor':'middle','font-size':10.5,fill:'var(--ink)'},t))};
+ if(m==='inline'){seg(70,0,200,'blue','check pw');seg(70,200,2600,'bad','waiting on SMS');seg(120,250,2550,'mid','send text');seg(20,2650,3000,'ok','code page');
+  s.appendChild(el('text',{x:X(2650),y:14,'font-size':11,'font-weight':700,fill:'var(--bad)'},'page appears at 2.7 s'));$('#tfTxt').innerHTML='The login server holds the request while the text message goes out. The user stares at a spinner, and the login server is now coupled to the SMS library.'}
+ else{seg(70,0,200,'blue','check pw');seg(20,250,600,'ok','code page');seg(120,220,2500,'pencil','gen code · register · text');s.appendChild(el('line',{x1:X(200),y1:98,x2:X(220),y2:120,stroke:'var(--pencil)','stroke-width':2,class:'flow'}));
+  s.appendChild(el('text',{x:X(250),y:14,'font-size':11,'font-weight':700,fill:'var(--ok)'},'page appears at 0.25 s'));s.appendChild(el('text',{x:X(2550),y:180,'font-size':11,fill:'var(--muted)'},'text arrives while the user is already on the code page'));
+  $('#tfTxt').innerHTML='The browser fires an async webhook to a function that creates the code, registers it with the login service and sends the text. The page renders immediately.'}}
+seg('[data-tf]',b=>drawTF(b.dataset.tf));drawTF('faas');
+
+/* pipeline */
+let br='ok',plI=0;$('#plStep').insertAdjacentHTML('beforeend',stepHTML());
+const N={commit:[60,100,'commit','d5'],build:[180,100,'build','blue'],an:[300,100,'analyze','pencil'],tk:[430,50,'approval ticket','mid'],dep:[570,50,'deploy','ok'],bug:[430,150,'file bug','bad'],end:[570,150,'stop','muted']};
+function drawPl(){const s=$('#plSvg');s.innerHTML='';const okPath=['commit','build','an','tk','dep'],failPath=['commit','build','an','bug','end'];const path=br==='ok'?okPath:failPath;const lit=path.slice(0,plI+1);
+ [['commit','build'],['build','an'],['an','tk'],['tk','dep'],['an','bug'],['bug','end']].forEach(([a,b])=>{const on=lit.includes(a)&&lit.includes(b);ln(s,N[a][0]+50,N[a][1],N[b][0]-50,N[b][1],on?N[b][3]:'line',on,on?3:1.5)});
+ Object.entries(N).forEach(([k,n])=>{const on=lit.includes(k);bx(s,n[0]-50,n[1]-20,100,40,n[2],'',n[3],on?undefined:false,{opacity:on?1:.45})})}
+stepper('#plStep',['A push to source control fires the first event.','The event triggers a build. It may run for minutes, which is fine: nothing waits synchronously.','The build finishes and fires an event to an analysis function, which branches on the result.','Pass: a ticket asks a human to approve. Fail: a bug is filed automatically.','Pass: closing the ticket is itself an event that triggers the deploy. Fail: the pipeline ends.'],i=>{plI=i;drawPl()});
+seg('[data-br]',b=>{br=b.dataset.br;drawPl()});
+
+function drawSU(){const s=$('#suSvg');s.innerHTML='';bx(s,10,70,130,50,'create_user','','blue');const hooks=[['welcome-email','required',1],['audit-log','required',1],['news-subscribe','optional',$('#optNews').checked],['order-sms','optional',$('#optSms').checked]];
+ hooks.forEach((h,i)=>{const y=8+i*45;ln(s,140,95,400,y+18,h[2]?'ok':'line',h[2],h[2]?2.5:1.2);bx(s,400,y,170,36,h[0],'',h[1]==='required'?'pencil':'d5',h[2]?undefined:false,{opacity:h[2]?1:.4});s.appendChild(el('text',{x:580,y:y+22,'font-size':10.5,class:'t-mono',fill:'var(--muted)'},h[1]))})}
+['#optNews','#optSms'].forEach(i=>$(i).addEventListener('change',drawSU));drawSU();
+
+quiz('#fQuiz','#fScore',[
+ {q:'Resize a profile photo when a user uploads one',a:0,why:'A discrete, independent, bursty event.'},
+ {q:'Serve queries against a 6 GB in-memory search index',a:1,why:'Loading the data on a cold start would stall the user.'},
+ {q:'Transcode hour-long videos',a:1,why:'Long background work outlives function time limits.'},
+ {q:'An API handling 2,000 requests per second around the clock',a:1,why:'Sustained load makes per-request pricing expensive; use servers (or a self-hosted FaaS).'},
+ {q:'Validate and default fields on requests to an existing API',a:0,why:'The decorator pattern: stateless, cheap, easy to experiment with.'}],['Good fit','Poor fit']);
+quiz('#qQuiz','#qScore',[
+ {q:'An open source FaaS on your own physical cluster is...',o:['Serverless','Event-driven, not serverless'],a:1,why:'You run the servers, so it is not serverless, but it is still event-driven.'},
+ {q:'What separates a request from an event, in the book\'s view?',o:['Size','Being part of a session'],a:1,why:'Requests belong to an ongoing interaction; events are one-off and asynchronous.'},
+ {q:'Why can\'t functions share data in local memory?',o:['They are stateless instances','Security rules'],a:0,why:'Any instance can be created or destroyed at any time; state must live in a storage service.'}]);
+
+})();
+</script>
+</body>
+</html>

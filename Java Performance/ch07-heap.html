@@ -1,0 +1,540 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Heap Memory Best Practices</title>
+<meta name="description" content="The cheapest garbage is the garbage you never make. Learn to read a heap histogram, diagnose an out-of-memory error, shrink objects, and decide when reuse or weak references pay off.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Java Performance companion. Layout: an engineer's notebook column on blueprint grid paper.
+   Blue ink = the JVM and measurement, orange pencil = your application code, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code and terminal snippets */
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)} pre.code .b{color:var(--bad)} pre.code .p{color:var(--pencil)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+button.tag.theme{cursor:pointer}
+button.tag.theme:hover{border-color:var(--blue);color:var(--blue)}
+.meter{height:14px;border-radius:7px;background:var(--paper);border:1px solid var(--line);overflow:hidden}
+.meter>i{display:block;height:100%;width:0;background:var(--blue);transition:width .3s}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.kv>div{border:1px solid var(--line);border-radius:8px;padding:8px 12px;background:var(--paper);display:flex;flex-direction:column;min-width:0}
+.kv b{font-family:var(--mono);font-size:1.1rem}
+.kv span{font-size:.82rem;color:var(--muted)}
+
+/* page */
+
+.g2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+@media (max-width:640px){.g2{grid-template-columns:1fr}}
+.fields{display:flex;flex-wrap:wrap;gap:6px}
+.fields label{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:6px;padding:4px 8px;background:var(--paper);font-family:var(--mono);font-size:.82rem}
+.layout{display:flex;flex-wrap:wrap;gap:2px;font-family:var(--mono);font-size:.7rem}
+.layout i{display:grid;place-items:center;height:30px;border-radius:3px;color:#fff;font-style:normal;overflow:hidden;white-space:nowrap}
+.refs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+@media (max-width:640px){.refs{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.refs button{border:1px solid var(--line);background:var(--paper);border-radius:10px;padding:10px;text-align:left;display:flex;flex-direction:column;gap:2px}
+.refs button b{font-family:var(--display)}
+.refs button span{font-size:.82rem;color:var(--muted)}
+.refs button[aria-pressed="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Java Performance · visual companion</a><span class="tag">Part III · Chapter 7 of 12</span><button class="tag theme" type="button" data-theme-toggle aria-label="Switch light or dark theme">Theme</button></div>
+  <h1>Heap Memory Best Practices</h1>
+  <p class="lede">The cheapest garbage is the garbage you never make. Learn to read a heap histogram, diagnose an out-of-memory error, shrink objects, and decide when reuse or weak references pay off.</p>
+  <nav class="toc" aria-label="Sections"><a href="#analysis">Heap analysis</a><a href="#oom">Out of memory</a><a href="#size">Object size</a><a href="#lazy">Lazy init</a><a href="#canon">Canonical objects</a><a href="#reuse">Reuse</a><a href="#refs">Soft, weak…</a><a href="#oops">Compressed oops</a><a href="#check">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="analysis" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Find out what is using the heap</h2></div>
+  <p>Before you optimize memory, find out which objects take it. Start cheap with a <b>histogram</b>: a count and total size per class, from <code>jcmd &lt;pid&gt; GC.class_histogram</code> or <code>jmap -histo</code> (add <code>:live</code> to force a full GC first and count only live objects). If one of your classes has suspiciously many instances, you have a lead. For the full story take a <b>heap dump</b> (<code>jcmd &lt;pid&gt; GC.heap_dump file</code>) and open it in a tool such as Eclipse MAT or jvisualvm.</p>
+  <div class="sheet">
+    <div class="row between"><h3>Shallow, retained and deep sizes</h3><span class="small">tap an object</span></div>
+    <div class="svgbox"><svg id="rtSvg" viewBox="0 0 640 230" role="img" aria-label="Object graph showing shallow, retained and deep sizes"></svg></div>
+    <div class="detail" id="rtTip" aria-live="polite"></div>
+  </div>
+  <p class="small">Objects with large retained sizes are the heap's <b>dominators</b>. Often the top ones are classloaders, which tell you little. A leak can also hide when the leaking data is referenced from two places, because shared objects are counted in no one's retained size. Then you walk references from a suspicious object back toward the GC roots.</p>
+</section>
+
+<section id="oom" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>OutOfMemoryError: five different problems</h2></div>
+  <p>The message after <code>java.lang.OutOfMemoryError:</code> tells you which memory ran out. Don't assume it's the heap.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Error" id="oomSeg"></div>
+    <div class="detail" id="oomTip" aria-live="polite"></div>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>The GC overhead limit</h3><span class="small">throughput collector</span></div>
+    <div class="g2">
+      <label class="rng"><span>Time spent in full GC: <b id="goT">90%</b></span><input type="range" id="go" min="50" max="100" value="90"></label>
+      <label class="rng"><span>Heap freed per full GC: <b id="gfT">5%</b></span><input type="range" id="gf" min="0" max="20" value="5"></label>
+      <label class="rng"><span>Consecutive full GCs like that: <b id="gnT">2</b></span><input type="range" id="gn" min="1" max="8" value="2"></label>
+    </div>
+    <p id="goTxt" aria-live="polite"></p>
+  </div>
+  <pre class="code"><span class="c"># always worth having in production</span>
+-XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/var/dumps/
+<span class="c"># also useful: HeapDumpAfterFullGC / HeapDumpBeforeFullGC (several dumps)</span></pre>
+</section>
+
+<section id="size" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Using less memory: object size</h2></div>
+  <p>Smaller objects mean less GC work: fewer collections, less to copy. Objects are bigger than their fields suggest. On a 64-bit JVM with compressed references, each object has a 12-byte header, each reference takes 4 bytes, and the total is padded up to a multiple of 8. Arrays have a 16-byte header. Even a <code>null</code> field takes space. Build a class:</p>
+  <div class="sheet">
+    <div class="fields" id="fields"></div>
+    <div class="seg" role="group" aria-label="Oops"><button data-co="1" aria-pressed="true">Heap &lt; 32 GB (compressed oops)</button><button data-co="0" aria-pressed="false">Heap ≥ 32 GB</button></div>
+    <div class="layout" id="layout"></div>
+    <p id="szTxt" aria-live="polite"></p>
+    <label class="rng"><span>Instances alive: <b id="inV">1,000,000</b></span><input type="range" id="inN" min="3" max="8" value="6"></label>
+  </div>
+  <div class="cardgrid" id="sizeCards"></div>
+</section>
+
+<section id="lazy" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Lazy initialization</h2></div>
+  <p>If most instances never use a field, don't create its value until someone asks. That only pays when the common path leaves it untouched; otherwise you add a check to every access for nothing. With threads involved, use the double-checked pattern with a <code>volatile</code> field and a local variable, so the common path reads the volatile only once:</p>
+  <pre class="code"><span class="k">private volatile</span> Map&lt;String,Rate&gt; rates;   <span class="c">// usually never needed</span>
+Map&lt;String,Rate&gt; rates() {
+  Map&lt;String,Rate&gt; r = rates;              <span class="c">// one volatile read</span>
+  <span class="k">if</span> (r == <span class="k">null</span>) {
+    <span class="k">synchronized</span> (<span class="k">this</span>) {
+      r = rates;
+      <span class="k">if</span> (r == <span class="k">null</span>) rates = r = loadRates();
+    }
+  }
+  <span class="k">return</span> r;
+}</pre>
+  <div class="sheet">
+    <div class="row between"><h3>Does lazy pay?</h3></div>
+    <label class="rng"><span>Share of instances that ever use the field: <b id="lzV">10%</b></span><input type="range" id="lz" min="0" max="100" step="5" value="10"></label>
+    <div class="bars" id="lzBars"></div>
+  </div>
+  <p class="small">The reverse trick, <b>eager deinitialization</b> (setting a field to null so GC can take it), is almost never needed: objects go away when their owner does. It makes sense mainly inside long-lived collections, as <code>ArrayList.remove()</code> does with the freed slot.</p>
+</section>
+
+<section id="canon" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Immutable and canonical objects</h2></div>
+  <p>Immutable objects can be shared freely, so you need only one copy of each distinct value: a <b>canonical</b> version, like <code>Boolean.TRUE</code>. Interning strings is the JDK's built-in version (chapter 12). For your own immutable types, keep a map from value to its canonical instance; with weak keys so unused values can still be collected.</p>
+  <div class="sheet">
+    <div class="row between"><h3>Duplicates vs. canonical</h3><div class="seg" role="group" aria-label="Mode"><button data-cn="0" aria-pressed="true">new each time</button><button data-cn="1" aria-pressed="false">canonicalized</button></div></div>
+    <div class="svgbox"><svg id="cnSvg" viewBox="0 0 640 150" role="img" aria-label="References to duplicate or shared immutable objects"></svg></div>
+    <p id="cnTxt" class="small" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="reuse" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Object reuse: pools and thread-locals</h2></div>
+  <p>Reusing objects fights the generational collector: a pooled object lives long, gets promoted, and makes old-generation collections slower. Only reuse objects that are <b>expensive to create</b> and few in number: threads, JDBC connections, big buffers, XML parsers, <code>SecureRandom</code>. Two ways to keep them:</p>
+  <div class="g2">
+    <div class="callout blue"><b class="h">Object pool</b><span>Shared among threads, so access is synchronized and can be contended. Size is controlled: good when the pooled thing is externally limited (database connections). Must handle "pool empty".</span></div>
+    <div class="callout ok"><b class="h">ThreadLocal</b><span>One object per thread, no locking. Simple when objects map one-to-one to threads (a per-thread formatter). The count is tied to the thread count; with thread pools that is usually fine.</span></div>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>Pool contention</h3><span class="small">illustrative</span></div>
+    <label class="rng"><span>Threads hitting a shared pool: <b id="plV">8</b></span><input type="range" id="pl" min="1" max="64" value="8"></label>
+    <div class="bars" id="plBars"></div>
+  </div>
+</section>
+
+<section id="refs" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Indefinite references</h2></div>
+  <p>The JDK offers references the collector treats specially. Each costs GC extra work, and the object wrapped (the <b>referent</b>) usually survives at least one extra cycle. Pick one:</p>
+  <div class="sheet">
+    <div class="refs" id="refBtns"></div>
+    <div class="detail" id="refTip" aria-live="polite"></div>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>When is a soft reference cleared?</h3><span class="small">rule: cleared if idle time &gt; free heap (MB) × SoftRefLRUPolicyMSPerMB</span></div>
+    <div class="g2">
+      <label class="rng"><span>Free heap after GC: <b id="sfV">1,024 MB</b></span><input type="range" id="sf" min="0" max="4096" step="64" value="1024"></label>
+      <label class="rng"><span>SoftRefLRUPolicyMSPerMB: <b id="spV">1000</b></span><input type="range" id="sp" min="0" max="2000" step="50" value="1000"></label>
+    </div>
+    <p id="sfTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="oops" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Compressed oops and the 32 GB cliff</h2></div>
+  <p>A 64-bit JVM could use 8-byte references, but with heaps under 32 GB it stores them as 32-bit offsets scaled by 8 (objects are 8-byte aligned anyway). That's <b>compressed oops</b>, on by default below 32 GB. Cross the line and every reference doubles. Since references can be ~20% of a heap, a 33 GB heap may hold <i>less</i> than a 31 GB one.</p>
+  <div class="sheet">
+    <label class="rng"><span>Max heap: <b id="cpV">31 GB</b></span><input type="range" id="cp" min="16" max="48" value="31"></label>
+    <div class="bars" id="cpBars"></div>
+    <p id="cpTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">10</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b>Histogram, then dump</b><span>Find the class, then follow retained sizes and paths to roots.</span></div>
+    <div><b>Read the OOM message</b><span>Heap, metaspace, native threads, overhead limit, array size.</span></div>
+    <div><b>Shrink objects</b><span>Headers, padding, references and null fields all count.</span></div>
+    <div><b>Lazy only when rarely used</b><span>Double-checked locking with a volatile and a local.</span></div>
+    <div><b>Share immutables</b><span>Canonicalize duplicates; reuse only expensive objects.</span></div>
+    <div><b>Stay under 32 GB</b><span>Or go well past it (~38 GB+).</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Java Performance: In-Depth Advice for Tuning and Programming Java 8, 11, and Beyond</i> (2nd edition) by Scott Oaks (O'Reilly, 2020). Explanations, code snippets, simulations and drawings are original summaries; numbers in the drawings are illustrative unless stated.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch06b-gc-cms-advanced.html"><span>Previous · Chapter 6b</span><b>CMS, Advanced Tunings and New Collectors</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch08-native.html"><span>Next · Chapter 8</span><b>Native Memory Best Practices</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('jp:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('jp:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle: remembers the choice per viewer */
+(function(){const R=document.documentElement;const saved=store.get('theme',null);if(saved)R.setAttribute('data-theme',saved);
+ $$('[data-theme-toggle]').forEach(b=>b.addEventListener('click',()=>{const cur=R.getAttribute('data-theme');const dark=cur?cur==='dark':matchMedia('(prefers-color-scheme: dark)').matches;const nx=dark?'light':'dark';R.setAttribute('data-theme',nx);store.set('theme',nx)}))})();
+function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+
+
+/* retained sizes */
+const RN={A:{x:110,y:60,s:24,l:'Order'},B:{x:300,y:40,s:40,l:'items[]'},C:{x:480,y:40,s:80,l:'Item data'},D:{x:300,y:150,s:32,l:'Customer'},E:{x:480,y:150,s:56,l:'Address'},F:{x:110,y:180,s:24,l:'Invoice'}};
+const RE=[['A','B'],['B','C'],['A','D'],['D','E'],['F','D']];
+const RET={A:['A','B','C'],B:['B','C'],C:['C'],D:['D','E'],E:['E'],F:['F']};
+const DEEP={A:['A','B','C','D','E'],B:['B','C'],C:['C'],D:['D','E'],E:['E'],F:['F','D','E']};
+function drawRT(k){const s=$('#rtSvg');s.innerHTML='';
+ RE.forEach(([a,b])=>{const p=RN[a],q=RN[b];s.appendChild(el('line',{x1:p.x+50,y1:p.y,x2:q.x-50,y2:q.y,stroke:'var(--muted)','stroke-width':1.5}))});
+ Object.entries(RN).forEach(([id,n])=>{const r=RET[k].includes(id),d=DEEP[k].includes(id);
+  s.appendChild(el('rect',{x:n.x-50,y:n.y-20,width:100,height:40,rx:7,fill:id===k?'var(--blue)':r?'var(--blue-soft)':d?'var(--mid-soft)':'var(--surface)',stroke:r?'var(--blue)':d?'var(--mid)':'var(--line)','stroke-width':1.6,style:'cursor:pointer'}));
+  const t=el('text',{x:n.x,y:n.y-2,'text-anchor':'middle','font-size':12,'font-weight':700,fill:id===k?'#fff':'var(--ink)','pointer-events':'none'},n.l);s.appendChild(t);
+  s.appendChild(el('text',{x:n.x,y:n.y+13,'text-anchor':'middle','font-size':10.5,fill:id===k?'#fff':'var(--muted)','pointer-events':'none'},n.s+' B'))});
+ $$('#rtSvg rect').forEach((r,i)=>r.addEventListener('click',()=>drawRT(Object.keys(RN)[i])));
+ const sum=a=>a.reduce((x,y)=>x+RN[y].s,0);
+ $('#rtTip').innerHTML=`<p><b>${RN[k].l}</b>: shallow <b>${RN[k].s} B</b> (the object itself) · retained <b class="blue">${sum(RET[k])} B</b> (what GC would free if only this object went away, blue) · deep <b class="midc">${sum(DEEP[k])} B</b> (everything reachable from it, blue + amber).</p>${k==='A'||k==='F'?'<p class="small">Customer is shared by Order and Invoice, so it is in neither one\'s retained size: freeing just one owner frees nothing there.</p>':''}`}
+drawRT('A');
+
+/* OOM */
+const OOM=[['Java heap space','The heap is full of live objects. Either the heap is genuinely too small for the work (raise -Xmx) or, far more often, there is a leak: a collection keeps growing (a cache without eviction, a listener list, a map keyed by request). Dump the heap and look at the dominators.'],
+ ['Metaspace','Too many classes. With MaxMetaspaceSize set, the app needs more; without it, a classloader leak is likely: redeploying an app while something (a thread, a static registry) still references the old classloader keeps all its classes alive. Look for many instances of the same classloader in a heap dump.'],
+ ['unable to create new native thread','The OS refused another thread: a per-user process limit (ulimit -u), or, in 32-bit JVMs, address space. Often it means a thread leak or an unbounded thread pool. Not a heap problem at all.'],
+ ['GC overhead limit exceeded','The throughput collector spent nearly all its time in back-to-back full GCs that reclaimed almost nothing. The heap is effectively full; the JVM gives up rather than crawl. Same remedies as heap space.'],
+ ['Requested array size exceeds VM limit','Someone asked for an array larger than the VM can create (near Integer.MAX_VALUE elements). Almost always a bug in a size calculation.'],
+ ['Out of swap space / native memory','Native memory (not heap) ran out: see chapter 8. Often the process is too big for the machine or container.']];
+$('#oomSeg').innerHTML=OOM.map((o,i)=>`<button data-oo="${i}" aria-pressed="${i===0}">${o[0]}</button>`).join('');
+seg('[data-oo]',b=>$('#oomTip').innerHTML=`<h3 class="badc">${OOM[+b.dataset.oo][0]}</h3><p>${OOM[+b.dataset.oo][1]}</p>`);$('#oomTip').innerHTML=`<h3 class="badc">${OOM[0][0]}</h3><p>${OOM[0][1]}</p>`;
+function drawGO(){const t=+$('#go').value,f=+$('#gf').value,n=+$('#gn').value;$('#goT').textContent=t+'%';$('#gfT').textContent=f+'%';$('#gnT').textContent=n;
+ const hit=t>=98&&f<2&&n>=4;$('#goTxt').innerHTML=hit?'<b class="badc">OutOfMemoryError: GC overhead limit exceeded.</b> All three conditions hold: at least 98% of time in GC (<code>GCTimeLimit</code>), under 2% of heap freed (<code>GCHeapFreeLimit</code>), four full GCs in a row.':`Not thrown yet: it needs ≥ 98% of time in GC, &lt; 2% freed, and 4 consecutive full GCs. ${t>=90?'But the application is already barely running: a heap this busy is a problem even without the error.':''}`}
+['#go','#gf','#gn'].forEach(i=>$(i).addEventListener('input',drawGO));drawGO();
+
+/* object size */
+const FL=[['int id',4,'p'],['long time',8,'p'],['double price',8,'p'],['boolean active',1,'p'],['byte flag',1,'p'],['String name',0,'r'],['List tags',0,'r'],['Object lock',0,'r']];
+const on=new Set([0,5]);let CO=1;
+$('#fields').innerHTML=FL.map((f,i)=>`<label><input type="checkbox" data-f="${i}" ${on.has(i)?'checked':''}>${f[0]}</label>`).join('');
+function drawSZ(){const ref=CO?4:8,hdr=CO?12:16;let used=hdr;const parts=[['header',hdr,'var(--muted)']];
+ FL.forEach((f,i)=>{if(on.has(i)){const b=f[2]==='r'?ref:f[1];used+=b;parts.push([f[0].split(' ')[1],b,f[2]==='r'?'var(--pencil)':'var(--blue)'])}});
+ const tot=Math.ceil(used/8)*8;if(tot>used)parts.push(['pad',tot-used,'var(--line)']);
+ $('#layout').innerHTML=parts.map(p=>`<i style="flex:${p[1]} 0 0;min-width:${Math.max(18,p[1]*11)}px;background:${p[2]}">${p[0]} ${p[1]}</i>`).join('');
+ const n=Math.pow(10,+$('#inN').value);$('#inV').textContent=n.toLocaleString();
+ $('#szTxt').innerHTML=`<b>${tot} bytes</b> per instance (${used} used + ${tot-used} padding). × ${n.toLocaleString()} = <b>${(tot*n/1048576).toFixed(1)} MB</b> of heap, not counting the objects the references point to.`}
+$$('[data-f]').forEach(c=>c.addEventListener('change',()=>{c.checked?on.add(+c.dataset.f):on.delete(+c.dataset.f);drawSZ()}));
+seg('[data-co]',b=>{CO=+b.dataset.co;drawSZ()});$('#inN').addEventListener('input',drawSZ);drawSZ();
+cards('#sizeCards',[
+ {t:'Drop fields',d:'Don\'t keep values you can recompute cheaply or that only some instances use. Move rarely-used fields into a separate, lazily created object.',c:'blue'},
+ {t:'Use smaller types',d:'A byte or short where an int isn\'t needed, primitives instead of wrapper objects. A boolean still takes a byte, but padding decides whether it saves anything.',c:'blue'},
+ {t:'Watch collections',d:'Default capacities, entry objects in hash maps and boxing of keys often dwarf the data. Size collections sensibly (chapter 12).',c:'pencil'}]);
+
+/* lazy */
+function drawLZ(){const p=+$('#lz').value;$('#lzV').textContent=p+'%';const N=1000,cost=200;
+ bars('#lzBars',[{l:'Eager',v:N*cost,txt:(N*cost/1000).toFixed(0)+' KB',c:'pencil'},{l:'Lazy',v:N*8+N*p/100*cost,txt:((N*8+N*p/100*cost)/1000).toFixed(0)+' KB',c:p>90?'bad':'ok'}],N*cost*1.1)}
+$('#lz').addEventListener('input',drawLZ);drawLZ();
+
+/* canonical */
+function drawCN(m){const s=$('#cnSvg');s.innerHTML='';const holders=6;
+ for(let i=0;i<holders;i++){const x=40+i*100;s.appendChild(el('rect',{x:x-30,y:14,width:60,height:28,rx:5,fill:'var(--surface)',stroke:'var(--line)'}));s.appendChild(el('text',{x,y:33,'text-anchor':'middle','font-size':11,fill:'var(--ink)'},'trade '+(i+1)))
+  const tx=m?(i%2?420:220):x;const ty=110;s.appendChild(el('line',{x1:x,y1:42,x2:tx,y2:ty-14,stroke:'var(--muted)'}))}
+ const objs=m?[[220,'USD'],[420,'EUR']]:[0,1,2,3,4,5].map(i=>[40+i*100,i%2?'EUR':'USD']);
+ objs.forEach(o=>{s.appendChild(el('circle',{cx:o[0],cy:110,r:16,fill:o[1]==='USD'?'var(--blue)':'var(--pencil)'}));s.appendChild(el('text',{x:o[0],y:114,'text-anchor':'middle','font-size':10,fill:'#fff'},o[1]))});
+ $('#cnTxt').textContent=m?'Two objects total, however many trades. Equality checks can even use == on canonical objects.':'Six objects for two distinct values. With millions of trades this is pure waste, and all of it is GC work.'}
+seg('[data-cn]',b=>drawCN(+b.dataset.cn));drawCN(0);
+
+/* pool contention */
+function drawPL(){const t=+$('#pl').value;$('#plV').textContent=t;const pool=10+t*t*0.6,tl=10;
+ bars('#plBars',[{l:'Pool (synchronized)',v:pool,txt:pool.toFixed(0)+' µs/op',c:t>16?'bad':'pencil'},{l:'ThreadLocal',v:tl,txt:tl+' µs/op',c:'ok'},{l:'Create new',v:60,txt:'60 µs/op (expensive object)',c:'blue'}],Math.max(100,pool*1.05))}
+$('#pl').addEventListener('input',drawPL);drawPL();
+
+/* refs */
+const RF=[['Soft','for caches',"Cleared only when memory is getting short and the object hasn't been used for a while (see the rule below). Good for an LRU-like cache of things that are expensive to recreate. Every soft reference that is cleared, and the GC work to track them, costs something; too many and full GCs grow."],
+ ['Weak','"if anyone else still has it"','Cleared at the next GC once nothing strongly references the referent. Use when you want an object only while other code is using it: a WeakHashMap keyed by an object whose life someone else controls, or a canonical map. Not a cache: weakly held objects disappear almost immediately.'],
+ ['Phantom','cleanup after death','get() always returns null. Enqueued after the referent is unreachable, so you can release native resources. The basis of java.lang.ref.Cleaner in JDK 11.'],
+ ['Final (finalize)','avoid','finalize() runs on a single finalizer thread, delays freeing by at least one GC, and can resurrect the object. Slow and unreliable; deprecated in JDK 11. Use Cleaner (JDK 11) or a phantom reference and queue (JDK 8), and make close() the normal path.']];
+$('#refBtns').innerHTML=RF.map((r,i)=>`<button data-rf="${i}" aria-pressed="${i===0}"><b>${r[0]}</b><span>${r[1]}</span></button>`).join('');
+seg('[data-rf]',b=>$('#refTip').innerHTML=`<h3 class="blue">${RF[+b.dataset.rf][0]} references</h3><p>${RF[+b.dataset.rf][2]}</p>`);$('#refTip').innerHTML=`<h3 class="blue">${RF[0][0]} references</h3><p>${RF[0][2]}</p>`;
+function drawSF(){const f=+$('#sf').value,p=+$('#sp').value;$('#sfV').textContent=f.toLocaleString()+' MB';$('#spV').textContent=p;const ms=f*p;
+ $('#sfTxt').innerHTML=`A softly held object survives if it was used within the last <b>${ms>=60000?(ms/60000).toFixed(1)+' minutes':(ms/1000).toFixed(1)+' s'}</b>. ${ms===0?'With no free heap (or a policy of 0), soft references behave like weak ones.':ms>3600000?'Very long: soft caches will hold on to nearly everything, filling the old generation. Consider lowering the policy value.':'As the heap fills, the window shrinks automatically: the cache gives memory back exactly when it\'s needed.'}`}
+['#sf','#sp'].forEach(i=>$(i).addEventListener('input',drawSF));drawSF();
+
+/* compressed oops */
+function drawCP(){const h=+$('#cp').value;$('#cpV').textContent=h+' GB';const comp=h<32;const refShare=0.2;const usable=comp?h:h*(1-refShare)/(1-refShare/2)*1;const eff=comp?h:h-h*refShare/2;
+ bars('#cpBars',[{l:'Heap you pay for',v:h,txt:h+' GB',c:'blue'},{l:'Equivalent compressed heap',v:eff,txt:eff.toFixed(1)+' GB',c:comp?'ok':'bad'}],50);
+ $('#cpTxt').innerHTML=comp?'<b class="okc">Compressed oops on.</b> References are 4 bytes.':`<b class="badc">Compressed oops off.</b> References double to 8 bytes; if they were ~20% of the heap, this ${h} GB heap holds about what a ${eff.toFixed(1)} GB compressed one would. ${eff<31?'Worse than 31 GB!':'Finally ahead of 31 GB.'}`}
+$('#cp').addEventListener('input',drawCP);drawCP();
+
+quiz('#qQuiz','#qScore',[
+ {q:'Cheapest first step to see what fills the heap?',o:['Full heap dump','Class histogram'],a:1,why:'jcmd GC.class_histogram is fast and often enough.'},
+ {q:'"OutOfMemoryError: Metaspace" after many redeploys suggests…',o:['Heap too small','Classloader leak'],a:1,why:'Old classloaders kept alive retain all their classes.'},
+ {q:'Size of an object with one int and one reference (compressed oops)?',o:['16 bytes','20 bytes','24 bytes'],a:2,why:'12-byte header + 4 + 4 = 20 bytes, padded to a multiple of 8: 24.'},
+ {q:'Best reference type for a memory-sensitive cache?',o:['Weak','Soft','Phantom'],a:1,why:'Soft references survive until memory pressure and idleness say otherwise.'},
+ {q:'Better heap: 31 GB or 33 GB?',o:['31 GB','33 GB'],a:0,why:'33 GB loses compressed oops; you need ~38 GB+ to come out ahead.'}]);
+
+})();
+</script>
+</body>
+</html>
