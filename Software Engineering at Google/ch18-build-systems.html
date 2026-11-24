@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Build Systems and Build Philosophy · SE at Google</title>
+<meta name="description" content="A build system should be fast and correct, and those two goals fight each other. Google&#x27;s answer is an artifact-based system that knows every dependency and can cache and distribute work.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Software Engineering at Google companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+button.tag{cursor:pointer}
+button.tag:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{font-family:var(--mono);font-size:.82rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:0;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .g{color:var(--ok)} pre.code .r{color:var(--bad)}
+.note-missing{border-left:4px solid var(--mid);background:var(--mid-soft);padding:10px 14px;border-radius:0 8px 8px 0;font-size:.92rem}
+
+/* page */
+
+.lat{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+@media (max-width:620px){.lat{grid-template-columns:1fr 1fr}}
+.lat div{border:1px solid var(--line);border-radius:10px;padding:10px;background:var(--surface);display:flex;flex-direction:column;gap:2px;font-size:.88rem}
+.lat div b{font-family:var(--display);font-size:1.4rem}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Software Engineering at Google · visual companion</a><span class="tag">Part IV · Tools · Chapter 18 of 25</span><button class="tag" id="themeBtn" type="button">Theme</button></div>
+  <h1>Build Systems and Build Philosophy</h1>
+  <p class="lede">A build system should be fast and correct, and those two goals fight each other. Google's answer is an artifact-based system that knows every dependency and can cache and distribute work.</p>
+  <nav class="toc" aria-label="Sections"><a href="#purpose">Purpose</a><a href="#task">Task-based</a><a href="#artifact">Artifact-based</a><a href="#distributed">Distributed builds</a><a href="#modules">Modules</a><a href="#external">External deps</a><a href="#quiz">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="purpose" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>What a build system is for</h2></div>
+  <p>A build system turns source code into running binaries. It must be <b>fast</b> (a developer types one command and gets a result in seconds) and <b>correct</b> (the same source always yields the same output, on any machine). Those two goals fight: the quickest way to be fast is to skip work, which risks being wrong. Google's build system, Blaze (open-sourced as Bazel), was the fourth most satisfying of 19 internal tools surveyed, with 83% of engineers satisfied.</p>
+  <div class="sheet stepper" id="evStep"><div class="svgbox fit"><svg id="evSvg" viewBox="0 0 640 120" role="img" aria-label="Evolution from compiler to build system"></svg></div></div>
+</section>
+
+<section id="task" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Task-based build systems and their dark side</h2></div>
+  <p>Most modern build systems (Ant, Maven, Gradle) are <b>task-based</b>: the build file defines tasks, which are arbitrary scripts, and their dependencies. That's powerful, and the power is the problem. Because a task can do anything, the system can't know what it really reads or writes.</p>
+  <div class="two">
+    <pre class="code"><span class="c">// task-based (pseudo-Gradle)</span>
+task compileApp(dependsOn: genProto) {
+  doLast {
+    exec <span class="g">"javac -d out src/**/*.java"</span>
+    <span class="r">// also touches ~/.cache? reads env? who knows</span>
+  }
+}</pre>
+    <div class="cardgrid" id="darkCards" style="grid-template-columns:1fr"></div>
+  </div>
+</section>
+
+<section id="artifact" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Artifact-based build systems: Bazel</h2></div>
+  <p>Bazel flips the model. Engineers declare <b>what</b> to build (targets: a library, a binary, a test), their sources and their dependencies. The system decides <b>how</b>, with a fixed set of tools it understands. Like a functional program, every build step is a pure function from declared inputs to outputs, so Bazel can cache, parallelize and rebuild only what changed. Click a source file to change it and see what rebuilds.</p>
+  <div class="two">
+    <pre class="code"><span class="c"># BUILD</span>
+<span class="k">java_binary</span>(
+    name = <span class="g">"app"</span>,
+    srcs = [<span class="g">"App.java"</span>],
+    deps = [<span class="g">":ui"</span>, <span class="g">":storage"</span>],
+)
+<span class="k">java_library</span>(
+    name = <span class="g">"ui"</span>,
+    srcs = [<span class="g">"Ui.java"</span>],
+    deps = [<span class="g">":util"</span>],
+)
+<span class="k">java_library</span>(name = <span class="g">"storage"</span>, srcs = [...],
+             deps = [<span class="g">":util"</span>])
+<span class="k">java_library</span>(name = <span class="g">"util"</span>, srcs = [<span class="g">"Util.java"</span>])</pre>
+    <div class="sheet">
+      <div class="svgbox fit"><svg id="gSvg" viewBox="0 0 320 300" role="img" aria-label="Build graph: click a node to modify it"></svg></div>
+      <p class="small" id="gTxt" aria-live="polite"></p>
+      <div class="row"><button class="btn" id="gPar">Show parallel build order</button></div>
+    </div>
+  </div>
+  <div class="cardgrid" id="trickCards"></div>
+</section>
+
+<section id="distributed" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Distributed builds: remote caching and execution</h2></div>
+  <p>Because every action is a pure function of its inputs, results can be shared. A <b>remote cache</b> stores outputs keyed by a hash of inputs: if anyone (or CI) built it already, download it. <b>Remote execution</b> runs the actions on a farm of machines. Google has done both since 2008: a remote cache called ObjFS (outputs stored in Bigtables, browsed through a local filesystem daemon that downloads files only on demand, which made builds about twice as fast) and a remote execution system called Forge. Simulate a morning.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Setup"><button data-r="local" aria-pressed="true">Everyone builds locally</button><button data-r="cache" aria-pressed="false">Shared remote cache</button><button data-r="exec" aria-pressed="false">Cache + remote execution</button></div>
+    <div class="lat" id="lat"></div>
+    <div class="svgbox"><svg id="rSvg" viewBox="0 0 640 170" role="img" aria-label="Build actions executed per developer"></svg></div>
+  </div>
+</section>
+
+<section id="modules" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Modules and dependencies</h2></div>
+  <p>Finer-grained targets mean more parallelism and smaller incremental rebuilds, at the cost of more BUILD files to maintain (tools help). Google follows a <b>1:1:1 rule</b> for Java: one directory, one package, one BUILD file, typically containing a few small targets. Slide the granularity.</p>
+  <div class="sheet">
+    <label class="rng"><span>Module granularity: <b id="grV"></b></span><input type="range" id="gr" min="1" max="4" value="1"></label>
+    <div class="bars" id="grBars"></div>
+  </div>
+  <div class="two">
+    <div class="callout"><b class="h">Minimize visibility</b><span>Targets declare who may depend on them: public, private to their BUILD file, or an explicit list. At Google, teams make targets public only for widely used libraries. That keeps implementation details from becoming dependencies (Hyrum's Law again) and lets teams change internals safely.</span></div>
+    <div class="callout"><b class="h">Declare direct dependencies</b><span>Relying on something your dependency happens to pull in (transitive) breaks when it stops pulling it in. Blaze allowed this for years; as Google grew, removing one dependency broke distant targets, so it now enforces strict transitive dependencies: list what you use directly.</span></div>
+  </div>
+</section>
+
+<section id="external" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>External dependencies</h2></div>
+  <p>Third-party code is the riskiest input. Bazel requires external dependencies to be declared with an exact version and a cryptographic hash, and Google checks third-party code into its repository under the One-Version Rule. Depending on "latest" is a recipe for unreproducible builds. Click build twice.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Pinning"><button data-x="latest" aria-pressed="true">Depend on "latest"</button><button data-x="pin" aria-pressed="false">Pinned version + hash</button></div>
+    <div class="row"><button class="btn primary" id="xBuild">Build on Monday</button><button class="btn primary" id="xBuild2">Build on Friday</button></div>
+    <pre class="code" id="xOut"></pre>
+  </div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>True or false?</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b class="blue">Needed at scale</b><span>A real build system keeps developers productive as the org grows.</span></div>
+    <div><b>Constrain it</b><span>Restricting power makes builds faster and more reliable.</span></div>
+    <div><b class="pencil">Artifacts over tasks</b><span>Declare what, let the system decide how.</span></div>
+    <div><b>Fine-grained modules</b><span>Better parallelism and incremental builds.</span></div>
+    <div><b class="okc">Pin external deps</b><span>Explicit versions under source control; never "latest".</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Software Engineering at Google: Lessons Learned from Programming Over Time</i> by Titus Winters, Tom Manshreck and Hyrum Wright (O'Reilly, 2020); this chapter was written by Erik Kuefler. Explanations, examples, code snippets and drawings are original summaries, not text or figures from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch17-code-search.html"><span>Previous · Chapter 17</span><b>Code Search</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch19-critique.html"><span>Next · Chapter 19</span><b>Critique: Google's Code Review Tool</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('seag:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('seag:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: cycles auto -> light -> dark, remembered per viewer */
+(function(){const b=document.getElementById('themeBtn');if(!b)return;const R=document.documentElement;const modes=['auto','light','dark'];let m=store.get('theme','auto');
+  function ap(){if(m==='auto')R.removeAttribute('data-theme');else R.setAttribute('data-theme',m);b.textContent='Theme: '+m}
+  b.addEventListener('click',()=>{m=modes[(modes.indexOf(m)+1)%3];store.set('theme',m);ap()});ap()})();
+
+
+const EV=['<b>Just a compiler.</b> Fine for one file. Then imports, multiple directories and other languages arrive.','<b>Shell scripts.</b> They grow, become slow (rebuild everything) and fragile, and handle external libraries badly.','<b>A build system.</b> Understands dependencies, rebuilds only what changed, and works the same on every machine.'];
+$('#evStep').insertAdjacentHTML('beforeend',stepHTML());
+stepper('#evStep',EV,i=>{const s=$('#evSvg');s.innerHTML='';['javac Foo.java','./build.sh (900 lines)','bazel build //app'].forEach((l,k)=>{const x=20+k*210;s.appendChild(el('rect',{x,y:35,width:190,height:44,rx:8,fill:k<=i?(k===2?'var(--ok)':k===1?'var(--mid)':'var(--blue)'):'var(--paper)',stroke:'var(--line)'}));s.appendChild(el('text',{x:x+95,y:62,'text-anchor':'middle','font-size':12,'font-family':'var(--mono)','font-weight':600,fill:k<=i?'var(--surface)':'var(--muted)'},l))})});
+
+cards('#darkCards',[
+ {t:'Hard to parallelize',d:'Tasks might write the same file, so the system can\'t safely run them at once.',c:'bad'},
+ {t:'Hard to build incrementally',d:'It can\'t tell if a task\'s output is stale, so it reruns or (worse) wrongly skips. Engineers learn to "clean" and rebuild everything.',c:'bad'},
+ {t:'Hard to maintain and debug',d:'Build scripts become a program of their own, full of side effects and order dependencies.',c:'bad'}]);
+
+const G={app:[160,40,['ui','storage']],ui:[80,140,['util']],storage:[240,140,['util']],util:[160,240,[]]};let changed=null,par=false;
+function rdeps(n){const out=new Set([n]);let grow=true;while(grow){grow=false;for(const k in G)if(!out.has(k)&&G[k][2].some(d=>out.has(d))){out.add(k);grow=true}}return out}
+function drawG(){const s=$('#gSvg');s.innerHTML='';const rb=changed?rdeps(changed):new Set();const lvl={util:0,ui:1,storage:1,app:2};
+  for(const k in G)G[k][2].forEach(d=>{s.appendChild(el('line',{x1:G[k][0],y1:G[k][1]+20,x2:G[d][0],y2:G[d][1]-22,stroke:'var(--muted)','stroke-width':1.5}));s.appendChild(el('circle',{cx:G[d][0],cy:G[d][1]-22,r:3,fill:'var(--muted)'}))});
+  for(const k in G){const [x,y]=G[k];const g=el('g',{class:'gnode',tabindex:0,role:'button'});const on=rb.has(k);g.appendChild(el('rect',{x:x-55,y:y-20,width:110,height:40,rx:8,fill:on?(k===changed?'var(--pencil)':'var(--mid-soft)'):'var(--surface)',stroke:on?'var(--pencil)':'var(--blue)','stroke-width':1.5}));
+   g.appendChild(el('text',{x,y:y+5,'text-anchor':'middle','font-size':13,'font-weight':600,fill:k===changed?'var(--surface)':'var(--ink)','font-family':'var(--mono)'},':'+k));
+   if(par)g.appendChild(el('text',{x:x+62,y:y+4,'font-size':11,fill:'var(--blue)','font-weight':700},'step '+(lvl[k]+1)));
+   g.addEventListener('click',()=>{changed=k;drawG()});g.addEventListener('keydown',e=>{if(e.key==='Enter'){changed=k;drawG()}});s.appendChild(g)}
+  $('#gTxt').innerHTML=changed?`Changed <b>:${changed}</b>. Rebuild: ${[...rb].map(x=>':'+x).join(', ')}. Everything else comes from cache (${4-rb.size} target${4-rb.size===1?'':'s'} skipped).`:'Click a target to edit its source.'+(par?' Targets at the same step have no dependency on each other, so they build in parallel.':'')}
+$('#gPar').addEventListener('click',()=>{par=!par;drawG()});drawG();
+cards('#trickCards',[
+ {t:'Tools as dependencies',d:'Compilers and toolchains are themselves declared inputs, so builds don\'t depend on whatever is installed on a machine.',c:'d1'},
+ {t:'Extending the system',d:'Custom rules (in Starlark) add new languages and steps while keeping actions declared and pure.',c:'d2'},
+ {t:'Sandboxing',d:'Each action runs isolated, seeing only its declared inputs, so hidden dependencies fail loudly.',c:'d3'},
+ {t:'Deterministic externals',d:'External downloads are pinned by version and hash.',c:'d4'}]);
+
+const RM={local:[[100,100,100,100],'Each of 4 developers compiles the same libraries from scratch.',['45 min','4×','0%','1 laptop each']],cache:[[100,12,8,10],'The first build fills the shared cache; others download outputs for unchanged code.',['5 min','~1.3×','~88%','laptops + cache']],exec:[[8,6,5,6],'Actions run on a farm in parallel, outputs reused across the company; laptops barely work.',['1 min','~1×','~90%+','build farm']]};
+function drawR(k){const r=RM[k];$('#lat').innerHTML=[['Typical build',r[2][0]],['Work repeated',r[2][1]],['Cache hits',r[2][2]],['Runs on',r[2][3]]].map(x=>`<div><span class="small">${x[0]}</span><b>${x[1]}</b></div>`).join('');
+  const s=$('#rSvg');s.innerHTML='';r[0].forEach((v,i)=>{const y=20+i*36;s.appendChild(el('text',{x:10,y:y+18,'font-size':12,fill:'var(--muted)'},'dev '+(i+1)));s.appendChild(el('rect',{x:70,y,width:5.4*v,height:24,rx:4,fill:v>50?'var(--bad)':'var(--ok)'}));s.appendChild(el('text',{x:80+5.4*v,y:y+17,'font-size':11,fill:'var(--muted)'},v+'% of actions run'))});
+  s.appendChild(el('text',{x:630,y:166,'font-size':11,'text-anchor':'end',fill:'var(--muted)'},r[1]))}
+seg('[data-r]',b=>drawR(b.dataset.r));drawR('local');
+
+const GR=['one module per project','one per component','one per package (1:1:1)','one per class'];
+function drawGr(){const g=+$('#gr').value;$('#grV').textContent=GR[g-1];bars('#grBars',[{l:'Rebuilt after a one-file change',v:[100,40,12,4][g-1],c:'ok',txt:['everything','a component','one package','one class'][g-1]},{l:'Parallelism available',v:[10,35,75,95][g-1],c:'blue'},{l:'BUILD-file upkeep',v:[5,20,45,90][g-1],c:g===4?'bad':'mid'}],100,v=>v+'%')}
+$('#gr').addEventListener('input',drawGr);drawGr();
+
+let xm='latest';const XO={latest:['fetching json-parse@latest ... 2.3.1\nBUILD OK','fetching json-parse@latest ... 3.0.0 (breaking change)\nERROR: method parse(String, Options) not found\nSame source, different result.'],pin:['json-parse 2.3.1 sha256:9f2c...e1 ✓ verified\nBUILD OK','json-parse 2.3.1 sha256:9f2c...e1 ✓ verified\nBUILD OK (identical output)']};
+seg('[data-x]',b=>{xm=b.dataset.x;$('#xOut').textContent=''});$('#xBuild').addEventListener('click',()=>$('#xOut').textContent=XO[xm][0]);$('#xBuild2').addEventListener('click',()=>$('#xOut').textContent=XO[xm][1]);
+
+quiz('#qQuiz','#qScore',[
+ {q:'In an artifact-based system, engineers mostly write imperative build scripts.',a:1,why:'They declare targets; the system decides how.'},
+ {q:'Pure, declared build actions make remote caching safe.',a:0,why:'Same inputs, same outputs: shareable.'},
+ {q:'Coarse modules are better for incremental builds.',a:1,why:'Fine-grained modules rebuild less and parallelize more.'},
+ {q:'Relying on a library your dependency happens to include is safe.',a:1,why:'Declare direct dependencies; transitive ones can vanish.'},
+ {q:'Pinning external versions with hashes makes builds reproducible.',a:0,why:'And protects against tampered downloads.'}],['True','False']);
+
+})();
+</script>
+</body>
+</html>
