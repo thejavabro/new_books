@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Unification and Anti-unification</title>
+<meta name="description" content="Unification asks what values make two trees equal; it powers type inference and logic programming. Anti-unification asks the reverse: what is the most specific pattern both trees fit? It finds clones and suggests fixes.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Fabulous Adventures companion: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:4px;flex-wrap:wrap;flex:1 1 80px;min-width:0}
+.dots i{width:clamp(6px,3vw,22px);height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code + data-structure helpers */
+pre.code{margin:0;font-family:var(--mono);font-size:.84rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .k{color:var(--blue);font-weight:600} pre.code .c{color:var(--muted);font-style:italic} pre.code .s{color:var(--d2)}
+code{font-family:var(--mono);font-size:.88em;background:var(--blue-soft);padding:1px 5px;border-radius:4px}
+.cells{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.cell{font-family:var(--mono);font-size:.9rem;min-width:2.2em;padding:4px 8px;border:1.5px solid var(--blue);border-radius:6px;background:var(--surface);text-align:center;transition:all .3s}
+.cell.hl{background:var(--blue);color:var(--surface)} .cell.pc{border-color:var(--pencil);background:var(--pencil-soft)} .cell.ok{border-color:var(--ok);background:var(--ok-soft)} .cell.bad{border-color:var(--bad);background:var(--bad-soft)} .cell.dim{opacity:.35}
+.log{font-family:var(--mono);font-size:.82rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+input[type=text],input[type=number]{font:inherit;font-size:.92rem;padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+canvas{max-width:100%;display:block}
+
+/* page */
+
+.tin{display:grid;grid-template-columns:1fr;gap:8px}
+.tin input{width:100%;font-family:var(--mono)}
+.res{font-family:var(--mono);font-size:.86rem;padding:10px 12px;border-radius:8px;background:var(--paper);border:1px solid var(--line);white-space:pre-wrap;word-break:break-all}
+.res.ok{border-color:var(--ok);background:var(--ok-soft)} .res.bad{border-color:var(--bad);background:var(--bad-soft)}
+.chg{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px}
+.chg div{border:1px solid var(--line);border-radius:8px;padding:10px;background:var(--surface);font-family:var(--mono);font-size:.8rem;white-space:pre}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Fabulous Adventures in DS&A · visual companion</a><span class="tag">Part 2 · Chapter 10 of 16</span></div>
+  <h1>Unification and Anti-unification</h1>
+  <p class="lede">Unification asks what values make two trees equal; it powers type inference and logic programming. Anti-unification asks the reverse: what is the most specific pattern both trees fit? It finds clones and suggests fixes.</p>
+  <nav class="toc" aria-label="Sections"><a href="#idea">The idea</a><a href="#unify">Unify</a><a href="#perf">Performance</a><a href="#types">Type inference</a><a href="#logic">Logic programming</a><a href="#anti">Anti-unify</a><a href="#fixes">Fix patterns</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="idea" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Fill the holes to make two things equal</h2></div>
+  <p><b>Unification</b>: given two things containing holes, find what to put in the holes so they become equal, as in A² + 6 = 5 × A (A is 2 or 3). Here the "things" are trees. <b>Anti-unification</b> runs the other way: given two different trees, keep what they share and turn every difference into a hole. One goes from general to specific, the other from specific to general.</p>
+  <div class="three">
+    <div class="stat"><b>Hole</b><span>A named gap, written as a capital letter: X, Y. (Logicians say "variable".)</span></div>
+    <div class="stat"><b>Constant</b><span>A value with no children: 2, EmptyStack, Alice.</span></div>
+    <div class="stat"><b>Symbol</b><span>A name with a left and right child term: ImStack(X, Y).</span></div>
+  </div>
+  <p>A <b>substitution</b> maps holes to terms (X → 2). A hole that is a key is <b>bound</b>, otherwise <b>free</b>. Substituting must keep going until no bound holes remain, because a term filled into a hole may itself contain bound holes. Keep that in mind: it is where everything goes wrong.</p>
+</section>
+
+<section id="unify" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Robinson's unification algorithm</h2></div>
+  <p>John Robinson's 1965 algorithm, slightly simplified. Start with an empty substitution, then: if either term is a bound hole, replace it by its value and start again. If the terms are equal, succeed. If one is a free hole H, <b>fail if H occurs in the other term</b> (looking through bound holes too), else record H → other. If both are symbols with the same name, unify left children, then right. Otherwise fail. Pick a problem, then try switching the safety checks off.</p>
+  <div class="sheet">
+    <div class="row"><select id="uPre" aria-label="Example problem"><option value="0">Stacks: X X vs 2 Y</option><option value="1">X must be 2 and a stack</option><option value="2">Aliasing: X ≡ Y, Y contains X</option><option value="3">Y is both 2 and EmptyStack</option><option value="4">The Blah tower (exponential)</option><option value="5">Type inference: Frob(1.5, x ⇒ [x])</option></select>
+      <label class="row small"><input type="radio" name="algo" value="naive"> attempt 1 (no checks)</label><label class="row small"><input type="radio" name="algo" value="occ"> attempt 2 (shallow occurs check)</label><label class="row small"><input type="radio" name="algo" value="rob" checked> Robinson</label></div>
+    <div class="tin"><input type="text" id="u1" aria-label="Term 1"><input type="text" id="u2" aria-label="Term 2"></div>
+    <div class="row"><button class="btn primary" id="uGo">Unify</button></div>
+    <div class="two"><div class="log" id="uLog"></div><div class="res" id="uRes"></div></div>
+  </div>
+  <div class="cardgrid" id="bugCards"></div>
+</section>
+
+<section id="perf" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>A terrible worst case, a fine typical case</h2></div>
+  <p>Stack n holes in towers, all on the left in one term and on the right in the other. The substitution stays small, but substituting it out builds a full binary tree: <b>2ⁿ nodes</b>. Space is a lower bound on time, so this is exponential time too. Equality checks and repeated occurs checks add more cost.</p>
+  <div class="sheet">
+    <label class="rng"><span>Holes in the tower: <b id="nhV">4</b></span><input type="range" id="nh" min="1" max="20" value="4"></label>
+    <div class="bars" id="nhBars"></div>
+  </div>
+  <div class="callout blue"><b class="h">What to do about it</b><span>Memoize the term factories as in HashLife: equality becomes a pointer check and the exponential tree collapses to a linear DAG. With such tricks the worst case drops to about O(n³), and linear-time algorithms exist. In practice, people still use Robinson's algorithm: worst cases are rare. Use the simplest algorithm with acceptable results and performance.</span></div>
+</section>
+
+<section id="types" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Type inference is unification</h2></div>
+  <p>Generic type parameters are holes. For <code>List&lt;B&gt; Frob&lt;A, B&gt;(A a, Func&lt;A, B&gt; f)</code> called as <code>var v = Frob(1.5, x =&gt; [x])</code>, write the declaration and the call as terms (A, B, T, U, V and X as holes) and unify. Choose the last preset above to run it: T → double, U → List&lt;double&gt;, X → double, so v is a List&lt;List&lt;double&gt;&gt;. (C#'s real inference differs in detail; this is closer to F# or OCaml.)</p>
+</section>
+
+<section id="logic" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Unification + backtracking = Prolog</h2></div>
+  <p>Facts: who likes what. Rule: <i>if likes(X, Y) and likes(Z, Y) then compatible(X, Z)</i>. To answer compatible(Bob, Q): unify the goal with the rule's conclusion (X → Bob, Z → Q), then solve the conditions one by one, unifying with each fact and backtracking over the alternatives. That combination is the heart of Prolog (1972) and of early, rigorous AI.</p>
+  <div class="sheet">
+    <div class="row"><span class="small">Who is compatible with</span><select id="who" aria-label="Person"><option>Alice</option><option selected>Bob</option><option>Carol</option><option>David</option></select><button class="btn" id="addFact">Add fact: likes(David, scuba)</button></div>
+    <div class="two"><div class="log" id="lgDb"></div><div class="log" id="lgTrace"></div></div>
+    <p id="lgOut" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="anti" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Anti-unification: the most specific generalization</h2></div>
+  <p>(1+2) × ((1+2)/5) and 6 × (6/5) differ, but both are a product whose right side divides by 5 and whose two left operands match. Mult(X, Div(Y, Z)) covers both but forgets two facts. The <b>most specific generalization</b> is Mult(A, Div(A, 5)). The Reynolds–Plotkin recursion: equal terms stay as they are; same-named symbols stay and recurse; otherwise <b>reuse the hole already standing for this exact pair</b>, or make a new one.</p>
+  <div class="sheet">
+    <div class="row"><select id="aPre" aria-label="Example"><option value="0">(1+2)×((1+2)/5) vs 6×(6/5)</option><option value="1">dog.drink() fix vs dog.bark() fix</option><option value="2">Add(1,2) vs Mult(1,2)</option></select><button class="btn primary" id="aGo">Anti-unify</button></div>
+    <div class="tin"><input type="text" id="a1" aria-label="Term 1"><input type="text" id="a2" aria-label="Term 2"></div>
+    <div class="res" id="aRes"></div>
+  </div>
+  <p class="small">Naively this is O(n²): an O(n) equality test and a scan of existing holes at each of O(n) calls. Memoized term factories and a memoized AU make it O(n). Holes stand for terms, never for symbol names, so Add(1,2) vs Mult(1,2) is just a hole.</p>
+</section>
+
+<section id="fixes" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Learning bug-fix patterns from history</h2></div>
+  <p>Anti-unification finds clones: duplicated code where one fix should apply everywhere, or plagiarized homework with renamed variables. At Facebook the author's team went further. They took every code change that fixed a null-dereference defect, turned each into a term Change(before, after), and anti-unified them. A dozen common fix patterns emerged. Then, given new buggy code, <b>unify</b> it with a pattern's "before" and apply the substitution to its "after" to suggest a fix.</p>
+  <div class="sheet stepper" id="fxStep">
+    <div class="chg" id="fxBox"></div>
+  </div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="score"></span></div><div class="quiz" id="quizBox"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Fabulous Adventures in Data Structures and Algorithms</i> by Eric Lippert (Manning, 2026). Explanations, code snippets, simulations and drawings are original summaries written for study; they are not taken from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch09-pretty-printing.html"><span>Previous · Chapter 9</span><b>Greedy Iterative Pretty Printing</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch11-monads.html"><span>Next · Chapter 11</span><b>Interlude: Monads</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('fadsa:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('fadsa:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+
+/* terms */
+const H=n=>({k:'h',n}),K=v=>({k:'c',v}),S=(n,l,r)=>({k:'s',n,l,r});
+function parseT(src){const tk=src.match(/[A-Za-z_][\w]*|\d+(\.\d+)?|[(),]/g)||[];let i=0;
+ function t(){const x=tk[i++];if(x==null)throw new Error('unexpected end');if(tk[i]==='('){i++;const l=t();if(tk[i++]!==',')throw new Error('symbol '+x+' needs two children');const r=t();if(tk[i++]!==')')throw new Error('missing )');return S(x,l,r)}
+  return /^[A-Z]\d*$/.test(x)?H(x):K(x)}
+ const r=t();if(i<tk.length)throw new Error('extra input: '+tk[i]);return r}
+const show=t=>t.k==='h'?t.n:t.k==='c'?t.v:`${t.n}(${show(t.l)},${show(t.r)})`;
+const eq=(a,b)=>a===b||(a.k===b.k&&(a.k==='h'?a.n===b.n:a.k==='c'?a.v===b.v:a.n===b.n&&eq(a.l,b.l)&&eq(a.r,b.r)));
+function holes(t,acc){acc=acc||new Set();if(t.k==='h')acc.add(t.n);else if(t.k==='s'){holes(t.l,acc);holes(t.r,acc)}return acc}
+class Deep extends Error{}
+function subst(t,s,d){d=d||0;if(d>400)throw new Deep();if(t.k==='h')return s.has(t.n)?subst(s.get(t.n),s,d+1):t;if(t.k==='c')return t;const l=subst(t.l,s,d+1),r=subst(t.r,s,d+1);return l===t.l&&r===t.r?t:S(t.n,l,r)}
+function size(t){return t.k==='s'?1+size(t.l)+size(t.r):1}
+function occurs(h,t,s,seen){seen=seen||new Set();for(const x of holes(t)){if(x===h)return true;if(s.has(x)&&!seen.has(x)){seen.add(x);if(occurs(h,s.get(x),s,seen))return true}}return false}
+function unify(a,b,algo,log){const s=new Map();let steps=0;
+ function u(t1,t2,d){if(++steps>300)throw new Deep();const pad='  '.repeat(Math.min(d,8));
+  if(algo==='rob'){if(t1.k==='h'&&s.has(t1.n)){log.push(pad+`${t1.n} is bound; use ${show(s.get(t1.n))}`);return u(s.get(t1.n),t2,d)}if(t2.k==='h'&&s.has(t2.n)){log.push(pad+`${t2.n} is bound; use ${show(s.get(t2.n))}`);return u(t1,s.get(t2.n),d)}}
+  log.push(pad+`unify ${show(t1)} with ${show(t2)}`);if(eq(t1,t2)){log.push(pad+'  equal ✓');return true}
+  for(const [h,o] of [[t1,t2],[t2,t1]])if(h.k==='h'){
+   if(algo==='occ'&&holes(o).has(h.n)){log.push(pad+`  ${h.n} occurs in ${show(o)} ✗`);return false}
+   if(algo==='rob'&&occurs(h.n,o,s)){log.push(pad+`  occurs check: ${h.n} occurs in ${show(o)} (through bound holes) ✗`);return false}
+   if(s.has(h.n))log.push(pad+`  ⚠ ${h.n} was already bound to ${show(s.get(h.n))}; overwriting!`);s.set(h.n,o);log.push(pad+`  ${h.n} → ${show(o)}`);return true}
+  if(t1.k==='s'&&t2.k==='s'&&t1.n===t2.n)return u(t1.l,t2.l,d+1)&&u(t1.r,t2.r,d+1);
+  log.push(pad+'  mismatch ✗');return false}
+ return u(a,b,0)?s:null}
+function tower(n){const hs=[...Array(n)].map((_,i)=>H(n<=4?'WXYZ'[4-n+i]:'H'+i));let t1=K('2'),t2=K('2');for(let i=n-1;i>=0;i--)t1=S('Blah',hs[i],t1);for(let i=n-1;i>=0;i--)t2=S('Blah',t2,hs[i]);return[t1,t2]}
+const PRE=[['ImStack(X,ImStack(X,EmptyStack))','ImStack(2,Y)'],['ImStack(X,ImStack(X,EmptyStack))','ImStack(2,X)'],['ImStack(X,ImStack(X,EmptyStack))','ImStack(Y,Y)'],['Pair(Y,Y)','Pair(2,EmptyStack)'],tower(4).map(show),
+ ['Frob(Generic(List,B),Sig(Comma(A,B),Comma(A,Generic(Func,Comma(A,B)))))','Frob(V,Sig(Comma(T,U),Comma(double,Generic(Func,Comma(X,Generic(List,X))))))']];
+function loadU(){const p=PRE[+$('#uPre').value];$('#u1').value=p[0];$('#u2').value=p[1];runU()}
+function runU(){const algo=document.querySelector('input[name=algo]:checked').value;const log=[];let out='',cls='';
+ try{const a=parseT($('#u1').value),b=parseT($('#u2').value);let s;try{s=unify(a,b,algo,log)}catch(e){if(e instanceof Deep){out='Unification ran away: unbounded recursion.';cls='bad'}else throw e}
+  if(!out){if(!s){out='No unifier: the terms cannot be made equal.';cls='bad'}else{const lines=[...s].map(([h,t])=>`${h} → ${show(t)}`);let r1;
+   try{r1=subst(a,s);const r2=subst(b,s);out=`Substitution:\n${lines.join('\n')}\n\nterm 1 becomes ${show(r1).length>300?show(r1).slice(0,300)+'…':show(r1)}\n(${size(r1)} nodes)${eq(r1,r2)?'\n✓ both sides now equal':'\n✗ the two sides are NOT equal: the substitution is wrong'}`;cls=eq(r1,r2)?'ok':'bad'}
+   catch(e){if(!(e instanceof Deep))throw e;out=`Substitution built:\n${lines.join('\n')}\n\nbut Substitute() never terminates: a hole is defined in terms of itself. Stack overflow!`;cls='bad'}}}}
+ catch(e){out='Parse error: '+e.message;cls='bad'}
+ $('#uLog').textContent=log.join('\n');$('#uRes').textContent=out;$('#uRes').className='res '+cls}
+$('#uPre').addEventListener('change',loadU);$('#uGo').addEventListener('click',runU);document.querySelectorAll('input[name=algo]').forEach(r=>r.addEventListener('change',runU));loadU();
+cards('#bugCards',[{t:'Bug 1: no occurs check',d:'Unify ImStack(X, ImStack(X, Empty)) with ImStack(2, X): X → 2 then X → a stack containing X. Either the dictionary throws, or the old binding is silently replaced and Substitute recurses forever.',c:'bad'},
+ {t:'Bug 2: holes alias holes',d:'With ImStack(Y, Y), X → Y is recorded and then Y → a stack containing X. Y itself doesn\'t occur, but X does, and X means Y. The occurs check must look through bound holes.',c:'d3'},
+ {t:'Bug 3: forgetting bindings',d:'Pair(Y, Y) vs Pair(2, EmptyStack): after Y → 2, the second Y must be looked up and 2 unified with EmptyStack, which fails cleanly.',c:'d5'}]);
+
+/* perf bars */
+function nh(){const n=+$('#nh').value;$('#nhV').textContent=n;const[a,b]=tower(n);const s=unify(a,b,'rob',[]);const r=n<=16?size(subst(a,s)):Math.pow(2,n+1)-1;
+ bars('#nhBars',[{l:'input term nodes',v:Math.log2(size(a)+size(b)),c:'blue',txt:(size(a)+size(b)).toLocaleString()},{l:'substitution entries',v:Math.log2(s.size+1),c:'ok',txt:s.size},{l:'result tree nodes',v:Math.log2(r),c:'bad',txt:r.toLocaleString()},{l:'with deduplication',v:Math.log2(n+2),c:'d2',txt:(n+1)+' distinct'}],Math.log2(Math.pow(2,21)))}
+$('#nh').addEventListener('input',nh);nh();
+
+/* logic */
+let facts=[['Alice','scuba'],['Bob','scuba'],['Bob','birdwatching'],['Carol','birdwatching'],['David','sailing']];
+function solveLogic(){const who=$('#who').value,tr=[],ans=new Set();const goal=S('compatible',K(who),H('Q'));tr.push(`goal ${show(goal)}`);
+ const rule=S('compatible',H('X'),H('Z'));const s0=unify(goal,rule,'rob',[]);tr.push(`unify with rule head ${show(rule)}: ${[...s0].map(([h,t])=>h+'→'+show(t)).join(', ')}`);
+ const c1=subst(S('likes',H('X'),H('Y')),s0);tr.push(`subgoal 1: ${show(c1)}`);
+ facts.forEach(f=>{const ft=S('likes',K(f[0]),K(f[1]));const s1=unify(c1,ft,'rob',[]);if(!s1)return;const y=s1.get('Y');tr.push(`  matches ${show(ft)} so Y → ${show(y)}`);
+  const c2=S('likes',H('Q'),y);tr.push(`  subgoal 2: ${show(c2)}`);facts.forEach(g=>{const gt=S('likes',K(g[0]),K(g[1]));const s2=unify(c2,gt,'rob',[]);if(s2){tr.push(`    matches ${show(gt)} → Q = ${show(s2.get('Q'))}`);ans.add(show(s2.get('Q')))}});tr.push('  backtrack')});
+ $('#lgDb').textContent=facts.map(f=>`likes(${f[0]}, ${f[1]})`).join('\n')+'\n\nif likes(X,Y) and likes(Z,Y)\nthen compatible(X,Z)';$('#lgTrace').textContent=tr.join('\n');
+ $('#lgOut').innerHTML=`${who} is compatible with: ${[...ans].map(a=>'<span class="chip">'+a+'</span>').join(' ')||'nobody'}`+(ans.has(who)?' (everyone with an interest is compatible with themselves under this rule)':'')}
+$('#who').addEventListener('change',solveLogic);$('#addFact').addEventListener('click',()=>{if(!facts.some(f=>f[0]==='David'&&f[1]==='scuba'))facts.push(['David','scuba']);$('#addFact').disabled=true;solveLogic()});solveLogic();
+
+/* anti-unification */
+function antiUnify(a,b){const used=new Set([...holes(a),...holes(b)]);const s1=new Map(),s2=new Map();let k=0;
+ const mk=()=>{let n;do{const L='ABCDEFGHIJKLMNOPQRSTUVWXYZ'[k%26];n=L+(k>=26?Math.floor(k/26):'');k++}while(used.has(n));return n};
+ function au(x,y){if(eq(x,y))return x;if(x.k==='s'&&y.k==='s'&&x.n===y.n)return S(x.n,au(x.l,y.l),au(x.r,y.r));for(const[h,t] of s1)if(eq(t,x)&&eq(s2.get(h),y))return H(h);const h=mk();s1.set(h,x);s2.set(h,y);return H(h)}
+ return{r:au(a,b),s1,s2}}
+const APRE=[['Mult(Add(1,2),Div(Add(1,2),5))','Mult(6,Div(6,5))'],['Change(Call(dog,drink),If(NotNull(dog,nil),Call(dog,drink)))','Change(Call(dog,bark),If(NotNull(dog,nil),Call(dog,bark)))'],['Add(1,2)','Mult(1,2)']];
+function loadA(){const p=APRE[+$('#aPre').value];$('#a1').value=p[0];$('#a2').value=p[1];runA()}
+function runA(){try{const a=parseT($('#a1').value),b=parseT($('#a2').value);const{r,s1,s2}=antiUnify(a,b);const sb=m=>[...m].map(([h,t])=>`${h} → ${show(t)}`).join(', ')||'(empty)';
+ $('#aRes').textContent=`generalization: ${show(r)}\nsub1: ${sb(s1)}\nsub2: ${sb(s2)}\ncheck: sub1 gives term 1? ${eq(subst(r,s1),a)?'✓':'✗'}   sub2 gives term 2? ${eq(subst(r,s2),b)?'✓':'✗'}`;$('#aRes').className='res ok'}catch(e){$('#aRes').textContent='Parse error: '+e.message;$('#aRes').className='res bad'}}
+$('#aPre').addEventListener('change',loadA);$('#aGo').addEventListener('click',runA);loadA();
+
+/* fix deduction stepper */
+const code=t=>{const c=x=>x.k==='s'?(x.n==='Call'?`${c(x.l)}.${c(x.r)}();`:x.n==='If'?`if (${c(x.l)})\n  ${c(x.r)}`:x.n==='NotNull'?`${c(x.l)} != null`:show(x)):x.k==='h'?x.n:x.v;return t.n==='Change'?`before: ${c(t.l)}\nafter:  ${c(t.r)}`:c(t)};
+const ch=['Change(Call(dog,drink),If(NotNull(dog,nil),Call(dog,drink)))','Change(Call(dog,bark),If(NotNull(dog,nil),Call(dog,bark)))','Change(Call(cat,meow),If(NotNull(cat,nil),Call(cat,meow)))'].map(parseT);
+const au12=antiUnify(ch[0],ch[1]).r,au3=antiUnify(au12,ch[2]).r;const bug=parseT('Call(frog,ribbit)');const us=unify(bug,au3.l,'rob',[]);const fix=subst(au3.r,us);
+const FX=[{c:'Three real-looking changes that fixed null dereferences.',b:ch.map((t,i)=>`change ${i+1}\n`+code(t))},
+ {c:'Anti-unify changes 1 and 2: only the method name differs, so it becomes a hole.',b:[`AU(1, 2)\n`+code(au12)]},
+ {c:'Anti-unify with change 3: the receiver becomes a hole too. A fix pattern has emerged.',b:[`AU(AU(1,2), 3)\n`+code(au3)]},
+ {c:`New buggy code: frog.ribbit(); Unify it with the pattern's "before": ${[...us].map(([h,t])=>h+' → '+show(t)).join(', ')}. Apply that to "after" to suggest the fix.`,b:['buggy\nfrog.ribbit();','suggested fix\n'+code(fix)]}];
+$('#fxStep').insertAdjacentHTML('beforeend',stepHTML());stepper('#fxStep',FX.map(f=>f.c),i=>{$('#fxBox').innerHTML=FX[i].b.map(x=>`<div>${x.replace(/</g,'&lt;')}</div>`).join('')});
+
+quiz('#quizBox','#score',[
+ {q:'Unification goes from…',o:['specific to general','general to specific'],a:1,why:'It fills holes with specific terms. Anti-unification generalizes.'},
+ {q:'Why is an occurs check needed?',o:['For speed','To stop a hole being defined in terms of itself','To sort holes'],a:1,why:'Otherwise Substitute recurses forever.'},
+ {q:'Why must the occurs check look through bound holes?',o:['Holes can alias other holes','Constants can change','For memoization'],a:0,why:'X → Y and Y → f(X) is a cycle even though Y is not literally in f(X).'},
+ {q:'Anti-unifying (1+2)×((1+2)/5) with 6×(6/5) gives…',o:['Mult(X,Div(Y,Z))','Mult(A,Div(A,5))','A'],a:1,why:'Keep every shared fact, including that both left operands are equal.'},
+ {q:'Prolog combines unification with…',o:['greedy search','backtracking search','hashing'],a:1,why:'Try each matching fact, and back up on failure.'}]);
+
+})();
+</script>
+</body>
+</html>

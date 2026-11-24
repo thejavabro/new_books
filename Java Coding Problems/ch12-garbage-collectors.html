@@ -1,0 +1,513 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Garbage Collectors</title>
+<meta name="description" content="The garbage collector decides how long your program pauses and how much memory it uses. Learn the stages, the generational idea, how G1 and ZGC differ, and how CDS archives speed up start-up.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Java Coding Problems companion. Layout: a workbench reading column on blueprint grid paper.
+   Blue ink = structure and the JVM, orange pencil = your code, green = works, red = breaks.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code */
+:root{--codebg:#f7f9fc}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--codebg:#0e1a28}}
+:root[data-theme="dark"]{--codebg:#0e1a28}
+pre.code{font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--codebg);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:0;overflow-x:auto;white-space:pre;tab-size:4;min-width:0;max-width:100%}
+code{font-family:var(--mono);font-size:.88em;background:var(--codebg);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+pre.code .tk{color:var(--d4);font-weight:600} pre.code .ts{color:var(--d2)} pre.code .tc{color:var(--muted);font-style:italic}
+pre.code .tn{color:var(--d3)} pre.code .tt{color:var(--blue)} pre.code .ta{color:var(--d5)}
+pre.code mark,.hl{background:var(--mid-soft);color:inherit;border-radius:3px;outline:1px solid var(--mid)}
+.out{font-family:var(--mono);font-size:.82rem;background:var(--ink);color:var(--paper);border-radius:8px;padding:10px 14px;white-space:pre-wrap;overflow-wrap:anywhere;min-height:2.6em}
+.out .err{color:#ff9b8f}
+.theme-btn{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted)}
+.theme-btn:hover{border-color:var(--blue);color:var(--blue)}
+.pnum{font-family:var(--mono);font-size:.72rem;color:var(--pencil);border:1px solid var(--pencil);border-radius:4px;padding:1px 6px;white-space:nowrap}
+.cells{display:flex;flex-wrap:wrap;gap:4px}
+.cell{min-width:34px;height:34px;padding:0 6px;display:inline-grid;place-items:center;border:1px solid var(--line);border-radius:6px;background:var(--paper);font-family:var(--mono);font-size:.8rem;transition:background .3s,border-color .3s}
+.cell.on{background:var(--blue-soft);border-color:var(--blue)}
+.cell.hot{background:var(--pencil-soft);border-color:var(--pencil)}
+.cell.ok{background:var(--ok-soft);border-color:var(--ok)}
+.cell.bad{background:var(--bad-soft);border-color:var(--bad)}
+input[type=text],input[type=number]{font:inherit;font-family:var(--mono);font-size:.9rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+.sheet>.seg,.stack>.seg{align-self:flex-start}
+
+/* page */
+
+.gens{display:grid;grid-template-columns:2fr 1fr 1fr 3fr;gap:8px}
+@media (max-width:640px){.gens{grid-template-columns:1fr 1fr}}
+.gen{border:2px solid var(--line);border-radius:10px;padding:8px;min-height:90px;display:flex;flex-direction:column;gap:6px;background:var(--surface)}
+.gen.eden{border-color:var(--ok)} .gen.surv{border-color:var(--d2)} .gen.old{border-color:var(--d5)}
+.gen .small{font-family:var(--mono);font-size:.72rem}
+.objs{display:flex;flex-wrap:wrap;gap:3px}
+.ob{width:24px;height:22px;border-radius:4px;font-family:var(--mono);font-size:.62rem;display:grid;place-items:center;background:var(--blue);color:var(--surface)}
+.ob.dead{background:var(--line);color:var(--muted)}
+.regions{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:3px}
+.rg{aspect-ratio:1;border-radius:4px;font-family:var(--mono);font-size:.62rem;display:grid;place-items:center;border:1px solid var(--line);position:relative;overflow:hidden;background:var(--paper)}
+.rg i{position:absolute;left:0;bottom:0;width:100%;background:var(--bad);opacity:.25}
+.rg.E{border-color:var(--ok);color:var(--ok)} .rg.S{border-color:var(--d2);color:var(--d2)} .rg.O{border-color:var(--d5);color:var(--d5)} .rg.H{border-color:var(--pencil);color:var(--pencil);background:var(--pencil-soft)}
+.rg.cs{outline:2px solid var(--bad)}
+.ptr{display:grid;grid-template-columns:repeat(64,minmax(0,1fr));gap:1px}
+.ptr span{height:24px;border-radius:2px;background:var(--paper);border:1px solid var(--line)}
+.ptr span.addr{background:var(--blue-soft);border-color:var(--blue)}
+.ptr span.meta{background:var(--pencil-soft);border-color:var(--pencil)}
+.ptr span.on{background:var(--pencil)}
+.prio{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Java Coding Problems · visual companion</a><span class="tag">Chapter 12 of 13 · Problems 243–257</span><button class="theme-btn" id="themeBtn" type="button">Dark theme</button></div>
+  <h1>Garbage Collectors and Dynamic CDS Archives</h1>
+  <p class="lede">The garbage collector decides how long your program pauses and how much memory it uses. Learn the stages, the generational idea, how G1 and ZGC differ, and how CDS archives speed up start-up.</p>
+  <nav class="toc" aria-label="Sections"><a href="#stages">Mark, sweep, compact</a><a href="#generations">Generations</a><a href="#choose">Choosing a GC</a><a href="#g1">G1</a><a href="#zgc">ZGC</a><a href="#tuning">Logging & tuning</a><a href="#cds">AppCDS</a><a href="#check">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="stages" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>What a garbage collector actually does</h2></div>
+  <p>The GC's goal is to reclaim memory from objects no one can reach, without the program noticing too much (<span class="pnum">P243</span>). Most collectors combine three stages (<span class="pnum">P244</span>): <b>mark</b> everything reachable from the roots (stack variables, static fields), <b>sweep</b> the rest, and <b>compact</b> the survivors so free space is one block and allocation is a pointer bump. Step through a tiny heap.</p>
+  <div class="sheet stepper" id="msStp"><div class="svgbox"><svg id="msSvg" viewBox="0 0 640 200" role="img" aria-label="Heap objects being marked, swept and compacted"></svg></div></div>
+  <div class="cardgrid" id="termCards"></div>
+</section>
+
+<section id="generations" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>The generational idea: most objects die young</h2></div>
+  <p>The <b>weak generational hypothesis</b>: most objects die soon after they are created, and the few that survive tend to live long. So the heap is split. New objects go to <b>eden</b>; a cheap, frequent <b>minor GC</b> copies the survivors of eden and one survivor space into the other survivor space and ages them; objects that survive enough minor GCs (the tenuring threshold) are <b>promoted</b> to the <b>old</b> generation, which is collected rarely (<span class="pnum">P246</span>). Allocate and collect.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn primary" id="gAlloc">Allocate 6 objects</button><button class="btn" id="gMinor">Minor GC</button><button class="btn" id="gRst">Reset</button><label class="small">tenuring threshold <select id="gTh"><option>2</option><option selected>3</option><option>5</option></select></label></div>
+    <div class="gens">
+      <div class="gen eden"><span class="small">eden</span><div class="objs" id="gE"></div></div>
+      <div class="gen surv"><span class="small" id="gS0l">S0 (from)</span><div class="objs" id="gS0"></div></div>
+      <div class="gen surv"><span class="small" id="gS1l">S1 (to)</span><div class="objs" id="gS1"></div></div>
+      <div class="gen old"><span class="small">old</span><div class="objs" id="gO"></div></div>
+    </div>
+    <p class="small" id="gTxt">Numbers are object ages. Grey objects are already unreachable; the GC simply never copies them.</p>
+  </div>
+</section>
+
+<section id="choose" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Choosing and categorizing collectors</h2></div>
+  <p>Every collector trades <b>throughput</b> (share of time doing your work), <b>latency</b> (pause length) and <b>footprint</b> (memory overhead); you cannot max all three (<span class="pnum">P247–P248</span>). Say what matters and see the usual recommendation.</p>
+  <div class="sheet">
+    <div class="prio">
+      <label class="small">Heap size <select id="cH"><option value="s">under ~100 MB</option><option value="m" selected>1–30 GB</option><option value="l">tens of GB to TB</option></select></label>
+      <label class="small">Priority <select id="cP"><option value="tp">throughput (batch jobs)</option><option value="bal" selected>balanced, predictable pauses</option><option value="lat">lowest latency</option></select></label>
+      <label class="small">CPUs <select id="cC"><option value="1">1</option><option value="n" selected>several</option></select></label>
+    </div>
+    <div class="out" id="cOut"></div>
+    <div class="tbl"><table class="t" id="gcT"></table></div>
+  </div>
+</section>
+
+<section id="g1" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>G1: garbage first, region by region</h2></div>
+  <p>G1 (the default since JDK 9) cuts the heap into equal <b>regions</b> (1–32 MB), each currently playing eden, survivor, old or <b>humongous</b> (one object bigger than half a region) (<span class="pnum">P249</span>). It tracks how much garbage each old region holds, and in a <b>mixed</b> collection it evacuates the regions with the most garbage first, as many as fit the pause target <code>-XX:MaxGCPauseMillis</code> (default 200 ms). Recent JDKs improved its throughput, latency and footprint (<span class="pnum">P250–P252</span>). Red fill shows garbage.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn" id="g1Run">Let the app run</button><button class="btn primary" id="g1Young">Young GC</button><button class="btn primary" id="g1Mixed">Mixed GC</button><label class="small">pause budget: <select id="g1B"><option value="2">2 old regions</option><option value="4" selected>4 old regions</option><option value="8">8 old regions</option></select></label></div>
+    <div class="regions" id="g1R"></div>
+    <p class="small" id="g1Txt"></p>
+  </div>
+</section>
+
+<section id="zgc" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>ZGC: colored pointers and load barriers</h2></div>
+  <p>ZGC (production-ready in JDK 15, generational in JDK 21) does almost everything <b>concurrently</b>, so pauses stay under a millisecond regardless of heap size (<span class="pnum">P253</span>). Two tricks make that possible. <b>Colored pointers</b>: each 64-bit reference uses some bits for the address and a few for metadata (marked0, marked1, remapped, finalizable). <b>Load barriers</b>: a few instructions the JIT inserts wherever the app loads a reference, which check the color and, if the object has moved, fix the pointer on the spot. Step through a relocation.</p>
+  <div class="sheet">
+    <div class="ptr" id="ptrBits" aria-label="64-bit colored pointer"></div>
+    <p class="small">Blue: 44 address bits (16 TB). Orange: the 4 metadata bits. Grey: unused, reserved (the book's figure shows the original non-generational layout).</p>
+  </div>
+  <div class="sheet stepper" id="zStp"><div class="svgbox"><svg id="zSvg" viewBox="0 0 640 170" role="img" aria-label="Load barrier healing a pointer"></svg></div></div>
+</section>
+
+<section id="tuning" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Monitoring, logging and tuning</h2></div>
+  <p>Measure before tuning (<span class="pnum">P254</span>): <code>jstat -gc &lt;pid&gt;</code>, JDK Mission Control, or GC logs. Since JDK 9 all logging goes through unified logging, <code>-Xlog</code> (<span class="pnum">P255</span>). Build a logging flag, then look at the main knobs per collector (<span class="pnum">P256</span>).</p>
+  <div class="sheet">
+    <div class="row"><label class="small">tags <select id="lT"><option value="gc">gc</option><option value="gc*" selected>gc*</option><option value="gc+heap">gc+heap</option><option value="gc+phases">gc+phases</option><option value="safepoint">safepoint</option></select></label><label class="small">level <select id="lL"><option>info</option><option selected>debug</option><option>trace</option></select></label><label class="small">output <select id="lO"><option value="stdout">stdout</option><option value="file=gc.log" selected>file</option></select></label><label class="small"><input type="checkbox" id="lR" checked> rotate</label></div>
+    <div class="out" id="lOut"></div>
+  </div>
+  <div class="cardgrid" id="tuneCards"></div>
+</section>
+
+<section id="cds" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Class Data Sharing: a faster start</h2></div>
+  <p>At startup the JVM loads, parses and verifies thousands of classes. <b>Class Data Sharing</b> stores that work in an archive that is memory-mapped on the next run, and shared between JVMs on the same machine. The JDK ships an archive for its own classes; <b>AppCDS</b> adds yours (<span class="pnum">P257</span>). Compare start-up.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Archive" id="cdsSeg"><button data-c="0" aria-pressed="false">-Xshare:off</button><button data-c="1" aria-pressed="true">default JDK CDS</button><button data-c="2" aria-pressed="false">AppCDS (dynamic archive)</button></div>
+    <div class="bars" id="cdsBars"></div>
+    <pre class="code" id="cdsCode"></pre>
+    <p class="small">Bars are illustrative proportions, not measurements; real savings depend on how many classes the app loads.</p>
+  </div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Test yourself</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b class="blue">Mark, sweep, compact</b><span>Reachability from roots decides what lives.</span></div>
+    <div><b>Generations</b><span>Eden → survivors → old; most objects die in eden.</span></div>
+    <div><b class="pencil">Trade-offs</b><span>Throughput vs latency vs footprint.</span></div>
+    <div><b>G1</b><span>Regions, pause target, garbage-first mixed collections.</span></div>
+    <div><b class="okc">ZGC</b><span>Colored pointers + load barriers = sub-ms pauses.</span></div>
+    <div><b>AppCDS</b><span>Archive loaded classes for faster startup.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Java Coding Problems, Second Edition</i> by Anghel Leonard (Packt, 2024). Explanations, code snippets, diagrams and simulations are original summaries written for this companion; problem numbers refer to the book so you can look up the full solutions there.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch11-virtual-threads-deep-dive.html"><span>Previous · Chapter 11</span><b>Virtual Threads Deep Dive</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch13-sockets-sws.html"><span>Next · Chapter 13</span><b>Socket API and Simple Web Server</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('jcp:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('jcp:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* tiny Java highlighter for every pre.code (write plain escaped code; use ⟦...⟧ to mark a highlight) */
+const JKW=new Set('abstract assert boolean break byte case catch char class const continue default do double else enum extends final finally float for goto if implements import instanceof int interface long native new package private protected public return short static strictfp super switch synchronized this throw throws transient try void volatile while var record sealed permits non-sealed yield when true false null'.split(' '));
+function hiJava(src){const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const re=/(\/\/[^\n]*|\/\*[\s\S]*?\*\/)|("""[\s\S]*?"""|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*')|(@[A-Za-z]\w*)|(\b\d[\d_]*(?:\.\d+)?[LlFfDd]?\b|\b0x[0-9a-fA-F_]+\b)|(\b[A-Za-z_]\w*(?:-sealed)?\b)|(⟦|⟧)/g;
+  let out='',last=0,m;while((m=re.exec(src))){out+=esc(src.slice(last,m.index));last=re.lastIndex;
+    if(m[1])out+=`<span class="tc">${esc(m[1])}</span>`;else if(m[2])out+=`<span class="ts">${esc(m[2])}</span>`;else if(m[3])out+=`<span class="ta">${m[3]}</span>`;
+    else if(m[4])out+=`<span class="tn">${m[4]}</span>`;else if(m[5]){const w=m[5];out+=JKW.has(w)?`<span class="tk">${w}</span>`:/^[A-Z]/.test(w)?`<span class="tt">${w}</span>`:w}
+    else if(m[6])out+=m[6]==='⟦'?'<mark>':'</mark>';}
+  return out+esc(src.slice(last));}
+function hiAll(root){(root||document).querySelectorAll('pre.code:not([data-hi])').forEach(p=>{p.innerHTML=hiJava(p.textContent.replace(/^\n/,''));p.dataset.hi=1})}
+function setCode(elOrSel,src){const p=typeof elOrSel==='string'?$(elOrSel):elOrSel;p.innerHTML=hiJava(src.replace(/^\n/,''));p.dataset.hi=1}
+/* theme toggle */
+(function(){const r=document.documentElement;const t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+  const b=document.getElementById('themeBtn');if(!b)return;const cur=()=>r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+  const lab=()=>{b.textContent=cur()==='dark'?'Light theme':'Dark theme'};lab();
+  b.addEventListener('click',()=>{const n=cur()==='dark'?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n);lab()});})();
+document.addEventListener('DOMContentLoaded',()=>hiAll());
+
+
+/* mark sweep compact */
+const OB=[{id:'A',x:120,y:50,r:1},{id:'B',x:200,y:120},{id:'C',x:280,y:50},{id:'D',x:360,y:120},{id:'E',x:440,y:50},{id:'F',x:520,y:120},{id:'G',x:600,y:50}];
+const REF=[['root','A'],['A','B'],['B','D'],['C','E'],['E','C'],['root2','F'],['G','F']];
+const LIVE=new Set(['A','B','D','F']);
+const MS=['The heap holds seven objects. Two roots (a local variable and a static field) point into it.','Mark: follow references from the roots. A, B, D and F are reachable and get marked. C and E reference each other but nothing reaches them: a cycle is still garbage.','Sweep: unmarked objects (C, E, G) are reclaimed. Free space is now scattered in holes.','Compact: survivors slide together. Free memory is one contiguous block, so the next allocation is a pointer bump.'];
+function msDraw(s){const g=$('#msSvg');g.innerHTML='';const pos={};OB.forEach((o,i)=>{pos[o.id]=s>=3&&LIVE.has(o.id)?[120+[...LIVE].indexOf(o.id)*80,90]:[o.x,o.y]});pos.root=[30,50];pos.root2=[30,140];
+  [['root','stack var'],['root2','static field']].forEach(([r,t])=>{g.appendChild(el('rect',{x:2,y:pos[r][1]-14,width:72,height:28,rx:5,fill:'var(--blue-soft)',stroke:'var(--blue)'}));g.appendChild(el('text',{x:38,y:pos[r][1]+4,'text-anchor':'middle','font-size':10.5,fill:'var(--blue)'},t))});
+  REF.forEach(([a,b])=>{if(s>=2&&(!LIVE.has(b)||(a.length===1&&!LIVE.has(a))))return;const[x1,y1]=pos[a],[x2,y2]=pos[b];g.appendChild(el('line',{x1:a.startsWith('root')?74:x1,y1,x2,y2,stroke:'var(--muted)','stroke-width':1.5,'stroke-dasharray':s>=3?'3 3':''}))});
+  OB.forEach(o=>{const live=LIVE.has(o.id);if(s>=2&&!live){g.appendChild(el('rect',{x:o.x-18,y:o.y-18,width:36,height:36,rx:6,fill:'none',stroke:'var(--line)','stroke-dasharray':'3 3'}));return}
+    const[x,y]=pos[o.id];g.appendChild(el('rect',{x:x-18,y:y-18,width:36,height:36,rx:6,fill:s>=1&&live?'var(--ok-soft)':'var(--surface)',stroke:s>=1?(live?'var(--ok)':'var(--bad)'):'var(--ink)','stroke-width':2}));g.appendChild(el('text',{x,y:y+5,'text-anchor':'middle','font-size':14,'font-weight':700,fill:'var(--ink)'},o.id))});
+  if(s>=3){g.appendChild(el('rect',{x:440,y:72,width:190,height:36,rx:6,fill:'var(--paper)',stroke:'var(--ok)','stroke-dasharray':'4 3'}));g.appendChild(el('text',{x:535,y:95,'text-anchor':'middle','font-size':12,fill:'var(--ok)'},'one free block'))}}
+$('#msStp').insertAdjacentHTML('beforeend',stepHTML());stepper('#msStp',MS,msDraw);
+cards('#termCards',[{t:'Stop-the-world (STW)',d:'All application threads pause at a safepoint while the GC works. Short STW pauses are fine; long ones hurt latency.'},{t:'Concurrent vs parallel',d:'Parallel: many GC threads during a pause. Concurrent: GC threads run alongside the application.',c:'pencil'},{t:'Throughput, latency, footprint',d:'Time spent in your code; pause lengths; extra memory the GC needs. Optimizing one costs another.',c:'d2'},{t:'Live set and allocation rate',d:'How much is alive after a GC, and how fast the app creates garbage: the two numbers that drive GC cost.',c:'d5'}]);
+
+/* generations */
+let E=[],S0=[],S1=[],OLD=[],nid=0;
+function gDraw(msg){const r=a=>a.map(o=>`<span class="ob${o.dead?' dead':''}">${o.age}</span>`).join('');$('#gE').innerHTML=r(E);$('#gS0').innerHTML=r(S0);$('#gS1').innerHTML=r(S1);$('#gO').innerHTML=r(OLD);if(msg)$('#gTxt').textContent=msg}
+function gAlloc(){if(E.length>=18){gDraw('Eden is full: allocation would trigger a minor GC. Run one.');return}for(let i=0;i<6;i++)E.push({id:nid++,age:0,dead:Math.random()<.75});gDraw(`Allocated 6 objects in eden. Most will die young (about 3 in 4 here).`);
+  setTimeout(()=>{S0.forEach(o=>{if(!o.dead&&Math.random()<.3)o.dead=true});OLD.forEach(o=>{if(!o.dead&&Math.random()<.08)o.dead=true});gDraw()},250)}
+function gMinor(){const th=+$('#gTh').value;let copied=0,prom=0,freed=0;const to=[];[...E,...S0].forEach(o=>{if(o.dead){freed++;return}o.age++;if(o.age>=th){OLD.push(o);prom++}else{to.push(o);copied++}});E=[];S0=to;S1=[];
+  gDraw(`Minor GC: ${freed} dead objects reclaimed without being touched, ${copied} survivors copied to the other survivor space, ${prom} promoted to old (age ≥ ${th}). The survivor spaces then swap roles. Old garbage (grey) waits for a major/mixed GC.`)}
+$('#gAlloc').addEventListener('click',gAlloc);$('#gMinor').addEventListener('click',gMinor);$('#gRst').addEventListener('click',()=>{E=[];S0=[];S1=[];OLD=[];gDraw('Empty heap.')});gAlloc();
+
+/* choose */
+function choose(){const h=$('#cH').value,p=$('#cP').value,c=$('#cC').value;let g,why;
+  if(h==='s'||c==='1'){g='Serial';why='Small heaps or a single CPU: one GC thread, tiny overhead. Containers with 1 CPU and under ~1.8 GB get it by default.'}
+  else if(p==='tp'){g='Parallel';why='Batch and analytics jobs that care about total runtime, not pauses: all cores collect during STW pauses.'}
+  else if(p==='lat'||h==='l'){g='ZGC';why='Sub-millisecond pauses that do not grow with heap size, up to terabytes. Costs some throughput and memory. Use -XX:+ZGenerational on JDK 21.'}
+  else{g='G1';why='The default: good throughput with pause times aimed at MaxGCPauseMillis. A safe first choice.'}
+  const F={Serial:'-XX:+UseSerialGC',Parallel:'-XX:+UseParallelGC',G1:'-XX:+UseG1GC (default)',ZGC:'-XX:+UseZGC -XX:+ZGenerational'};$('#cOut').textContent=`→ ${g}   ${F[g]}\n${why}`}
+['#cH','#cP','#cC'].forEach(s=>$(s).addEventListener('change',choose));choose();
+$('#gcT').innerHTML='<tr><th>collector</th><th>generational</th><th>young pauses</th><th>old/full work</th><th>best for</th></tr>'+[['Serial','yes','STW, 1 thread','STW, 1 thread','small heaps'],['Parallel','yes','STW, many threads','STW, many threads','throughput'],['G1','yes','STW, parallel','mostly concurrent marking, STW evacuation','balanced default'],['ZGC','JDK 21+','concurrent','concurrent','low latency, huge heaps'],['Shenandoah','JDK 21: no','concurrent','concurrent (Brooks pointers)','low latency']].map(r=>`<tr>${r.map((c,i)=>i?`<td>${c}</td>`:`<td><b>${c}</b></td>`).join('')}</tr>`).join('');
+
+/* G1 regions */
+let R=[];function g1Reset(){R=Array.from({length:48},(_,i)=>({t:i<6?'E':i<8?'S':i<26?'O':i===26||i===27?'H':'F',g:0}));R.forEach(r=>{if(r.t==='O')r.g=Math.random()*.9})}
+function g1Draw(cs,msg){$('#g1R').innerHTML=R.map((r,i)=>`<div class="rg ${r.t==='F'?'':r.t}${cs&&cs.has(i)?' cs':''}" title="${r.t}">${r.t==='F'?'':r.t}${r.t==='O'||r.t==='E'?`<i style="height:${Math.round(r.g*100)}%"></i>`:''}</div>`).join('');if(msg)$('#g1Txt').textContent=msg}
+$('#g1Run').addEventListener('click',()=>{R.forEach(r=>{if(r.t==='O')r.g=Math.min(.95,r.g+Math.random()*.15)});let n=0;R.forEach(r=>{if(r.t==='F'&&n<6&&Math.random()<.5){r.t='E';r.g=.8;n++}});g1Draw(null,`The app allocated into ${n} new eden regions and old objects died over time.`)});
+$('#g1Young').addEventListener('click',()=>{const ed=R.filter(r=>r.t==='E').length;R.forEach(r=>{if(r.t==='E'){r.t='F';r.g=0}});R.forEach(r=>{if(r.t==='S')r.t='O',r.g=.1});let k=0;R.forEach(r=>{if(r.t==='F'&&k<2){r.t='S';k++}});g1Draw(null,`Young GC: evacuated live objects from ${ed} eden regions into fresh survivor regions; old survivors were promoted. Freed regions return to the free list.`)});
+$('#g1Mixed').addEventListener('click',()=>{const B=+$('#g1B').value;const olds=R.map((r,i)=>[r,i]).filter(([r])=>r.t==='O').sort((a,b)=>b[0].g-a[0].g).slice(0,B);const cs=new Set(olds.map(x=>x[1]));g1Draw(cs,`Collection set: the ${B} old regions with the most garbage (outlined), chosen to fit the pause budget.`);
+  setTimeout(()=>{const live=olds.reduce((s,[r])=>s+(1-r.g),0);olds.forEach(([r])=>{r.t='F';r.g=0});let need=Math.ceil(live);R.forEach(r=>{if(r.t==='F'&&need>0){r.t='O';r.g=0;need--}});g1Draw(null,`Mixed GC: live data from ${B} garbage-heavy regions was compacted into ${Math.ceil(live)} region(s), freeing ${B-Math.ceil(live)}. Regions with little garbage were left alone: not worth copying.`)},900)});
+g1Reset();g1Draw(null,'E eden · S survivor · O old · H humongous · empty = free.');
+
+/* ZGC */
+$('#ptrBits').innerHTML=Array.from({length:64},(_,i)=>{const b=63-i;return `<span class="${b<44?'addr':b<48?'meta':''}" title="bit ${b}"></span>`}).join('');
+const ZS=['The app holds a reference to object X, stored in page 1. The pointer\'s color says "good" for the current GC phase.','Concurrently, ZGC decides to evacuate page 1 (it is mostly garbage) and copies X to page 2, recording the move in a forwarding table. The app keeps running. The old pointer\'s color is now "bad".','The app loads the reference. The load barrier checks the color bits: bad! It looks up the forwarding table and finds X\'s new address.','The barrier rewrites the field with the new address and a good color ("self-healing"), then returns. Every later load is fast again. Page 1 is freed once all pointers are healed.'];
+function zDraw(s){const g=$('#zSvg');g.innerHTML='';const page=(x,t,c)=>{g.appendChild(el('rect',{x,y:20,width:170,height:110,rx:8,fill:'var(--paper)',stroke:`var(--${c})`}));g.appendChild(el('text',{x:x+85,y:150,'text-anchor':'middle','font-size':12,class:'s-muted'},t))};
+  page(250,'page 1 (evacuating)',s>=1?'bad':'line');page(450,'page 2','line');
+  const ox=s>=1?535:335;if(s>=1&&s<3){g.appendChild(el('rect',{x:315,y:55,width:40,height:36,rx:5,fill:'none',stroke:'var(--line)','stroke-dasharray':'3 3'}))}
+  if(!(s>=3)){}g.appendChild(el('rect',{x:ox-20,y:55,width:40,height:36,rx:5,fill:'var(--blue)'}));g.appendChild(el('text',{x:ox,y:78,'text-anchor':'middle','font-size':14,'font-weight':700,fill:'var(--surface)'},'X'));
+  g.appendChild(el('rect',{x:10,y:55,width:130,height:36,rx:5,fill:'var(--surface)',stroke:'var(--pencil)'}));g.appendChild(el('text',{x:75,y:78,'text-anchor':'middle','font-size':11.5,fill:'var(--ink)'},'field: ref to X'));
+  const good=s===0||s===3;const tx=good?ox:335;g.appendChild(el('line',{x1:140,y1:73,x2:tx-22,y2:73,stroke:good?'var(--ok)':'var(--bad)','stroke-width':2.5,'stroke-dasharray':good?'':'5 4'}));
+  g.appendChild(el('text',{x:150,y:110,'font-size':11.5,'font-weight':700,fill:good?'var(--ok)':'var(--bad)'},good?'color: good':'color: bad (stale)'));
+  if(s===2){g.appendChild(el('rect',{x:120,y:120,width:140,height:28,rx:14,fill:'var(--mid-soft)',stroke:'var(--mid)'}));g.appendChild(el('text',{x:190,y:139,'text-anchor':'middle','font-size':11,fill:'var(--ink)'},'load barrier fires'))}}
+$('#zStp').insertAdjacentHTML('beforeend',stepHTML());stepper('#zStp',ZS,zDraw);
+
+/* logging */
+function lg(){const o=$('#lO').value;$('#lOut').textContent=`java -Xlog:${$('#lT').value}=${$('#lL').value}:${o}${o!=='stdout'?':time,uptime,level,tags':''}${$('#lR').checked&&o!=='stdout'?':filecount=5,filesize=10m':''} -jar app.jar\n\n# replaces the pre-JDK 9 flags -XX:+PrintGCDetails, -Xloggc:gc.log`}
+['#lT','#lL','#lO','#lR'].forEach(s=>$(s).addEventListener('change',lg));lg();
+cards('#tuneCards',[{t:'All collectors',d:'-Xms / -Xmx set the heap; equal values avoid resizing. -XX:+AlwaysPreTouch touches pages at startup. Metaspace: -XX:MaxMetaspaceSize.'},{t:'Serial and Parallel',d:'Parallel: -XX:ParallelGCThreads, -XX:MaxGCPauseMillis as a soft goal, -XX:GCTimeRatio for the throughput goal (1/(1+n) of time in GC).',c:'pencil'},{t:'G1',d:'-XX:MaxGCPauseMillis (the main knob), -XX:G1HeapRegionSize, -XX:G1NewSizePercent / G1MaxNewSizePercent, -XX:G1MixedGCCountTarget, -XX:+UseStringDeduplication.',c:'d2'},{t:'ZGC',d:'Mostly self-tuning: give it enough heap (-Xmx) and optionally -XX:ConcGCThreads. -XX:SoftMaxHeapSize asks it to stay below a size when it can.',c:'d5'}]);
+
+/* CDS */
+const CDS=[[['load+parse classes',55,'bad'],['verify',20,'bad'],['app init',25,'blue']],[['load JDK classes (mapped)',8,'ok'],['load app classes',35,'bad'],['verify app',12,'bad'],['app init',25,'blue']],[['map JDK + app archive',10,'ok'],['app init',25,'blue']]];
+const CC=['java -Xshare:off -jar app.jar        # no archive at all','java -jar app.jar                    # JDK\'s own classes.jsa is used by default since JDK 12','# JDK 13+: record at exit, reuse next time\njava -XX:ArchiveClassesAtExit=app.jsa -jar app.jar\njava -XX:SharedArchiveFile=app.jsa -jar app.jar\n# JDK 19+: one flag does both\njava -XX:+AutoCreateSharedArchive -XX:SharedArchiveFile=app.jsa -jar app.jar'];
+function cds(i){const tot=CDS[i].reduce((s,x)=>s+x[1],0);bars('#cdsBars',[...CDS[i].map(x=>({l:x[0],v:x[1],c:x[2],txt:x[1]})),{l:'total',v:tot,c:'ink',txt:tot}],100);setCode('#cdsCode',CC[i])}
+seg('#cdsSeg button',b=>cds(+b.dataset.c));cds(1);
+
+quiz('#qQuiz','#qScore',[
+ {q:'Two objects that reference only each other, with no path from a root, are…',o:['kept','collected'],a:1,why:'Reachability from roots is what counts; cycles do not keep objects alive.'},
+ {q:'Where are new objects normally allocated?',o:['old generation','eden'],a:1,why:'Large (humongous) objects are the exception in G1.'},
+ {q:'G1 picks which old regions to collect by…',o:['age','most garbage first'],a:1,why:'That is the name: garbage-first.'},
+ {q:'What fixes a stale pointer in ZGC?',o:['a stop-the-world pass','the load barrier, on access'],a:1,why:'Pointers self-heal when loaded.'},
+ {q:'Batch job, total runtime matters, pauses do not. Pick…',o:['Parallel','ZGC'],a:0,why:'Parallel maximizes throughput.'}]);
+
+})();
+</script>
+</body>
+</html>

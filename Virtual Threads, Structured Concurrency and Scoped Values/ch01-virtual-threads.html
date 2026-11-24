@@ -1,0 +1,676 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Virtual Threads</title>
+<meta name="description" content="Java threads used to be thin wrappers around expensive operating-system threads. Virtual threads are cheap objects on the heap that borrow a real thread only while they have work to do, so you can have millions of them.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Virtual Threads companion. Blue ink = threads and structure, orange pencil = data and context, green = good outcome, red = bad outcome, amber = "changed since the book".
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code listings */
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;tab-size:4;max-width:100%}
+pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)} pre.code .c{color:var(--muted);font-style:italic} pre.code .a{color:var(--pencil)}
+pre.code .hl{background:var(--mid-soft);display:inline-block;min-width:100%;border-radius:3px}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+/* "changed since the book" note */
+.callout.now{border-color:var(--mid);background:var(--mid-soft)}
+.callout.now b.h::before{content:"JDK update · ";font-family:var(--mono);font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mid)}
+.callout.bad{border-color:var(--bad);background:var(--bad-soft)}
+.tabs{display:flex;flex-direction:column;gap:10px}
+.cons{font-family:var(--mono);font-size:.8rem;background:var(--ink);color:var(--paper);border-radius:8px;padding:10px 12px;min-height:3em;white-space:pre-wrap;overflow-wrap:anywhere}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:.85rem;color:var(--muted)}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.stats4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+@media (max-width:640px){.stats4{grid-template-columns:1fr 1fr}}
+.stat .big{font-size:clamp(1.5rem,5vw,2.1rem)}
+
+/* page */
+
+.memrow{display:grid;grid-template-columns:7.5em minmax(0,1fr) 7em;gap:10px;align-items:center;font-size:.92rem}
+.memrow .track{height:20px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden;position:relative}
+.memrow .track i{display:block;height:100%;transition:width .4s,background .4s}
+.memrow .v{font-family:var(--mono);font-size:.82rem;text-align:right}
+@media (max-width:520px){.memrow{grid-template-columns:1fr auto}.memrow .track{grid-column:1/-1;grid-row:2}}
+.sim{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr) minmax(0,1fr);gap:10px}
+.sim .col{border:1px dashed var(--line);border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:6px;min-height:170px;min-width:0}
+.sim .col h4{margin:0;font-family:var(--mono);font-size:.7rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.pool{display:flex;flex-wrap:wrap;gap:3px;align-content:flex-start}
+.vt{width:14px;height:14px;border-radius:3px;background:var(--blue);display:inline-block;flex:none}
+.vt.park{background:var(--pencil)}
+.vt.pin{background:var(--bad)}
+.vt.done{background:var(--ok)}
+.carrier{border:1.5px solid var(--line);border-radius:6px;padding:5px 7px;display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:.72rem;background:var(--surface);min-width:0;transition:border-color .2s,background .2s}
+.carrier .lbl{color:var(--muted);white-space:nowrap}
+.carrier.run{border-color:var(--blue)}
+.carrier.blocked{border-color:var(--bad);background:var(--bad-soft)}
+.carrier .st{margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media (max-width:560px){.sim{grid-template-columns:1fr 1fr}.sim .mid{grid-column:1/-1;grid-row:1}}
+.pinTbl td.y{color:var(--bad);font-weight:700}.pinTbl td.n{color:var(--ok);font-weight:700}.pinTbl td.c{color:var(--mid);font-weight:700}
+.sort{display:flex;flex-direction:column;gap:8px}
+.sort .it{display:grid;grid-template-columns:1fr auto;gap:8px 12px;align-items:center;border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--surface)}
+.sort .it .opts{display:flex;gap:6px;flex-wrap:wrap}
+.sort .it button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 10px;font-size:.85rem}
+.sort .it button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.sort .it button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+.sort .it .fb{grid-column:1/-1;font-size:.9rem;color:var(--muted)}
+@media (max-width:560px){.sort .it{grid-template-columns:1fr}}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Java Loom · visual companion</a><span class="tag">Chapter 1 of 4</span></div>
+  <h1>Virtual Threads</h1>
+  <p class="lede">Java threads used to be thin wrappers around expensive operating-system threads. Virtual threads are cheap objects on the heap that borrow a real thread only while they have work to do, so you can have millions of them.</p>
+  <nav class="toc" aria-label="Sections"><a href="#platform">Platform threads</a><a href="#pools">Executor pools</a><a href="#async">Async code</a><a href="#create">Creating them</a><a href="#carriers">Carrier threads</a><a href="#mount">Mount and unmount</a><a href="#pinning">Pinning</a><a href="#avoid">When not to</a><a href="#check">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="platform" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>A Java thread used to be an OS thread</h2></div>
+  <p>Before Java 21 there was one kind of thread. <code>new Thread(task).start()</code> asks the operating system for a kernel thread, and the Java object is only a thin wrapper around it. That request is a system call, and the OS sets aside a fixed block of stack memory for the thread up front, often around <b>1 MB</b> by default. The JVM can't shrink it later because it has no idea how deep the thread's call stack will go.</p>
+  <p>The book now calls these <b>platform threads</b>, because the platform (the OS) manages them. They haven't gone anywhere. Virtual threads are a second implementation of the same <code>Thread</code> class.</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="osSvg" viewBox="0 0 660 190" role="img" aria-label="A Java platform thread maps one to one onto an operating system thread with its own fixed stack, while virtual threads live on the heap"></svg></div>
+    <div class="seg" role="group" aria-label="Thread kind"><button data-k="p" aria-pressed="true">Platform thread</button><button data-k="v" aria-pressed="false">Virtual thread</button></div>
+    <p id="osTxt" class="small" aria-live="polite"></p>
+  </div>
+  <div class="sheet">
+    <div class="row between"><h3>Toy model: how much memory do N sleeping threads need?</h3></div>
+    <label class="rng"><span>Threads: <b id="mN"></b></span><input type="range" id="mSl" min="0" max="6" step="0.01" value="3"></label>
+    <div class="memrow"><span>Platform</span><div class="track"><i id="mP"></i></div><span class="v" id="mPv"></span></div>
+    <div class="memrow"><span>Virtual</span><div class="track"><i id="mV" style="background:var(--ok)"></i></div><span class="v" id="mVv"></span></div>
+    <p class="small" id="mTxt" aria-live="polite"></p>
+    <p class="small">Bars fill against a 16 GB machine. The model assumes about 1 MB of reserved stack per platform thread and about 1 KB of heap per shallow virtual thread; real numbers depend on the OS, JVM flags and stack depth. The authors measured with native memory tracking and saw almost no difference at 1, 10 or 100 threads, a widening gap from 1,000, and an out-of-memory error for platform threads at 100,000.</p>
+  </div>
+</section>
+
+<section id="pools" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Pools reuse threads, and their leftovers</h2></div>
+  <p>Creating and throwing away a platform thread per task wastes all that setup. Since Java 5 the advice has been an <code>ExecutorService</code>: a pool of threads that pull tasks from a queue. It helps, but two problems remain. A pooled thread that blocks on I/O just sits there instead of picking up other work, so with many small blocking tasks you run out of threads (and memory) long before the CPU is busy. And because threads are reused, anything a task leaves behind in a <code>ThreadLocal</code> is visible to the next task on that thread.</p>
+  <div class="sheet stepper" id="leakStep">
+    <div class="svgbox"><svg id="leakSvg" viewBox="0 0 660 200" role="img" aria-label="A single-thread pool runs task one, which sets a ThreadLocal and forgets to remove it, so task two reads the stale value"></svg></div>
+    <div id="leakCtl"></div>
+  </div>
+  <pre class="code">try (var pool = Executors.newFixedThreadPool(1)) {
+    pool.submit(() -> CTX.set("tenant-A"));          // never removed
+!!    pool.submit(() -> System.out.println(CTX.get())); // prints tenant-A
+}</pre>
+  <div class="callout now"><b class="h">try-with-resources on executors</b><span><code>ExecutorService</code> has implemented <code>AutoCloseable</code> since JDK 19 (the book introduces it alongside Java 21). <code>close()</code> waits for every submitted task to finish, which is why the examples can rely on the block's end as a join point.</span></div>
+</section>
+
+<section id="async" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Async code scales but reads badly</h2></div>
+  <p>Asynchronous frameworks get around the thread limit by never blocking: you register a callback and the thread moves on. Resource use is excellent and the CPU saturates before memory does. The price is code that nests callbacks inside callbacks, splits one logical flow into fragments, and loses the stack trace that Java debuggers and profilers are built around.</p>
+  <div class="sheet tabs">
+    <div class="seg" role="group" aria-label="Style"><button data-t="cb" aria-pressed="true">Callback style</button><button data-t="vt" aria-pressed="false">Blocking style on a virtual thread</button></div>
+    <pre class="code" data-p="cb">createUser(req, user -> {
+    if (user.failed()) { reply(500); return; }
+    placeOrder(user.result(), order -> {
+        if (order.failed()) { reply(500); return; }
+        sendMail(order.result(), mail -> {
+            reply(mail.succeeded() ? 200 : 500);
+        });
+    });
+});</pre>
+    <pre class="code" data-p="vt" hidden>try {
+    User user   = createUser(req);      // blocks; the carrier is freed
+    Order order = placeOrder(user);     // blocks; the carrier is freed
+    sendMail(order);
+    reply(200);
+} catch (Exception e) {
+    reply(500);                         // one place for errors, real stack trace
+}</pre>
+  </div>
+  <p>Virtual threads aim for the best of both: write plain sequential blocking code, and let the runtime do the "move on while waiting" part underneath.</p>
+</section>
+
+<section id="create" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Five ways to start a virtual thread</h2></div>
+  <p>Virtual threads are not an OS concept at all. Creating one makes no system call and allocates no fixed stack. The stack frames live in ordinary heap objects that grow and shrink as needed, which is why one costs a few hundred bytes rather than a megabyte. Pick an API to see how it is used.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="API" id="apiSeg"></div>
+    <pre class="code" id="apiCode"></pre>
+    <p id="apiTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout blue"><b class="h">Not faster, just more of them</b><span>A virtual thread runs its code on a platform thread, so a single one is never quicker than a platform thread. The win is throughput: many more tasks can be waiting at once without tying up real threads.</span></div>
+</section>
+
+<section id="carriers" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Carrier threads and the scheduler</h2></div>
+  <p>Virtual threads run on <b>carrier threads</b>: ordinary platform threads in a dedicated <code>ForkJoinPool</code>, one per CPU core by default. New or unblocked virtual threads wait in a queue and get a carrier in roughly first-in, first-out order. A virtual thread keeps its carrier until it hits a blocking call; then it <b>unmounts</b>, its frames move to the heap, and the carrier takes the next one. Run the simulation, then switch to pinned mode to see what happens when unmounting is impossible.</p>
+  <div class="sheet">
+    <div class="row">
+      <div class="seg" role="group" aria-label="Mode" id="simMode"><button data-m="v" aria-pressed="true">Unmounts when blocked</button><button data-m="p" aria-pressed="false">Pinned while blocked</button></div>
+    </div>
+    <div class="two">
+      <label class="rng"><span>Carrier threads (parallelism): <b id="cV"></b></span><input type="range" id="cSl" min="1" max="8" value="4"></label>
+      <label class="rng"><span>Virtual threads (tasks): <b id="tV"></b></span><input type="range" id="tSl" min="8" max="200" step="4" value="80"></label>
+    </div>
+    <div class="sim">
+      <div class="col"><h4>Ready queue</h4><div class="pool" id="qPool"></div></div>
+      <div class="col mid"><h4>Carriers</h4><div id="cars" class="stack" style="gap:5px"></div></div>
+      <div class="col"><h4>Heap: parked</h4><div class="pool" id="pPool"></div></div>
+    </div>
+    <div class="legend"><span><i style="background:var(--blue)"></i>ready or running</span><span><i style="background:var(--pencil)"></i>parked on the heap, waiting for I/O</span><span><i style="background:var(--bad)"></i>pinned: blocked and holding its carrier</span><span><i style="background:var(--ok)"></i>done</span></div>
+    <div class="stats4">
+      <div class="stat"><span class="big blue" id="sT">0</span><span>ticks elapsed</span></div>
+      <div class="stat"><span class="big okc" id="sD">0</span><span>tasks done</span></div>
+      <div class="stat"><span class="big" id="sU">0%</span><span>carrier time doing CPU work</span></div>
+      <div class="stat"><span class="big badc" id="sB">0%</span><span>carrier time blocked</span></div>
+    </div>
+    <div class="row"><button class="btn primary" id="simGo">Run</button><button class="btn" id="simStep">Step</button><button class="btn" id="simReset">Reset</button></div>
+    <p class="small">Each task does 1 to 2 ticks of CPU work, waits 6 to 12 ticks for a pretend database call, then does 1 more tick of work. Try 1 carrier with 80 tasks in both modes.</p>
+  </div>
+  <p>You can change the carrier count with <code>-Djdk.virtualThreadScheduler.parallelism=N</code>, for example to leave cores free for something else. Going above the core count just makes carriers compete for CPUs, so measure first.</p>
+</section>
+
+<section id="mount" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>What mounting actually moves</h2></div>
+  <p>Mounting and unmounting is the trick that keeps the expensive resource, the carrier, busy. Step through one round trip. A task that never blocks never unmounts, so it behaves like a platform thread with a bit of extra overhead.</p>
+  <div class="sheet stepper" id="mStep">
+    <div class="svgbox fit"><svg id="mSvg" viewBox="0 0 460 240" style="max-width:560px;margin:0 auto" role="img" aria-label="Stack frames of a virtual thread copied between the carrier thread's stack and the heap"></svg></div>
+    <div id="mCtl"></div>
+  </div>
+</section>
+
+<section id="pinning" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Pinned virtual threads</h2></div>
+  <p>Some code makes it impossible to lift a virtual thread off its carrier. When that code blocks, the virtual thread is <b>pinned</b>: it and its carrier both sit idle. In Java 21 the main causes were blocking inside a <code>synchronized</code> block or method, <code>Object.wait()</code>, and native code reached through JNI. Short pins are harmless; long or frequent ones starve the scheduler, as the pinned mode above shows.</p>
+  <p>For a few cases, such as <code>Object.wait()</code> and many file-system calls, the JDK temporarily adds extra carriers to compensate, up to <code>jdk.virtualThreadScheduler.maxPoolSize</code> (256 by default). A plain blocking call inside <code>synchronized</code> on Java 21 got no such help, which is why replacing <code>synchronized</code> with <code>ReentrantLock</code> around blocking code was the standard advice.</p>
+  <div class="callout now"><b class="h">synchronized no longer pins (JDK 24)</b><span>JEP 491 reworked object monitors so a virtual thread can unmount while it holds or waits for a monitor, including inside <code>Object.wait()</code>. On JDK 24 and later, there is no need to rewrite <code>synchronized</code> code for virtual threads. Pinning remains for native frames (JNI and Foreign Function calls) and for blocking inside a class initializer. The <code>jdk.tracePinnedThreads</code> flag the book uses was removed in JDK 24; use the JFR event <code>jdk.VirtualThreadPinned</code> instead, which now reports every pinning reason.</span></div>
+  <div class="sheet">
+    <div class="row between"><h3>Does this pin the carrier?</h3><div class="seg" role="group" aria-label="JDK version" id="pinSeg"><button data-j="21" aria-pressed="true">JDK 21 to 23</button><button data-j="24" aria-pressed="false">JDK 24+</button></div></div>
+    <div class="tbl"><table class="t pinTbl"><thead><tr><th>While the virtual thread blocks in...</th><th>Result</th></tr></thead><tbody id="pinBody"></tbody></table></div>
+  </div>
+  <div class="tabs sheet">
+    <div class="seg" role="group" aria-label="Diagnostics"><button data-t="old" aria-pressed="true">Book (JDK 21 to 23)</button><button data-t="new" aria-pressed="false">JDK 24+</button></div>
+    <pre class="code" data-p="old">// print a stack trace whenever a virtual thread blocks while pinned
+java -Djdk.tracePinnedThreads=full  App.java   // whole stack, best for libraries
+java -Djdk.tracePinnedThreads=short App.java   // just the frames holding monitors</pre>
+    <pre class="code" data-p="new" hidden>// the system property is gone; record the JFR event instead
+java -XX:StartFlightRecording:filename=rec.jfr App.java
+jfr print --events jdk.VirtualThreadPinned rec.jfr</pre>
+  </div>
+</section>
+
+<section id="avoid" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>When not to use virtual threads</h2></div>
+  <p>Virtual threads are a tool for tasks that spend most of their time waiting. The book's warnings: never pool them (they are meant to be created and thrown away), don't use a small pool as a stand-in for a lock (use a <code>Semaphore</code>; chapter 4 shows how), and be careful with tasks that barely block or block very often for very short times, since each mount and unmount has a small cost. When in doubt, benchmark with JMH. Sort these situations.</p>
+  <div class="sheet"><div class="row between"><h3>Good fit or rethink?</h3><span class="score" id="sortScore"></span></div><div class="sort" id="sort"></div></div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="quiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">10</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b>Platform threads are costly</b><span>One OS thread each, with a fixed stack reserved up front. Thousands are fine; hundreds of thousands are not.</span></div>
+    <div><b>Pools trade one problem for others</b><span>Reuse saves setup but blocked threads idle, and ThreadLocal values leak between tasks.</span></div>
+    <div><b class="blue">Virtual threads live on the heap</b><span>No system call, a growable stack, millions possible. Create one per task.</span></div>
+    <div><b class="blue">Carriers do the running</b><span>A ForkJoinPool with one carrier per core by default; virtual threads queue for them.</span></div>
+    <div><b class="okc">Blocking means unmounting</b><span>Frames go to the heap and the carrier picks up other work. Waiting becomes cheap.</span></div>
+    <div><b class="badc">Pinning blocks the carrier</b><span>JNI and class initializers still pin. synchronized stopped pinning in JDK 24.</span></div>
+    <div><b>Not a silver bullet</b><span>CPU-bound or rarely blocking work gains nothing. Don't pool them; measure.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Virtual Threads, Structured Concurrency, and Scoped Values: Explore Java's New Threading Model</i> by Ron Veen and David Vlijmincx (Apress Pocket Guides, 2024). Explanations, code snippets, simulations and drawings are original; nothing is copied from the book. Notes marked "JDK update" describe changes in JDK 22 to 26 that came after the book was written.</footer>
+  <nav class="pager" aria-label="Chapters"><span></span><a class="home" href="index.html">All chapters</a><a class="nx" href="ch02-structured-concurrency.html"><span>Next · Chapter 2</span><b>Structured Concurrency</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('vtsc:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('vtsc:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* tiny Java highlighter for <pre class="code"> blocks; a line starting with "!!" is highlighted */
+const KW='abstract|boolean|break|case|catch|class|default|do|else|extends|final|finally|for|if|implements|import|instanceof|int|interface|long|new|null|package|permits|private|protected|public|record|return|sealed|static|super|synchronized|this|throw|throws|true|false|try|var|void|while';
+function hl(){$$('pre.code').forEach(p=>{if(p.dataset.done)return;p.dataset.done=1;
+  const src=p.textContent.replace(/^\n/,'').replace(/\s+$/,'');
+  const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const re=new RegExp('(\\/\\/.*$)|("(?:[^"\\\\]|\\\\.)*")|(@\\w+)|\\b('+KW+')\\b','gm');
+  p.innerHTML=src.split('\n').map(line=>{let mark=false;if(line.startsWith('!!')){mark=true;line=line.slice(2)}
+    let out='',last=0;line.replace(re,(m,c,s,a,k,i)=>{out+=esc(line.slice(last,i));out+=c?`<span class="c">${esc(c)}</span>`:s?`<span class="s">${esc(s)}</span>`:a?`<span class="a">${esc(a)}</span>`:`<span class="k">${k}</span>`;last=i+m.length;return m});
+    out+=esc(line.slice(last));return mark?`<span class="hl">${out||' '}</span>`:out}).join('\n')})}
+/* code tabs: container .tabs with a .seg of buttons[data-t] and panels [data-p] */
+function tabs(sel){$$(sel).forEach(t=>{const bs=t.querySelectorAll(':scope > .seg button');bs.forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);t.querySelectorAll(':scope > [data-p]').forEach(p=>p.hidden=p.dataset.p!==b.dataset.t)}));if(bs[0]){press(bs[0].parentNode,bs[0]);t.querySelectorAll(':scope > [data-p]').forEach(p=>p.hidden=p.dataset.p!==bs[0].dataset.t)}})}
+const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+document.addEventListener('DOMContentLoaded',()=>{hl();tabs('.tabs')});
+
+
+/* 1. OS mapping diagram */
+function drawOS(k){const s=$('#osSvg');s.innerHTML='';
+  const lane=(y,t)=>{s.appendChild(el('text',{x:10,y:y,'font-size':12,class:'s-muted t-mono'},t))};
+  lane(30,'JAVA');lane(100,'JVM / HEAP');lane(165,'OS KERNEL');
+  s.appendChild(el('line',{x1:0,y1:60,x2:660,y2:60,class:'st-line','stroke-dasharray':'4 4'}));
+  s.appendChild(el('line',{x1:0,y1:130,x2:660,y2:130,class:'st-line','stroke-dasharray':'4 4'}));
+  if(k==='p'){
+    for(let i=0;i<4;i++){const x=150+i*125;
+      s.appendChild(el('rect',{x:x,y:14,width:96,height:30,rx:6,class:'s-bluesoft st-blue','stroke-width':1.5}));
+      s.appendChild(el('text',{x:x+48,y:34,'text-anchor':'middle','font-size':12,class:'s-ink'},'Thread '+(i+1)));
+      s.appendChild(el('line',{x1:x+48,y1:44,x2:x+48,y2:140,class:'st-blue','stroke-width':1.5}));
+      s.appendChild(el('rect',{x:x,y:140,width:96,height:40,rx:6,class:'s-pencilsoft st-pencil','stroke-width':1.5}));
+      s.appendChild(el('text',{x:x+48,y:157,'text-anchor':'middle','font-size':11,class:'s-ink'},'OS thread'));
+      s.appendChild(el('text',{x:x+48,y:172,'text-anchor':'middle','font-size':10.5,class:'s-muted t-mono'},'~1 MB stack'));}
+    $('#osTxt').textContent='One to one: every Java thread is backed by its own kernel thread and fixed-size stack. Creating one is a system call; the stack size is decided at creation and never resized.';
+  }else{
+    for(let i=0;i<8;i++){const x=120+i*62;
+      s.appendChild(el('rect',{x:x,y:16,width:50,height:26,rx:6,class:'s-bluesoft st-blue','stroke-width':1.2}));
+      s.appendChild(el('text',{x:x+25,y:33,'text-anchor':'middle','font-size':10.5,class:'s-ink'},'VT '+(i+1)));
+      const h=8+((i*37)%5)*5;s.appendChild(el('rect',{x:x+10,y:118-h,width:30,height:h,rx:2,class:'s-oksoft',stroke:'var(--ok)'}));
+      s.appendChild(el('line',{x1:x+25,y1:42,x2:x+25,y2:118-h,class:'st-line'}));}
+    s.appendChild(el('text',{x:640,y:84,'text-anchor':'end','font-size':10.5,class:'s-muted'},'growable stacks as heap objects'));
+    for(let i=0;i<2;i++){const x=260+i*150;
+      s.appendChild(el('rect',{x:x,y:140,width:110,height:40,rx:6,class:'s-pencilsoft st-pencil','stroke-width':1.5}));
+      s.appendChild(el('text',{x:x+55,y:164,'text-anchor':'middle','font-size':11,class:'s-ink'},'carrier '+(i+1)));}
+    $('#osTxt').textContent='Many to few: the OS only sees the carrier threads. Virtual threads are Java objects whose stack frames sit on the heap and grow or shrink as the call stack does.';
+  }}
+seg('#platform .seg button',b=>drawOS(b.dataset.k));drawOS('p');
+
+/* memory toy model */
+function fmtB(b){const u=['B','KB','MB','GB','TB'];let i=0;while(b>=1024&&i<4){b/=1024;i++}return (b<10?b.toFixed(1):Math.round(b))+' '+u[i]}
+function mem(){const n=Math.round(Math.pow(10,+$('#mSl').value));$('#mN').textContent=n.toLocaleString('en-US');
+  const P=n*1024*1024,V=n*1024,M=16*1024**3;
+  $('#mP').style.width=Math.min(100,P/M*100)+'%';$('#mV').style.width=Math.max(.5,Math.min(100,V/M*100))+'%';
+  $('#mP').style.background=P>M?'var(--bad)':'var(--blue)';
+  $('#mPv').textContent=fmtB(P);$('#mVv').textContent=fmtB(V);
+  $('#mTxt').textContent=n<1000?'Below about a thousand threads the difference is too small to justify a rewrite on memory grounds alone.':P>M?'Platform threads no longer fit: this is where the book\'s test hit an out-of-memory error. Virtual threads still fit easily.':'The gap is now large: platform threads are eating gigabytes of stack reservations while virtual threads use megabytes.'}
+$('#mSl').addEventListener('input',mem);mem();
+
+/* 2. ThreadLocal leak stepper */
+$('#leakCtl').innerHTML=stepHTML();
+function leakDraw(i){const s=$('#leakSvg');s.innerHTML='';
+  s.appendChild(el('text',{x:20,y:22,'font-size':12,class:'s-muted t-mono'},'QUEUE'));
+  s.appendChild(el('text',{x:270,y:22,'font-size':12,class:'s-muted t-mono'},'POOL (1 THREAD)'));
+  const q=[];if(i<1)q.push('Task 1');if(i<3)q.push('Task 2');
+  q.forEach((t,k)=>{s.appendChild(el('rect',{x:20,y:36+k*44,width:110,height:34,rx:6,class:'s-surface st-line','stroke-width':1.5}));s.appendChild(el('text',{x:75,y:58+k*44,'text-anchor':'middle','font-size':12,class:'s-ink'},t))});
+  s.appendChild(el('rect',{x:260,y:36,width:200,height:140,rx:10,class:'s-bluesoft st-blue','stroke-width':1.5}));
+  s.appendChild(el('text',{x:360,y:56,'text-anchor':'middle','font-size':12,'font-weight':600,class:'s-ink'},'pool-1-thread-1'));
+  const run=i===1||i===2?'Task 1':i>=3?'Task 2':'idle';
+  s.appendChild(el('rect',{x:280,y:68,width:160,height:32,rx:6,class:run==='idle'?'s-paper st-line':'s-surface st-blue','stroke-width':1.5}));
+  s.appendChild(el('text',{x:360,y:89,'text-anchor':'middle','font-size':12,class:'s-ink'},run==='idle'?'(waiting for work)':'running '+run));
+  s.appendChild(el('text',{x:280,y:126,'font-size':11,class:'s-muted t-mono'},'ThreadLocal map'));
+  const v=i>=2?'CTX = "tenant-A"':'(empty)';
+  s.appendChild(el('rect',{x:280,y:134,width:160,height:28,rx:5,class:i>=2?'s-pencilsoft st-pencil':'s-paper st-line','stroke-width':1.3}));
+  s.appendChild(el('text',{x:360,y:153,'text-anchor':'middle','font-size':11.5,class:'s-ink t-mono'},v));
+  if(i>=4){s.appendChild(el('rect',{x:490,y:96,width:160,height:50,rx:6,class:'s-badsoft',stroke:'var(--bad)','stroke-width':1.5}));
+    s.appendChild(el('text',{x:570,y:116,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--bad)'},'Task 2 reads'));
+    s.appendChild(el('text',{x:570,y:134,'text-anchor':'middle','font-size':11.5,'font-family':'var(--mono)',fill:'var(--bad)'},'"tenant-A"'));
+    s.appendChild(el('line',{x1:440,y1:148,x2:490,y2:124,stroke:'var(--bad)','stroke-width':1.5,class:'flow'}))}}
+stepper('#leakStep',['A pool with one thread and two queued tasks. The thread is created once and reused for both.',
+ 'The thread takes Task 1 from the queue.',
+ 'Task 1 stores a value in a ThreadLocal and finishes, but never calls remove(). The value stays attached to the thread.',
+ 'The thread goes back to the pool and picks up Task 2. Nothing cleared the ThreadLocal map in between.',
+ 'Task 2 reads the ThreadLocal and sees Task 1\'s value: data has leaked across tasks. Virtual threads avoid this by never being reused, and chapter 3\'s scoped values avoid it by design.'],leakDraw);
+
+/* 4. creation APIs */
+const apis=[
+ ['startVirtualThread','Thread.startVirtualThread(() -> work());','The shortest form: creates a virtual thread and starts it immediately. Returns the Thread so you can join() it.'],
+ ['Builder','Thread vt = Thread.ofVirtual()\n        .name("worker-", 0)          // worker-0, worker-1, ...\n        .start(() -> work());','Thread.ofVirtual() returns a builder. You can set a name (or a numbered prefix), whether inheritable thread locals are copied, and an uncaught-exception handler.'],
+ ['unstarted','Thread vt = Thread.ofVirtual().name("later").unstarted(() -> work());\n// ... configure, hand it around ...\nvt.start();','Same builder, but the thread is created without running. Call start() yourself when you are ready.'],
+ ['factory','ThreadFactory f = Thread.ofVirtual().name("sched-", 0).factory();\nvar ses = Executors.newScheduledThreadPool(0, f);\nses.schedule(() -> ping(), 1, TimeUnit.SECONDS);','A factory plugs virtual threads into any existing executor that accepts a ThreadFactory, such as a scheduled executor.'],
+ ['per-task executor','try (var ex = Executors.newVirtualThreadPerTaskExecutor()) {\n    for (int i = 0; i < 1_000_000; i++) {\n        ex.submit(() -> handle());\n    }\n}   // close() waits for all million','The everyday choice. Not a pool: every submitted task gets a brand-new virtual thread, discarded when the task ends. A million submissions means a million threads, and that is fine.']];
+$('#apiSeg').innerHTML=apis.map((a,i)=>`<button data-i="${i}" aria-pressed="${i===4}">${a[0]}</button>`).join('');
+function api(i){const a=apis[i];const p=$('#apiCode');p.textContent=a[1];delete p.dataset.done;hl();$('#apiTxt').textContent=a[2]}
+seg('#apiSeg button',b=>api(+b.dataset.i));api(4);
+
+/* 5. scheduler simulation */
+let S,timer=null;
+function rnd(a,b){return a+Math.floor(Math.random()*(b-a+1))}
+function simInit(){const C=+$('#cSl').value,T=+$('#tSl').value;$('#cV').textContent=C;$('#tV').textContent=T;
+  S={C,T,t:0,busy:0,blk:0,mode:$('#simMode [aria-pressed=true]').dataset.m,q:[],parked:[],done:0,car:Array(C).fill(null)};
+  for(let i=0;i<T;i++)S.q.push({id:i,ph:0,left:rnd(1,2),wait:rnd(6,12)});
+  $('#cars').innerHTML=S.car.map((_,i)=>`<div class="carrier" id="car${i}"><span class="lbl">C${i+1}</span><span class="vt" style="visibility:hidden"></span><span class="st">idle</span></div>`).join('');
+  render()}
+function tick(){S.t++;
+  // parked threads count down and requeue
+  S.parked=S.parked.filter(v=>{v.wait--;if(v.wait<=0){v.ph=2;v.left=1;S.q.push(v);return false}return true});
+  // fill idle carriers
+  for(let i=0;i<S.C;i++)if(!S.car[i]&&S.q.length)S.car[i]=S.q.shift();
+  for(let i=0;i<S.C;i++){const v=S.car[i];if(!v)continue;
+    if(v.ph===1){ // pinned waiting
+      S.blk++;v.wait--;if(v.wait<=0){v.ph=2;v.left=1}continue}
+    S.busy++;v.left--;
+    if(v.left<=0){
+      if(v.ph===0){if(S.mode==='v'){v.ph=1;S.parked.push(v);S.car[i]=null}else{v.ph=1}}
+      else{S.done++;S.car[i]=null}}}
+  for(let i=0;i<S.C;i++)if(!S.car[i]&&S.q.length)S.car[i]=S.q.shift();
+  render();if(S.done>=S.T)stop()}
+function render(){
+  $('#qPool').innerHTML=S.q.map(()=>'<span class="vt"></span>').join('');
+  $('#pPool').innerHTML=S.parked.map(()=>'<span class="vt park"></span>').join('')+Array(S.done).fill('<span class="vt done"></span>').join('');
+  S.car.forEach((v,i)=>{const c=$('#car'+i);if(!c)return;const d=c.querySelector('.vt'),st=c.querySelector('.st');
+    c.classList.remove('run','blocked');
+    if(!v){d.style.visibility='hidden';st.textContent='idle'}
+    else if(v.ph===1){c.classList.add('blocked');d.style.visibility='visible';d.className='vt pin';st.textContent='VT'+v.id+' pinned, waiting'}
+    else{c.classList.add('run');d.style.visibility='visible';d.className='vt';st.textContent='running VT'+v.id}});
+  const tot=Math.max(1,S.t*S.C);
+  $('#sT').textContent=S.t;$('#sD').textContent=S.done+' / '+S.T;$('#sU').textContent=Math.round(S.busy/tot*100)+'%';$('#sB').textContent=Math.round(S.blk/tot*100)+'%'}
+function stop(){clearInterval(timer);timer=null;$('#simGo').textContent='Run'}
+$('#simGo').addEventListener('click',()=>{if(timer){stop();return}if(S.done>=S.T)simInit();timer=setInterval(tick,reduced?260:130);$('#simGo').textContent='Pause'});
+$('#simStep').addEventListener('click',()=>{stop();if(S.done<S.T)tick()});
+$('#simReset').addEventListener('click',()=>{stop();simInit()});
+['#cSl','#tSl'].forEach(id=>$(id).addEventListener('input',()=>{stop();simInit()}));
+seg('#simMode button',()=>{stop();simInit()});
+simInit();
+
+/* 6. mount / unmount stepper */
+$('#mCtl').innerHTML=stepHTML();
+function frames(s,x,y,n,cls,label,w){w=w||100;for(let k=0;k<n;k++){s.appendChild(el('rect',{x:x,y:y-k*22,width:w,height:20,rx:3,class:cls,'stroke-width':1.2,stroke:'var(--line)'}))}
+  if(label)s.appendChild(el('text',{x:x+w/2,y:y+38,'text-anchor':'middle','font-size':11,class:'s-muted t-mono'},label))}
+function mDraw(i){const s=$('#mSvg');s.innerHTML='';
+  s.appendChild(el('rect',{x:10,y:20,width:180,height:200,rx:10,class:'s-surface st-pencil','stroke-width':1.5}));
+  s.appendChild(el('text',{x:100,y:40,'text-anchor':'middle','font-size':12,'font-weight':600,class:'s-ink'},'Carrier stack'));
+  s.appendChild(el('rect',{x:270,y:20,width:180,height:200,rx:10,class:'s-surface st-blue','stroke-width':1.5}));
+  s.appendChild(el('text',{x:360,y:40,'text-anchor':'middle','font-size':12,'font-weight':600,class:'s-ink'},'Heap'));
+  const A='s-bluesoft',B='s-oksoft';
+  if(i===0||i===1)frames(s,50,165,4,A,'VT-A running');
+  if(i===3)frames(s,50,165,3,B,'VT-B running');
+  if(i===4)frames(s,50,165,4,A,'VT-A resumed');
+  if(i===0)frames(s,310,165,3,B,'VT-B parked');
+  if(i===1)frames(s,310,165,3,B,'VT-B ready');
+  if(i===2){frames(s,282,165,4,A,'A parked',74);frames(s,366,165,3,B,'B ready',74)}
+  if(i===3)frames(s,310,165,4,A,'VT-A waiting');
+  if(i===4)frames(s,310,165,3,B,'VT-B parked');
+  const arrow=(x1,x2,lbl)=>{s.appendChild(el('line',{x1:x1,y1:120,x2:x2,y2:120,class:'st-ink flow','stroke-width':2}));
+    const d=x2>x1?1:-1;s.appendChild(el('polygon',{points:`${x2},120 ${x2-d*10},114 ${x2-d*10},126`,class:'s-ink'}));
+    s.appendChild(el('text',{x:(x1+x2)/2,y:106,'text-anchor':'middle','font-size':11,class:'s-ink t-mono'},lbl))};
+  if(i===1){s.appendChild(el('text',{x:230,y:80,'text-anchor':'middle','font-size':11,class:'s-ink t-mono'},'db.query()'));s.appendChild(el('text',{x:230,y:96,'text-anchor':'middle','font-size':11,fill:'var(--bad)',class:'t-mono'},'blocks'))}
+  if(i===2)arrow(194,266,'unmount');
+  if(i===3)arrow(266,194,'mount');
+  if(i===4)arrow(266,194,'mount')}
+stepper('#mStep',['VT-A is mounted: its frames are on the carrier\'s stack and it is running. VT-B is parked on the heap.',
+ 'VT-A calls a blocking method such as a database query. Meanwhile VT-B\'s I/O completed, so it sits in the ready queue.',
+ 'Unmount: VT-A\'s frames are copied from the carrier stack into a heap object. VT-A now waits cheaply.',
+ 'Mount: VT-B\'s frames are copied from the heap onto the carrier stack, and VT-B carries on where it left off. The carrier never sat idle.',
+ 'When VT-A\'s query returns, it re-enters the queue and is mounted again, possibly on a different carrier. Its code never noticed the move.'],mDraw);
+
+/* 7. pinning table */
+const pins=[
+ ['Thread.sleep() or a socket read with no lock held','n','n'],
+ ['A blocking call inside a synchronized block or method','y','n'],
+ ['Object.wait() inside synchronized','c','n'],
+ ['Waiting to enter a synchronized block another thread holds','y','n'],
+ ['ReentrantLock.lock() or a Semaphore','n','n'],
+ ['Native code via JNI or a Foreign Function call that blocks','y','y'],
+ ['Blocking inside a static initializer (class init)','y','y'],
+ ['Many file-system calls (read a file)','c','c']];
+const word={y:'Pins the carrier',n:'Unmounts, carrier freed',c:'Holds the carrier; JDK adds a temporary carrier'};
+function pinShow(j){$('#pinBody').innerHTML=pins.map(p=>{const v=j==='21'?p[1]:p[2];return `<tr><td>${p[0]}</td><td class="${v}">${word[v]}</td></tr>`}).join('')}
+seg('#pinSeg button',b=>pinShow(b.dataset.j));pinShow('21');
+
+/* 8. sort */
+const sorts=[
+ ['A web service where each request calls two REST APIs and a database',0,'Mostly waiting on I/O: the textbook case.'],
+ ['A pool of 10 virtual threads, reused to save creation cost',1,'Never pool virtual threads. They are cheaper to create than to manage.'],
+ ['A fixed pool of 5 threads used to cap database connections',1,'Use a thread per task plus a Semaphore with 5 permits instead.'],
+ ['Rendering video frames, pure CPU with no blocking',1,'Nothing to unmount for. A platform-thread pool sized to the cores fits better.'],
+ ['A crawler fetching 50,000 pages concurrently',0,'50,000 waiting tasks at once is exactly where platform threads run out.'],
+ ['Tasks that block for a microsecond thousands of times each',1,'Each mount and unmount has a cost. Measure with JMH before switching.']];
+let sr=0;$('#sort').innerHTML=sorts.map((s,i)=>`<div class="it" data-i="${i}"><span>${s[0]}</span><div class="opts"><button data-a="0">Good fit</button><button data-a="1">Rethink</button></div><div class="fb" hidden></div></div>`).join('');
+$('#sortScore').textContent='0 / '+sorts.length;
+$$('#sort .it').forEach(r=>r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{if(r.dataset.done)return;r.dataset.done=1;const s=sorts[+r.dataset.i];const ok=+b.dataset.a===s[1];if(ok)sr++;b.classList.add(ok?'right':'wrong');if(!ok)r.querySelector(`[data-a="${s[1]}"]`).classList.add('right');const f=r.querySelector('.fb');f.hidden=false;f.textContent=s[2];$('#sortScore').textContent=sr+' / '+sorts.length})));
+
+/* quiz */
+quiz('#quiz','#qScore',[
+ {q:'How many carrier threads does the default scheduler start with?',o:['One per CPU core','256','One per virtual thread'],a:0,why:'Parallelism defaults to the number of available processors. 256 is the default maximum pool size for compensation.'},
+ {q:'A virtual thread runs a loop that never blocks. What happens?',o:['It unmounts every few ms','It keeps its carrier until done','It is converted to a platform thread'],a:1,why:'Unmounting is triggered by blocking. A CPU-bound virtual thread holds its carrier like a platform thread would.'},
+ {q:'Where do the stack frames of an unmounted virtual thread live?',o:['On the heap','In a kernel thread','On the carrier\'s stack'],a:0,why:'They are copied to heap objects, which is what makes waiting so cheap.'},
+ {q:'On JDK 25, a virtual thread blocks on a socket inside a synchronized method. Is the carrier pinned?',o:['Yes','No'],a:1,why:'Since JDK 24 (JEP 491) monitors no longer pin. Native frames and class initializers still do.'},
+ {q:'What does newVirtualThreadPerTaskExecutor() do with a finished thread?',o:['Returns it to a pool','Discards it','Parks it for reuse'],a:1,why:'It is not a pool. Every task gets a fresh virtual thread that is thrown away afterwards.'}]);
+
+})();
+</script>
+</body>
+</html>

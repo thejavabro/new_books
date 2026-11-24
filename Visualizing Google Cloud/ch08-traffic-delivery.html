@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Load Balancing, CDN and the Service Mesh</title>
+<meta name="description" content="With the network in place, the next job is getting traffic to the right backend quickly and safely, letting private machines reach out, and seeing problems before your users do.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Visualizing Google Cloud companion. Lab-notebook reading column on blueprint grid paper.
+   Blue ink = Google Cloud services and structure, orange pencil = your responsibility and choices, green = good outcome, red = risk.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* additions for the Google Cloud companion */
+.themebtn{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted)}
+.themebtn:hover{border-color:var(--blue);color:var(--blue)}
+.note{font-size:.9rem;border:1px dashed var(--line);border-radius:8px;padding:10px 14px;color:var(--muted);background:var(--surface)}
+.note b{color:var(--ink)}
+.svc{display:inline-block;font-family:var(--mono);font-size:.8em;padding:1px 6px;border-radius:4px;background:var(--blue-soft);color:var(--blue);white-space:nowrap}
+.tree{display:flex;flex-direction:column;gap:12px}
+.tree .qq{font-family:var(--display);font-size:1.08rem;font-weight:600}
+.tree .ans{border-left:4px solid var(--ok);background:var(--ok-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:4px}
+.tree .trail{font-family:var(--mono);font-size:.75rem;color:var(--muted)}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media (max-width:640px){.grid2{grid-template-columns:1fr}}
+.code{font-family:var(--mono);font-size:.82rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;margin:0;line-height:1.5}
+.pill{font-family:var(--mono);font-size:.72rem;padding:2px 8px;border-radius:999px;border:1px solid currentColor}
+.d2c{color:var(--d2)} .d3c{color:var(--d3)} .d4c{color:var(--d4)} .d5c{color:var(--d5)}
+
+/* page */
+
+.cachegrid{display:grid;grid-template-columns:repeat(20,minmax(0,1fr));gap:3px}
+.cachegrid i{aspect-ratio:1;border-radius:3px;display:block;background:var(--line)}
+.cachegrid i.h{background:var(--ok)} .cachegrid i.m{background:var(--pencil)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Visualizing Google Cloud · visual companion</a><span class="tag">Book chapter 6 of 8 · part 2 of 2</span><button class="themebtn" id="themeBtn" type="button">Theme: auto</button></div>
+  <h1>Load Balancing, CDN and the Service Mesh</h1>
+  <p class="lede">With the network in place, the next job is getting traffic to the right backend quickly and safely, letting private machines reach out, and seeing problems before your users do.</p>
+  <nav class="toc" aria-label="Sections"><a href="#lb">Load balancing</a><a href="#parts">How it fits</a><a href="#cdn">Cloud CDN</a><a href="#nat">Cloud NAT</a><a href="#nic">Network Intelligence</a><a href="#mesh">Traffic Director</a><a href="#sd">Service Directory</a><a href="#check">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="lb" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Cloud Load Balancing: one IP for the whole world</h2></div>
+  <p><span class="svc">Cloud Load Balancing</span> isn't a box or a VM; it's software running on the same front-end infrastructure that serves Google, handling HTTP(S), HTTP/2 and gRPC, TCP/SSL, UDP and QUIC at over a million queries per second. A global external load balancer gives you a <b>single anycast IP</b>: users anywhere hit the nearest Google edge, and traffic flows to the closest healthy backend with capacity. Adding a region doesn't change the IP or DNS.</p>
+  <div class="sheet">
+    <div class="row between"><h3>Shen in California, Maya in India</h3><span class="small">capacity per region, requests/s</span></div>
+    <label class="rng"><span>Users in India: <b id="inV">600</b> req/s · India backend capacity 800</span><input type="range" id="inU" min="100" max="1600" step="50" value="600"></label>
+    <div class="row"><button class="btn" id="killUs">Fail the US region</button><button class="btn" id="scaleIn">Autoscale India to 1600</button></div>
+    <div class="svgbox"><svg id="glbSvg" viewBox="0 0 640 230" role="img" aria-label="Global load balancer routing users to regions"></svg></div>
+    <p id="glbTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="parts" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Inside a global HTTP(S) load balancer</h2></div>
+  <p>A load balancer is a chain of small configuration objects. Step through a request to see where each one acts. Internal layer-4 load balancing between tiers is simpler: a forwarding rule on a private (RFC 1918) VIP points straight to a backend service, with no proxy in the middle and the client IP preserved.</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="lbSvg" viewBox="0 0 640 200" role="img" aria-label="Forwarding rule, target proxy, URL map, backend services, backends"></svg></div>
+    <div class="stepper" id="lbStep"></div>
+  </div>
+  <div class="callout blue"><b class="h">Security at the front door</b><span>Run TLS everywhere with Google-managed certificates (many certificates can share one IP). The load balancer absorbs layer 3 and 4 floods across Google's edge; <b>Cloud Armor</b> adds layer 7 protection; <b>Identity-Aware Proxy</b> and firewall rules control who reaches the backends.</span></div>
+  <div class="sheet"><div class="row between"><h3>Which load balancer?</h3><span class="small">external or internal · global or regional · traffic type</span></div><div class="tree" id="tree"></div></div>
+</section>
+
+<section id="cdn" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Cloud CDN: serve it from the edge</h2></div>
+  <p><span class="svc">Cloud CDN</span> caches content at Google's edge (120+ locations in the book) behind the global HTTP(S) load balancer: tick a box on a backend service or bucket. A request hits the nearest edge; if the content is there under its <b>cache key</b> (usually the URL), it's a <b>hit</b> and the origin never sees it. On a <b>miss</b>, the edge may fill from a nearby cache (cache-to-cache fill) or fetch from the origin. Objects live until their <b>TTL</b> expires or you invalidate them. HTTP/2 and QUIC to the client cut latency on lossy mobile networks; <b>signed URLs</b> and signed cookies give time-limited access to paid content.</p>
+  <div class="sheet">
+    <div class="row between"><h3>Cache hit simulator</h3><span class="small">200 requests</span></div>
+    <label class="rng"><span>TTL: <b id="ttlV">1 h</b></span><input type="range" id="ttl" min="0" max="5" value="3"></label>
+    <label class="rng"><span>Distinct URLs requested: <b id="urlV">20</b></span><input type="range" id="urls" min="1" max="200" value="20"></label>
+    <label class="small"><input type="checkbox" id="qs"> Cache key ignores the <span class="mono">?utm_source=</span> query string</label>
+    <div class="cachegrid" id="cg"></div>
+    <div class="bars" id="cdnBars"></div>
+  </div>
+  <div class="cardgrid" id="modeCards"></div>
+</section>
+
+<section id="nat" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Cloud NAT: outbound only, no public IPs</h2></div>
+  <p>Best practice is to give VMs and GKE nodes no external IP addresses. They still need to fetch updates and call APIs. <span class="svc">Cloud NAT</span> lets them reach out while nothing on the internet can reach in. It isn't a proxy VM: it's configuration on a Cloud Router, applied by Andromeda in every host, so there's no bottleneck or single point of failure. It's set per region and can cover all subnets or only chosen ones (and for GKE, the node and Pod ranges). <b>NAT rules</b> pick which NAT IPs are used for which destinations, so partners can allowlist you.</p>
+  <div class="sheet">
+    <div class="row between"><h3>How many NAT IP addresses?</h3><span class="small">each IP offers 64,512 source ports</span></div>
+    <label class="rng"><span>VMs behind NAT: <b id="vmV">200</b></span><input type="range" id="vms" min="10" max="5000" step="10" value="200"></label>
+    <label class="rng"><span>Minimum ports per VM: <b id="ppV">64</b></span><input type="range" id="ppv" min="0" max="6" value="0"></label>
+    <div class="callout ok" id="natOut"></div>
+    <div class="svgbox"><svg id="natSvg" viewBox="0 0 640 170" role="img" aria-label="Private VMs reaching the internet through Cloud NAT"></svg></div>
+  </div>
+</section>
+
+<section id="nic" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Network Intelligence Center: see before you guess</h2></div>
+  <p>A single console for network visibility. Four modules in the book:</p>
+  <div class="cardgrid" id="nicCards"></div>
+  <div class="sheet">
+    <div class="row between"><h3>Run a connectivity test</h3><span class="small">a static analysis of your configuration</span></div>
+    <div class="row"><select id="ctCase"><option value="0">VM-a → Cloud SQL private IP, tcp/5432</option><option value="1">On-prem 10.1.0.5 → VM-b, tcp/443</option><option value="2">VM-c (no external IP) → api.example.com:443</option></select><button class="btn primary" id="ctRun">Run test</button></div>
+    <div class="svgbox"><svg id="ctSvg" viewBox="0 0 640 120" role="img" aria-label="Hops of the simulated path"></svg></div>
+    <p id="ctTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="mesh" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Traffic Director: a managed control plane for service meshes</h2></div>
+  <p>In a typical Kubernetes service mesh, every Pod gets a sidecar proxy (usually Envoy) that handles traffic between services: routing, retries, mTLS, telemetry. A <b>control plane</b> tells all those proxies what to do. <span class="svc">Traffic Director</span> is Google's fully managed, highly available control plane. It works across multiple clusters and regions, for VMs as well as containers, and even with no sidecar at all: <b>proxyless gRPC</b> apps take their config straight from Traffic Director. It spans hybrid and multicloud endpoints too, and can program ingress and gateway proxies at the edge of the mesh.</p>
+  <div class="sheet">
+    <div class="row between"><h3>Weighted routing and failover</h3></div>
+    <label class="rng"><span>Traffic to reviews v2: <b id="v2V">20%</b></span><input type="range" id="v2" min="0" max="100" step="5" value="20"></label>
+    <div class="row"><label class="small"><input type="checkbox" id="clusterDown"> us-east cluster unhealthy</label><label class="small"><input type="checkbox" id="proxyless"> proxyless gRPC client</label></div>
+    <div class="svgbox"><svg id="tdSvg" viewBox="0 0 640 240" role="img" aria-label="Traffic Director programming proxies"></svg></div>
+    <p id="tdTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="sd" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Service Directory: one phone book for every service</h2></div>
+  <p>Enterprises have services everywhere: VMs, GKE, Cloud Run, on-premises, other clouds, third-party SaaS. <span class="svc">Service Directory</span> is a managed registry where each <b>namespace</b> holds <b>services</b>, each with <b>endpoints</b> (address, port, annotations). Clients look services up over HTTP or gRPC, or through <b>Cloud DNS</b>, which can answer from a Service Directory namespace. Load balancers can register themselves automatically, and IAM controls who can see or change each entry.</p>
+  <div class="sheet">
+    <div class="row between"><h3>Look up a service</h3></div>
+    <div class="row"><select id="sdSel"><option>payments</option><option>inventory</option><option>legacy-billing</option></select><div class="seg" role="group" aria-label="Lookup"><button data-q="api" aria-pressed="true">API</button><button data-q="dns" aria-pressed="false">DNS</button></div></div>
+    <pre class="code" id="sdOut"></pre>
+  </div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Networking scenarios</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b class="blue">Scale</b><span>Global anycast load balancing with cross-region overflow and failover; internal L4 for tiers.</span></div>
+    <div><b>LB anatomy</b><span>Forwarding rule → target proxy (TLS) → URL map → backend service (MIGs, NEGs, health checks).</span></div>
+    <div><b class="blue">CDN</b><span>Edge caching; cache keys, TTLs, cache modes, signed URLs; QUIC to clients.</span></div>
+    <div><b class="pencil">Secure</b><span>Cloud NAT for outbound-only access; firewall rules; Cloud Armor and IAP at the front.</span></div>
+    <div><b>Optimize</b><span>Network Intelligence Center: topology, connectivity tests, performance dashboard, firewall insights.</span></div>
+    <div><b>Modernize</b><span>Traffic Director for service meshes (sidecar or proxyless); Service Directory as the registry.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Visualizing Google Cloud: 101 Illustrated References for Cloud Engineers and Architects</i> by Priyanka Vergadia (Wiley, 2022). Explanations, examples and drawings are original summaries; the diagrams are redrawn ideas, not copies of the sketchnotes. Google Cloud changes fast: check current product docs before you rely on a detail.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch07-network-foundations.html"><span>Previous · Chapter 6a</span><b>Networking Foundations</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch09-ml-lifecycle.html"><span>Next · Chapter 7a</span><b>Data Science and the ML Lifecycle</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('vgc:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('vgc:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: auto -> light -> dark */
+(function(){const b=document.getElementById('themeBtn');if(!b)return;const R=document.documentElement;
+  const lab={auto:'Theme: auto',light:'Theme: light',dark:'Theme: dark'};let m=store.get('theme','auto');
+  function ap(){if(m==='auto')R.removeAttribute('data-theme');else R.setAttribute('data-theme',m);b.textContent=lab[m]}
+  b.addEventListener('click',()=>{m=m==='auto'?'light':m==='light'?'dark':'auto';store.set('theme',m);ap()});ap()})();
+/* decision tree: spec {start, nodes:{id:{q, o:[[label, nextId]]} | {a:title, d:html}}} */
+function dtree(sel,spec){const r=$(sel);let path=[];
+  function show(id){const n=spec.nodes[id];r.innerHTML='';const tr=document.createElement('div');tr.className='trail';tr.textContent=path.length?path.join(' → '):'Answer a few questions';r.appendChild(tr);
+    if(n.q){const q=document.createElement('div');q.className='qq';q.textContent=n.q;r.appendChild(q);const row=document.createElement('div');row.className='row';
+      n.o.forEach(([l,nx])=>{const b=document.createElement('button');b.className='btn';b.textContent=l;b.addEventListener('click',()=>{path.push(l);show(nx)});row.appendChild(b)});r.appendChild(row)}
+    else{const a=document.createElement('div');a.className='ans';a.innerHTML=`<b class="h" style="font-family:var(--display);font-size:1.15rem">${n.a}</b><span>${n.d}</span>`;r.appendChild(a)}
+    if(path.length){const b=document.createElement('button');b.className='btn';b.textContent='Start over';b.addEventListener('click',()=>{path=[];show(spec.start)});r.appendChild(b)}}
+  show(spec.start)}
+/* svg text helper with multi-line support */
+function tx(svg,x,y,t,o){o=o||{};const lines=String(t).split('\n');const g=el('g');lines.forEach((l,i)=>g.appendChild(el('text',Object.assign({x,y:y+i*(o.lh||14),'text-anchor':o.a||'middle','font-size':o.s||12,fill:o.f||'var(--ink)','font-weight':o.w||400},o.cls?{class:o.cls}:{}),l)));svg.appendChild(g);return g}
+function box(svg,x,y,w,h,c,t,o){o=o||{};const g=el('g');g.appendChild(el('rect',{x,y,width:w,height:h,rx:o.rx||8,fill:o.fill||'var(--surface)',stroke:`var(--${c||'line'})`,'stroke-width':o.sw||1.5,'stroke-dasharray':o.dash||''}));
+  svg.appendChild(g);if(t!=null){const n=String(t).split('\n').length;tx(g,x+w/2,y+h/2-(n-1)*7+4,t,{s:o.s||12,w:o.w||600,f:o.tf||'var(--ink)'})}return g}
+function arrow(svg,x1,y1,x2,y2,c,o){o=o||{};const col=`var(--${c||'muted'})`;const g=el('g');const dx=x2-x1,dy=y2-y1,L=Math.hypot(dx,dy)||1,ux=dx/L,uy=dy/L;
+  const ln=el('line',{x1,y1,x2:x2-ux*7,y2:y2-uy*7,stroke:col,'stroke-width':o.sw||1.8});if(o.flow)ln.setAttribute('class','flow');if(o.dash)ln.setAttribute('stroke-dasharray',o.dash);g.appendChild(ln);
+  const px=-uy,py=ux;g.appendChild(el('polygon',{points:`${x2},${y2} ${x2-ux*10+px*5},${y2-uy*10+py*5} ${x2-ux*10-px*5},${y2-uy*10-py*5}`,fill:col}));svg.appendChild(g);return g}
+
+
+let usDown=false,inCap=800;
+function glb(){const u=+$('#inU').value;$('#inV').textContent=u;const usCap=1000,usLoad=400;const s=$('#glbSvg');s.innerHTML='';
+  const R={us:[150,150],in:[470,150],eu:[320,150]};const inServed=Math.min(u,inCap);let over=u-inServed;let usFree=usDown?0:usCap-usLoad;const shenTo=usDown?'eu':'us';
+  const euCap=900,euUsed=200+(usDown?usLoad:0);let toEU=0,toUS=0;if(over>0){toUS=Math.min(over,usFree);over-=toUS;toEU=Math.min(over,euCap-euUsed);over-=toEU}
+  box(s,250,10,140,36,'blue','anycast 34.x.x.x',{s:11,fill:'var(--blue-soft)'});
+  [['us','us-west','Shen'],['eu','europe-west',''],['in','asia-south','Maya']].forEach(([k,n,usr])=>{const [x,y]=R[k];const dn=k==='us'&&usDown;box(s,x-70,y,140,50,dn?'bad':'d2',n+(dn?' (down)':''),{fill:dn?'var(--bad-soft)':'var(--surface)',s:11});if(usr){box(s,x-40,y-80,80,28,'pencil',usr,{fill:'var(--pencil-soft)',s:11})}});
+  arrow(s,150,98,295,46,'pencil');arrow(s,470,98,345,46,'pencil');
+  arrow(s,290,46,R[shenTo][0],150,'blue',{flow:true});arrow(s,340,46,470,150,'blue',{flow:true});
+  if(toUS>0)arrow(s,350,46,180,150,'mid',{flow:true,dash:'5 4'});if(toEU>0)arrow(s,330,46,330,150,'mid',{flow:true,dash:'5 4'});
+  tx(s,470,222,`India serves ${inServed}/${inCap}`,{s:11,f:'var(--muted)',cls:'t-mono'});
+  $('#glbTxt').innerHTML=(usDown?'US region is down: Shen is sent to Europe automatically, same IP, no DNS change. ':'')+(u>inCap?`Maya's region is full: <b class="midc">${toUS+toEU} req/s overflow</b> to ${toUS?'the US':''}${toUS&&toEU?' and ':''}${toEU?'Europe':''} while India autoscales.${over>0?` <b class="badc">${over} req/s</b> still can't be served.`:''}`:'Everyone is served from their nearest region.')}
+$('#inU').addEventListener('input',glb);$('#killUs').addEventListener('click',()=>{usDown=!usDown;$('#killUs').textContent=usDown?'Restore the US region':'Fail the US region';glb()});
+$('#scaleIn').addEventListener('click',()=>{inCap=inCap===800?1600:800;$('#scaleIn').textContent=inCap===800?'Autoscale India to 1600':'Scale India back to 800';glb()});glb();
+
+const LBN=[['anycast VIP\nforwarding rule',10],['target proxy\n(TLS certs)',135],['URL map\n/api /static',260],['backend svc\n+ health check',385],['MIG / NEG\n/ bucket',510]];
+const LBS=['The client connects to the global anycast IP. The <b>forwarding rule</b> holds that IP, the protocol and up to five ports.','The <b>target proxy</b> terminates the client\'s connection. For HTTPS, your certificates live here.','The <b>URL map</b> routes by host and path: /api to one backend service, /static to a bucket.','The <b>backend service</b> knows the backends, their capacity and health; Cloud CDN and Cloud Armor attach here.','Backends are managed instance groups for VMs, network endpoint groups for containers and serverless, or Cloud Storage buckets. Firewall rules must allow the health-check ranges.'];
+function drawLb(i){const s=$('#lbSvg');s.innerHTML='';LBN.forEach(([t,x],k)=>{box(s,x,60,118,56,k<=i?(k===i?'pencil':'blue'):'line',t,{s:11,fill:k===i?'var(--pencil-soft)':k<i?'var(--blue-soft)':'var(--surface)'});if(k)arrow(s,x-7,88,x,88,k<=i?'blue':'line')})}
+$('#lbStep').innerHTML=stepHTML();stepper('#lbStep',LBS,drawLb);
+dtree('#tree',{start:'a',nodes:{a:{q:'Where do clients come from?',o:[['The internet','ext'],['Inside my VPC or on-prem','int']]},
+ ext:{q:'What kind of traffic?',o:[['HTTP(S)','eh'],['TCP with TLS offload or TCP proxy','tp'],['TCP/UDP, keep client IP, regional','nlb']]},
+ eh:{a:'Global external HTTP(S) load balancer',d:'Layer 7, anycast IP, URL maps, CDN, Cloud Armor, managed certs.'},tp:{a:'SSL proxy or TCP proxy load balancer',d:'Global layer 4 proxy for non-HTTP TCP, terminating TLS at the edge.'},nlb:{a:'External network (passthrough) load balancer',d:'Regional, layer 4, no proxy, any TCP/UDP port.'},
+ int:{q:'HTTP(S) or plain TCP/UDP?',o:[['HTTP(S)','ih'],['TCP/UDP','il4']]},ih:{a:'Internal HTTP(S) load balancer',d:'Envoy-based layer 7 inside the VPC, for microservices.'},il4:{a:'Internal TCP/UDP load balancer',d:'No proxy, private VIP, client IP preserved. The classic tier-to-tier balancer.'}}});
+
+const TTL=[0,60,600,3600,86400,604800],TTLL=['0 (no cache)','1 min','10 min','1 h','1 day','1 week'];
+function cdn(){const t=+$('#ttl').value,n=+$('#urls').value,q=$('#qs').checked;$('#ttlV').textContent=TTLL[t];$('#urlV').textContent=n;
+  let seen=new Map(),hits=0,cells='';const keys=q?n:Math.min(200,n*4);for(let r=0;r<200;r++){const k=Math.floor(Math.pow(Math.random(),2)*keys);const time=r*30;const at=seen.get(k);let hit=false;if(at!=null&&t>0&&time-at<TTL[t]){hit=true;hits++}else seen.set(k,time);cells+=`<i class="${hit?'h':'m'}"></i>`}
+  $('#cg').innerHTML=cells;const ratio=hits/200;bars('#cdnBars',[{l:'Cache hit ratio',v:ratio*100,c:'ok',txt:Math.round(ratio*100)+'%'},{l:'Requests to origin',v:(1-ratio)*100,c:'pencil',txt:(200-hits)},{l:'Avg latency',v:20+(1-ratio)*160,c:'blue',txt:Math.round(20+(1-ratio)*160)+' ms'}],180)}
+['#ttl','#urls'].forEach(i=>$(i).addEventListener('input',cdn));$('#qs').addEventListener('change',cdn);cdn();
+cards('#modeCards',[{t:'CACHE_ALL_STATIC (recommended)',c:'ok',d:'Automatically caches static content types (JS, CSS, images, video) and honors headers for the rest.'},{t:'USE_ORIGIN_HEADERS',c:'blue',d:'Caches only what your Cache-Control headers say. Full control from the origin.'},{t:'FORCE_CACHE_ALL',c:'bad',d:'Caches everything, ignoring private, no-store and no-cache. Dangerous for personalized pages.'},{t:'Invalidation',c:'pencil',d:'Purge a path or pattern before its TTL runs out, e.g. after a bad deploy.'}]);
+
+const PP=[64,128,256,512,1024,2048,4096];
+function nat(){const v=+$('#vms').value,p=PP[+$('#ppv').value];$('#vmV').textContent=v;$('#ppV').textContent=p;const ips=Math.ceil(v*p/64512);
+  $('#natOut').innerHTML=`<b class="h">${ips} NAT IP${ips>1?'s':''} needed</b><span>${v} VMs × ${p} ports = ${(v*p).toLocaleString()} ports. Each port allows one connection to a given destination IP and port at a time. ${p===64?'64 is the default; raise it for VMs that open many connections to the same destination, or turn on dynamic port allocation.':'More ports per VM means more IPs, or fewer VMs per IP.'} With automatic IP allocation Cloud NAT adds addresses for you; with manual allocation you control the exact IPs partners allowlist.</span>`;
+  const s=$('#natSvg');s.innerHTML='';box(s,10,20,230,130,'line',null,{fill:'var(--paper)',dash:'6 4'});tx(s,125,40,'private subnet (no external IPs)',{s:10.5,f:'var(--muted)'});for(let i=0;i<6;i++)box(s,25+(i%3)*72,55+Math.floor(i/3)*45,62,36,'blue','VM',{s:10});
+  box(s,300,55,130,60,'pencil','Cloud NAT\non Cloud Router',{fill:'var(--pencil-soft)',s:11});arrow(s,240,85,300,85,'blue',{flow:true});
+  box(s,500,55,130,60,'line','Internet\n(updates, APIs)',{s:11});arrow(s,430,78,500,78,'ok',{flow:true});arrow(s,500,100,430,100,'ok');tx(s,465,135,'replies only',{s:10,f:'var(--ok)'});tx(s,465,155,'✕ unsolicited inbound',{s:10,f:'var(--bad)'})}
+$('#vms').addEventListener('input',nat);$('#ppv').addEventListener('input',nat);nat();
+
+cards('#nicCards',[{t:'Network Topology',c:'blue',d:'A live map of your VPCs, hybrid links and traffic between them, with metrics such as throughput and latency drawn on the edges.'},{t:'Connectivity Tests',c:'blue',d:'Simulates a packet\'s path through your configuration (routes, firewalls, peering, VPNs) to say whether it can arrive and which rule stops it. For some paths it also sends live probes.'},{t:'Performance Dashboard',c:'blue',d:'Packet loss and latency between zones and to the internet, so you can tell whether a slowdown is yours or Google\'s.'},{t:'Firewall Insights',c:'blue',d:'Finds shadowed rules, rules with no hits and overly permissive rules, so you can tighten your firewall safely.'}]);
+const CT=[[['VM-a','VPC route','egress fw','peering','Cloud SQL'],-1,'Reachable. The route to the private services range uses the VPC peering, and egress is allowed.'],[['on-prem','Interconnect','Cloud Router','ingress fw','VM-b'],3,'Dropped at the firewall: no ingress rule allows 10.1.0.0/16 on tcp/443. The test names the implied deny rule; add an allow rule for the on-prem range.'],[['VM-c','default route','Cloud NAT?','internet','api'],2,'Dropped: VM-c has no external IP and there is no Cloud NAT gateway in its region. Add Cloud NAT for that subnet.']];
+function ct(run){const c=CT[+$('#ctCase').value];const s=$('#ctSvg');s.innerHTML='';c[0].forEach((h,i)=>{const x=10+i*126;const st=!run?'line':c[1]===-1||i<c[1]?'ok':i===c[1]?'bad':'line';box(s,x,40,110,40,st,h,{s:11,fill:st==='ok'?'var(--ok-soft)':st==='bad'?'var(--bad-soft)':'var(--surface)'});if(i)arrow(s,x-16,60,x,60,st==='line'?'line':st)});
+  $('#ctTxt').innerHTML=run?`<b class="${c[1]===-1?'okc':'badc'}">${c[1]===-1?'Reachable':'Unreachable'}.</b> ${c[2]}`:'Pick a case and run it.'}
+$('#ctRun').addEventListener('click',()=>ct(true));$('#ctCase').addEventListener('change',()=>ct(false));ct(false);
+
+function td(){const w=+$('#v2').value,dn=$('#clusterDown').checked,pl=$('#proxyless').checked;$('#v2V').textContent=w+'%';const s=$('#tdSvg');s.innerHTML='';
+  box(s,220,8,200,40,'pencil','Traffic Director\n(managed control plane)',{s:11,fill:'var(--pencil-soft)'});
+  box(s,20,100,150,60,'blue',pl?'frontend\n(gRPC, no sidecar)':'frontend\n+ Envoy sidecar',{s:11,fill:'var(--blue-soft)'});
+  box(s,300,80,150,44,dn?'bad':'d2','reviews v1 · us-east',{s:10.5,fill:dn?'var(--bad-soft)':'var(--surface)'});box(s,300,140,150,44,'d2','reviews v1 · us-west',{s:10.5});box(s,480,110,150,44,'ok','reviews v2 · us-west',{s:10.5,fill:'var(--ok-soft)'});
+  arrow(s,300,48,95,100,'pencil',{dash:'4 4'});tx(s,170,70,pl?'xDS to the gRPC library':'xDS config to Envoy',{s:10,f:'var(--pencil)'});
+  const v1=100-w;const east=dn?0:v1/2,west=dn?v1:v1/2;if(east)arrow(s,170,120,300,102,'blue',{flow:true,sw:1+east/25});if(west)arrow(s,170,135,300,162,'blue',{flow:true,sw:1+west/25});if(w)arrow(s,170,128,480,132,'ok',{flow:true,sw:1+w/25});
+  tx(s,320,215,`v1 east ${Math.round(east)}% · v1 west ${Math.round(west)}% · v2 ${w}%`,{s:12,cls:'t-mono'});
+  $('#tdTxt').textContent=(dn?'Health checks failed in us-east, so Traffic Director shifts that share to us-west automatically. ':'')+(pl?'Proxyless gRPC: the client library itself receives routing config, saving a hop and a sidecar per Pod or VM.':'Each Envoy proxy receives the same routing policy; change the weight once and every client follows.')}
+['#v2'].forEach(i=>$(i).addEventListener('input',td));['#clusterDown','#proxyless'].forEach(i=>$(i).addEventListener('change',td));td();
+
+const SD={payments:[['10.0.1.12','8443','gke: prod-a','version=3'],['10.0.2.40','8443','gke: prod-b','version=3']],inventory:[['10.8.0.5','443','internal LB (auto-registered)','tier=gold']],'legacy-billing':[['192.168.20.7','9000','on-premises VM','owner=finance']]};
+let sq='api';function sd(){const n=$('#sdSel').value,e=SD[n];$('#sdOut').textContent=sq==='api'?`GET .../namespaces/prod/services/${n}:resolve\n`+e.map(x=>`endpoint ${x[0]}:${x[1]}  (${x[2]})  ${x[3]}`).join('\n'):`$ dig +short SRV _${n}._tcp.prod.example.internal\n`+e.map(x=>`0 0 ${x[1]} ${x[0]}`).join('\n')+'\n  ← answered by a Cloud DNS zone backed by Service Directory'}
+seg('[data-q]',b=>{sq=b.dataset.q;sd()});$('#sdSel').addEventListener('change',sd);sd();
+
+quiz('#qQuiz','#qScore',[
+ {q:'Private GKE nodes must pull images from a public registry',a:1,o:['Give nodes external IPs','Cloud NAT','Cloud CDN'],why:'Cloud NAT gives outbound access without exposing nodes.'},
+ {q:'Why can\'t VM-x reach VM-y? Find the blocking rule without guessing',a:0,o:['Connectivity Tests','Cloud Trace','Packet Mirroring'],why:'Connectivity Tests analyzes routes and firewalls hop by hop.'},
+ {q:'Video thumbnails requested millions of times a day worldwide',a:2,o:['Internal TCP LB','Bigger origin VMs','Cloud CDN'],why:'Cache at the edge: fewer origin hits, lower latency.'},
+ {q:'Shift 5% of traffic to a new service version across VMs and GKE',a:0,o:['Traffic Director','Cloud DNS weights','Cloud NAT rules'],why:'Traffic Director pushes weighted routing to every proxy or gRPC client.'},
+ {q:'Tier-to-tier traffic inside the VPC, TCP, client IP must be preserved',a:1,o:['Global HTTP(S) LB','Internal TCP/UDP LB','SSL proxy'],why:'Internal L4 passthrough, no proxy.'}]);
+
+})();
+</script>
+</body>
+</html>

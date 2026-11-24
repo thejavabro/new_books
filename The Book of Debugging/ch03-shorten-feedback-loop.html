@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Shorten the Feedback Loop</title>
+<meta name="description" content="Each attempt at a bug costs a build, a deploy, a launch and a walk to the right place. Shrink every one of those and you get many more tries per hour, which is the real speed of debugging.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for The Book of Debugging companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = the program and its structure, orange pencil = the investigator, green = fixed / good, red = bug / bad.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:minmax(0,1fr)}}
+.two>*,.three>*,.stack>*{min-width:0}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* additions for the debugging companion */
+pre.code{margin:0;font-family:var(--mono);font-size:.84rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)} pre.code .h{background:var(--bad-soft);color:var(--bad);border-radius:3px} pre.code .g{background:var(--ok-soft);color:var(--ok);border-radius:3px}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.term{font-family:var(--mono);font-size:.82rem;background:#0f1b2a;color:#d6e2f0;border-radius:8px;padding:12px 14px;min-height:5em;overflow-x:auto;white-space:pre-wrap;word-break:break-word}
+.term .e{color:#f2877c} .term .o{color:#76cf91} .term .m{color:#94a6ba}
+.theme-btn{position:absolute;top:6px;right:max(16px,env(safe-area-inset-right,0px));z-index:5;border:1px solid var(--line);background:var(--surface);color:var(--muted);border-radius:999px;padding:4px 11px;font-family:var(--mono);font-size:.72rem}
+.theme-btn:hover{border-color:var(--blue);color:var(--blue)}
+.pill{display:inline-block;font-family:var(--mono);font-size:.72rem;padding:2px 8px;border-radius:999px;border:1px solid currentColor}
+.meter{height:12px;border-radius:6px;background:var(--paper);border:1px solid var(--line);overflow:hidden}
+.meter>i{display:block;height:100%;width:0;background:var(--blue);transition:width .5s ease}
+.game{display:flex;flex-direction:column;gap:12px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.tiles button{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:10px;text-align:left;font-size:.9rem;display:flex;flex-direction:column;gap:2px}
+.tiles button b{font-family:var(--display);font-weight:600}
+.tiles button[aria-pressed="true"]{background:var(--blue-soft);border-color:var(--blue)}
+.tiles button.good{background:var(--ok-soft);border-color:var(--ok)} .tiles button.badt{background:var(--bad-soft);border-color:var(--bad)}
+.stat span.big{font-size:clamp(1.7rem,5vw,2.5rem);color:var(--ink)}
+.stat span.big.blue{color:var(--blue)} .stat span.big.badc{color:var(--bad)} .stat span.big.okc{color:var(--ok)} .stat span.big.pencil{color:var(--pencil)} .stat span.big.midc{color:var(--mid)}
+
+/* page */
+
+.optgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px}
+.optgrid label{display:flex;gap:8px;align-items:flex-start;border:1px solid var(--line);border-radius:8px;padding:7px 10px;background:var(--paper);font-size:.9rem;cursor:pointer}
+.optgrid label input{margin-top:4px;accent-color:var(--blue)}
+.optgrid label.grp{border-left:4px solid var(--c)}
+.tl{display:flex;height:34px;border-radius:6px;overflow:hidden;border:1px solid var(--line);background:var(--paper)}
+.tl i{display:flex;align-items:center;justify-content:center;font-style:normal;font-family:var(--mono);font-size:.72rem;color:#fff;white-space:nowrap;overflow:hidden;transition:flex-basis .5s ease;min-width:0}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:.85rem;color:var(--muted)}
+.legend span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--c);margin-right:6px;vertical-align:-1px}
+.ripple circle{transition:fill .3s}
+.wait{display:flex;flex-direction:column;gap:6px}
+.wait div{display:grid;grid-template-columns:2rem 1fr auto;gap:8px;align-items:center;font-size:.92rem;padding:6px 10px;border-radius:8px;border:1px solid var(--line);background:var(--paper)}
+.wait .w{color:var(--mid)} .wait .d{color:var(--blue)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">The Book of Debugging · visual companion</a><span class="tag">Part I · Reproduce · Strategy 2</span><span class="tag">Page 3 of 16</span></div>
+  <h1>Shorten the Feedback Loop</h1>
+  <p class="lede">Each attempt at a bug costs a build, a deploy, a launch and a walk to the right place. Shrink every one of those and you get many more tries per hour, which is the real speed of debugging.</p>
+  <nav class="toc" aria-label="Sections"><a href="#cycle">The cycle</a><a href="#build">Faster builds</a><a href="#assets">Faster assets</a><a href="#deploy">Deploying</a><a href="#hot">Hot reloading</a><a href="#startup">Start-up</a><a href="#load">Loading</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="cycle" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Four slices of every attempt</h2></div>
+  <p>Debugging is a loop of change, try, look. The time between making a change and seeing whether the bug still happens splits into four slices: <b>build</b> the code and assets, <b>deploy</b> them to the device, <b>start</b> the program, and <b>navigate</b> to the place where the bug appears. Each slice can be attacked separately, and every second saved is multiplied by every attempt you make. Switch on techniques below and watch the cycle shrink.</p>
+  <div class="sheet">
+    <div class="tl" id="bar" aria-hidden="true"></div>
+    <div class="legend"><span style="--c:var(--d1)">build</span><span style="--c:var(--d3)">deploy</span><span style="--c:var(--d4)">start up</span><span style="--c:var(--d2)">navigate</span></div>
+    <div class="three">
+      <div class="stat"><span class="big" id="cyc">0</span><span>per attempt</span></div>
+      <div class="stat"><span class="big blue" id="perH">0</span><span>attempts per hour</span></div>
+      <div class="stat"><span class="big okc" id="saved">0</span><span>saved over 40 attempts</span></div>
+    </div>
+    <div class="optgrid" id="opts"></div>
+    <p class="small" id="cyNote"></p>
+  </div>
+</section>
+
+<section id="build" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Build faster: code</h2></div>
+  <p>For compiled languages the setup of the project and the build tools matter most. The book lists a family of techniques:</p>
+  <div class="cardgrid" id="buildCards"></div>
+  <p>Incremental builds of one or two changed source files are fast these days. The slow case is touching a <span class="key">header</span> that many files include: one small edit can rebuild half the codebase. Click a file below to see how far a change ripples.</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Design"><button aria-pressed="true" data-m="plain">Plain class header</button><button aria-pressed="false" data-m="pimpl">PIMPL</button></div><span class="small" id="ripV">click a file</span></div>
+    <div class="svgbox"><svg id="rip" class="ripple" viewBox="0 0 720 250" role="img" aria-label="Include graph showing which source files rebuild when a file changes"></svg></div>
+    <p class="small">With pointer-to-implementation, the header only forward-declares a hidden <code>Impl</code> class, so changing private members or function bodies touches only one <code>.cpp</code>. Changing the public interface still rebuilds every includer.</p>
+  </div>
+  <div class="two">
+    <pre class="code"><span class="c">// Widget.h: public face only</span>
+<span class="k">class</span> Widget {
+<span class="k">public</span>:
+  Widget(); ~Widget();
+  <span class="k">void</span> Draw();
+<span class="k">private</span>:
+  <span class="k">struct</span> Impl;   <span class="c">// defined in Widget.cpp</span>
+  Impl* impl;
+};</pre>
+    <div class="stack">
+      <h3>Hacks are fine while hunting</h3>
+      <p>While iterating on a fix, it is acceptable to dodge header edits: declare a function locally in the one <code>.cpp</code> that calls it, or poke a quick global variable to try something. Just mark every such shortcut with a comment that does not appear anywhere else in the codebase, so you can search for it and clean up before you commit.</p>
+      <pre class="code">extern <span class="k">int</span> g_forceSlowPath; <span class="c">// HACK-JK: remove</span></pre>
+    </div>
+  </div>
+</section>
+
+<section id="assets" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Build faster: assets</h2></div>
+  <div class="two">
+    <div class="stack">
+      <p>Assets (window layouts, images, templates, databases, textures, meshes, levels, shaders) often need preprocessing. Profile the asset pipeline first, then apply the same tricks as for code: distribute, cache, and only build what you need. Some programs can process assets on demand at runtime instead of up front, trading runtime speed for less waiting.</p>
+      <p>Two classic bottlenecks: <b>texture compression</b> (use lower resolution and cheaper compression in development builds) and <b>shader permutations</b>, where hard-coding features multiplies the count into the thousands. Good dependency tracking lets you build only the shaders for one scene, and switching off unrelated rendering features shrinks the set further.</p>
+    </div>
+    <div class="sheet">
+      <h3>Shader permutations multiply</h3>
+      <label class="rng"><span>On/off features baked in: <b id="fV">6</b></span><input id="feat" type="range" min="1" max="14" value="6"></label>
+      <label class="rng"><span>Light-count variants: <b id="lV">4</b></span><input id="lights" type="range" min="1" max="8" value="4"></label>
+      <div class="stat"><span class="big" id="perm">256</span><span>shader variants to compile</span></div>
+      <p class="small">Each on/off feature doubles the count; a scene that only needs a few variants is much faster to iterate on.</p>
+    </div>
+  </div>
+</section>
+
+<section id="deploy" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Deploy less, deploy faster</h2></div>
+  <p>On a development PC, deployment may not exist. On consoles, phones, dev kits or remote servers it can dominate the cycle, especially when gigabytes of content are involved. Options, roughly from best to worst:</p>
+  <div class="three">
+    <div class="sheet"><span class="eyebrow">Best</span><h3>Files on demand</h3><p class="small">Some device tooling lets the program read files straight from your PC. If it does not, a custom file system layer that fetches over the network and caches locally does the same job.</p></div>
+    <div class="sheet"><span class="eyebrow">Good</span><h3>Copy only the delta</h3><p class="small">Small, atomically replaced files copy quickly. One giant multi-gigabyte archive that must be rebuilt and resent for each change does not.</p></div>
+    <div class="sheet"><span class="eyebrow">Also</span><h3>Better pipes, smaller packages</h3><p class="small">Fastest cable and port, wired network instead of Wi-Fi, and a package cut down to the one level or character you are debugging.</p></div>
+  </div>
+  <div class="callout"><b class="h">Do not remove the bug along with the bulk</b><span>Trimming the package changes the environment. If the bug depends on timing, shorter load times may make it vanish. After every such change, confirm the bug still reproduces the same way.</span></div>
+</section>
+
+<section id="hot" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Hot reloading skips three slices at once</h2></div>
+  <div class="two">
+    <div class="stack">
+      <p>Loading new code or assets into the running program avoids redeploying, restarting and navigating back. Scripted languages make this easy; native programs usually reload a dynamic library (<code>.dll</code>/<code>.so</code>) or patch the executable, and may need code to fix up data whose layout changed.</p>
+      <p>Two warnings. Hot reloading is a development-only feature and often poorly tested, so it can produce bugs of its own and send you chasing ghosts. And dependents need to hear about reloaded assets: a texture is easy to swap, but code that inspects that texture, or samplers and materials built from it, must be notified and rebuilt.</p>
+    </div>
+    <div class="sheet stepper" id="hotStep">
+      <div class="svgbox fit"><svg id="hotSvg" viewBox="0 0 360 220" role="img" aria-label="A texture is reloaded and notifications propagate to its dependents"></svg></div>
+    </div>
+  </div>
+</section>
+
+<section id="startup" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Cut the start-up and the waiting</h2></div>
+  <p>Everything between launch and the first reproduction step is overhead. Splash and legal screens, preloading that your bug does not need, menus that demand clicks. The hidden cost is the switching: every time you go from waiting to doing, you lose a moment finding the right button, and long waits invite you to read something else and lose the thread entirely.</p>
+  <div class="two">
+    <div class="sheet">
+      <div class="row between"><h3>Your start-up routine</h3><button class="btn" id="trim">Trim it</button></div>
+      <div class="wait" id="wait"></div>
+      <div class="row between small"><span>wait / do switches: <b id="sw"></b></span><span>total: <b id="wt"></b></span></div>
+    </div>
+    <div class="stack">
+      <p>Also shorten the individual steps: repeat an action 5 times instead of 10, wait less than the report says, start from a prefilled template. After each tweak, check the bug still reproduces just as it did with the original instructions.</p>
+      <p>The last slice, getting to the right screen, level or record, is best handled by automation (the next strategy) or by tools built into the program that jump straight there.</p>
+    </div>
+  </div>
+</section>
+
+<section id="load" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Make loading itself faster</h2></div>
+  <p>Loading usually breaks down into five stages: read from disk, decompress, find and load dependencies, process the data for use, and (for graphics) upload to video memory. Faster drives, one big read instead of many small ones, asynchronous IO and memory mapping help with the first. Compression is the surprising one: reading less data almost always beats the CPU time spent decompressing it, especially with a fast codec on spare cores.</p>
+  <div class="sheet">
+    <div class="two">
+      <label class="rng"><span>Asset size: <b id="szV">2 GB</b></span><input id="sz" type="range" min="0.2" max="8" step="0.1" value="2"></label>
+      <label class="rng"><span>Disk read speed: <b id="dkV">500 MB/s</b></span><input id="dk" type="range" min="80" max="5000" step="10" value="500"></label>
+      <label class="rng"><span>Compression ratio: <b id="crV">2.5×</b></span><input id="cr" type="range" min="1" max="5" step="0.1" value="2.5"></label>
+      <label class="rng"><span>Decompression speed (all cores): <b id="dcV">1500 MB/s</b></span><input id="dc" type="range" min="200" max="6000" step="50" value="1500"></label>
+    </div>
+    <div class="bars" id="loadBars"></div>
+    <p class="small">Simplified model: reading and decompression overlap, so the slower of the two sets the pace.</p>
+  </div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="row between"><span class="small">Pick an answer for each.</span><span class="score" id="qScore"></span></div>
+  <div class="quiz" id="quizBox"></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>The Book of Debugging: A Systematic Workflow for Finding and Fixing Bugs</i> by Johannes Kuhlmann (No Starch Press). Explanations, code snippets, simulations and drawings are original summaries, not text from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch02-reproduce-yourself.html"><span>Previous · Strategy 1</span><b>Bug Reports and Reproducing the Bug Yourself</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch04-automate-reproduction.html"><span>Next · Strategy 3</span><b>Automate the Reproduction</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every page of The Book of Debugging companion. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('dbg:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('acc:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: auto -> light -> dark */
+(function(){const b=document.createElement('button');b.className='theme-btn';b.type='button';const modes=['auto','light','dark'];let m=store.get('theme','auto');
+function ap(){if(m==='auto')document.documentElement.removeAttribute('data-theme');else document.documentElement.setAttribute('data-theme',m);b.textContent='theme: '+m;b.setAttribute('aria-label','Colour theme: '+m+'. Click to change.')}
+b.addEventListener('click',()=>{m=modes[(modes.indexOf(m)+1)%3];store.set('theme',m);ap()});ap();document.body.appendChild(b)})();
+
+
+/* cycle model, seconds */
+const base={b:240,d:180,s:90,n:60};
+const O=[
+ ['unity','Unity (jumbo) builds','b',.75,'d1'],['dist','Distributed build / shared cache','b',.6,'d1'],['pch','Precompiled headers','b',.8,'d1'],['nohdr','Avoid header edits while hunting','b',.5,'d1'],
+ ['ondemand','Files on demand from the PC','d',.25,'d3'],['small','Package only the level you need','d',.5,'d3'],['cable','Fast cable, wired network','d',.7,'d3'],
+ ['splash','Skip splash and legal screens','s',.75,'d4'],['preload','Skip unneeded preloading','s',.7,'d4'],['compress','Faster loading (compression, async IO)','s',.7,'d4'],
+ ['jump','Command-line jump to the right screen','n',.2,'d2'],
+ ['hot','Hot reloading (no redeploy, restart or navigate)','hot',0,'ok']];
+const on=new Set();
+$('#opts').innerHTML=O.map(o=>`<label class="grp" style="--c:var(--${o[4]})"><input type="checkbox" data-k="${o[0]}"><span>${o[1]}</span></label>`).join('');
+const fmt=s=>s>=60?Math.floor(s/60)+'m '+String(Math.round(s%60)).padStart(2,'0')+'s':Math.round(s)+'s';
+function cyc(){const t={...base};O.forEach(o=>{if(on.has(o[0])&&o[2]!=='hot')t[o[2]]*=o[3]});
+ if(on.has('hot')){t.d=5;t.s=0;t.n=0}
+ const tot=t.b+t.d+t.s+t.n,b0=base.b+base.d+base.s+base.n;
+ $('#bar').innerHTML=[['b','d1'],['d','d3'],['s','d4'],['n','d2']].map(([k,c])=>`<i style="flex-basis:${t[k]/b0*100}%;background:var(--${c})">${t[k]>25?fmt(t[k]):''}</i>`).join('');
+ $('#cyc').textContent=fmt(tot);$('#perH').textContent=(3600/tot).toFixed(1);$('#saved').textContent=fmt((b0-tot)*40).replace(/^(\d+)m/,(m,a)=>a>=60?Math.floor(a/60)+'h '+(a%60)+'m':m);
+ $('#cyNote').textContent=on.has('hot')?'Hot reloading wipes out deployment, start-up and navigation for changes it supports. Keep an eye on its own bugs.':'Illustrative numbers. The point is the multiplication: a few minutes saved per attempt adds up to hours over a hard bug.'}
+$$('#opts input').forEach(c=>c.addEventListener('change',()=>{c.checked?on.add(c.dataset.k):on.delete(c.dataset.k);cyc()}));cyc();
+
+cards('#buildCards',[
+ {t:'Unity / jumbo builds',d:'Compile many .cpp files as one unit so shared headers are parsed once. Occasional name clashes are usually easy to fix.',c:'d1'},
+ {t:'Distributed builds',d:'Spread compilation across machines on the network (tools such as Incredibuild, Bazel, distcc).',c:'d1'},
+ {t:'Distributed caching',d:'Developers compile the same code; a shared cache of object files lets one person\'s build serve everyone.',c:'d1'},
+ {t:'Precompiled headers',d:'Put common includes in one header the compiler preprocesses once and reuses for every file.',c:'d1'},
+ {t:'Fewer, smaller includes',d:'Headers drive C++ build time. Declare only the public interface, use forward declarations, and tools can find unused includes.',c:'d1'},
+ {t:'Fewer templates',d:'Templates need their full definition wherever they are used, so they pull implementation into headers.',c:'d1'}]);
+
+/* ripple graph */
+const files=[{id:'w.h',x:360,y:40,h:1},{id:'core.h',x:120,y:40,h:1},{id:'widget.cpp',x:360,y:130},{id:'menu.cpp',x:180,y:130},{id:'hud.cpp',x:540,y:130},{id:'app.cpp',x:60,y:210},{id:'ui.cpp',x:250,y:210},{id:'save.cpp',x:430,y:210},{id:'net.cpp',x:620,y:210}];
+const inc={'w.h':['widget.cpp','menu.cpp','hud.cpp','ui.cpp','save.cpp'],'core.h':['app.cpp','menu.cpp','ui.cpp','save.cpp','net.cpp','widget.cpp','hud.cpp']};
+let mode='plain';const rsv=$('#rip');const FN={};files.forEach(f=>FN[f.id]=f);
+Object.entries(inc).forEach(([h,l])=>l.forEach(c=>rsv.appendChild(el('line',{x1:FN[h].x,y1:FN[h].y+14,x2:FN[c].x,y2:FN[c].y-14,stroke:'var(--line)','stroke-width':1.5,'data-h':h}))));
+const nodes={};files.forEach(f=>{const g=el('g',{tabindex:0,role:'button',style:'cursor:pointer'});const r=el('rect',{x:f.x-52,y:f.y-14,width:104,height:28,rx:6,fill:'var(--surface)',stroke:f.h?'var(--blue)':'var(--line)','stroke-width':1.6});
+ g.appendChild(r);g.appendChild(el('text',{x:f.x,y:f.y+5,'text-anchor':'middle','font-size':12,'font-family':'var(--mono)',fill:'var(--ink)'},f.id));
+ g.addEventListener('click',()=>hit(f.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();hit(f.id)}});rsv.appendChild(g);nodes[f.id]=r});
+let last=null;
+function hit(id){last=id;Object.values(nodes).forEach(r=>r.setAttribute('fill','var(--surface)'));rsv.querySelectorAll('line').forEach(l=>l.setAttribute('stroke','var(--line)'));
+ let set=[id];if(inc[id]){if(id==='w.h'&&mode==='pimpl'){set=['w.h','widget.cpp']}else{set=[id,...inc[id]];rsv.querySelectorAll(`line[data-h="${id}"]`).forEach(l=>l.setAttribute('stroke','var(--bad)'))}}
+ set.forEach(s=>nodes[s].setAttribute('fill',s===id?'var(--pencil-soft)':'var(--bad-soft)'));
+ const n=set.filter(s=>s.endsWith('.cpp')).length;$('#ripV').textContent=`${n} file${n===1?'':'s'} to recompile`+(id==='w.h'&&mode==='pimpl'?' (private change behind PIMPL)':'')}
+seg('[data-m]',b=>{mode=b.dataset.m;if(last)hit(last);else hit('w.h')});hit('w.h');
+
+function perm(){const f=+$('#feat').value,l=+$('#lights').value;$('#fV').textContent=f;$('#lV').textContent=l;$('#perm').textContent=(Math.pow(2,f)*l).toLocaleString()}
+$('#feat').addEventListener('input',perm);$('#lights').addEventListener('input',perm);perm();
+
+/* hot reload stepper */
+const hs=$('#hotSvg');const HN=[['texture.png',180,30,'d3'],['GPU texture',70,100,'d1'],['CPU-side reader',290,100,'d1'],['sampler',70,175,'d2'],['material binding',290,175,'d2']];
+const hE=[[0,1],[0,2],[1,3],[1,4]];const hl=hE.map(([a,b])=>{const l=el('line',{x1:HN[a][1],y1:HN[a][2]+14,x2:HN[b][1],y2:HN[b][2]-14,stroke:'var(--line)','stroke-width':2});hs.appendChild(l);return l});
+const hn=HN.map(n=>{const g=el('g');const r=el('rect',{x:n[1]-62,y:n[2]-14,width:124,height:28,rx:6,fill:'var(--surface)',stroke:`var(--${n[3]})`,'stroke-width':1.5});g.appendChild(r);g.appendChild(el('text',{x:n[1],y:n[2]+5,'text-anchor':'middle','font-size':12,fill:'var(--ink)'},n[0]));hs.appendChild(g);return r});
+$('#hotStep').insertAdjacentHTML('beforeend',stepHTML());
+stepper('#hotStep',['A texture file on disk changes.','Easy part: recreate the GPU texture behind an indirection so holders of the old handle see the new one.','Harder: code that inspects the texture on the CPU must be notified, so you need callbacks or a notification system.','Hardest: a format change means samplers, pipeline state and material bindings must be rebuilt too, inside the renderer.'],
+ i=>{hn.forEach((r,k)=>r.setAttribute('fill',(i===0&&k===0)||(i===1&&k<=1)||(i===2&&k<=2)||i===3?'var(--ok-soft)':'var(--surface)'));hl.forEach((l,k)=>{const on=(i>=1&&k===0)||(i>=2&&k===1)||(i>=3&&k>=2);l.setAttribute('stroke',on?'var(--ok)':'var(--line)');l.classList.toggle('flow',on)})});
+
+/* start-up */
+const W0=[['d','Launch from the debugger',3],['w','Intro screens and videos',25],['w','Initial loading',30],['d','Navigate the menus',20],['w','More loading',25],['d','Reproduce the bug',30]];
+const W1=[['d','Launch with --skip-intro --load=level7',3],['w','Load only what the bug needs',15],['d','Reproduce the bug',30]];
+function wdraw(L){$('#wait').innerHTML=L.map((s,i)=>`<div><span class="mono ${s[0]}">${s[0]==='w'?'wait':'do'}</span><span>${s[1]}</span><span class="mono">${s[2]}s</span></div>`).join('');
+ let sw=0;for(let i=1;i<L.length;i++)if(L[i][0]!==L[i-1][0])sw++;$('#sw').textContent=sw;$('#wt').textContent=L.reduce((a,s)=>a+s[2],0)+'s'}
+let trimmed=false;$('#trim').addEventListener('click',()=>{trimmed=!trimmed;wdraw(trimmed?W1:W0);$('#trim').textContent=trimmed?'Restore':'Trim it'});wdraw(W0);
+
+function load(){const sz=+$('#sz').value*1000,dk=+$('#dk').value,cr=+$('#cr').value,dc=+$('#dc').value;
+ $('#szV').textContent=(+$('#sz').value).toFixed(1)+' GB';$('#dkV').textContent=dk+' MB/s';$('#crV').textContent=cr.toFixed(1)+'×';$('#dcV').textContent=dc+' MB/s';
+ const raw=sz/dk;const comp=Math.max(sz/cr/dk,sz/dc);const mx=Math.max(raw,comp);
+ bars('#loadBars',[{l:'Uncompressed',v:raw,c:'d3',txt:raw.toFixed(1)+' s'},{l:'Compressed',v:comp,c:comp<raw?'ok':'bad',txt:comp.toFixed(1)+' s'}],mx)}
+['sz','dk','cr','dc'].forEach(k=>$('#'+k).addEventListener('input',load));load();
+
+quiz('#quizBox','#qScore',[
+ {q:'Which edit usually triggers the longest C++ rebuild?',o:['A function body in a .cpp','A widely included header','A comment in a .cpp'],a:1,why:'Every file that includes the header must recompile.'},
+ {q:'What does PIMPL speed up?',o:['Changes to private implementation','Changes to the public interface','Linking'],a:0,why:'Private details move to the .cpp; interface changes still ripple.'},
+ {q:'You trimmed the deployed package and the bug vanished. Most likely?',o:['The bug is fixed','The change affected timing or removed a trigger','The package was corrupt'],a:1,why:'Changing the environment can hide timing-dependent bugs. Re-verify the repro.'},
+ {q:'Why mark temporary hacks with a unique comment?',o:['For code review style','So you can find and remove them before committing','The compiler needs it'],a:1,why:'A searchable marker makes clean-up reliable.'},
+ {q:'Is compressing assets worth it for load time?',o:['Rarely','Almost always: less disk IO beats decompression cost','Only on HDDs'],a:1,why:'Reading less data usually outweighs decompression, especially with a fast codec on spare cores.'}]);
+
+})();
+</script>
+</body>
+</html>

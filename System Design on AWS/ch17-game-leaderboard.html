@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Designing an Online Game Leaderboard</title>
+<meta name="description" content="Millions of score updates a minute and every player wants to see their rank right now. Sorted sets, smart partitioning and a careful cost model.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the System Design on AWS companion. Layout: a drafting-table reading column on blueprint grid paper.
+   Blue ink = structure and data paths, orange pencil = clients and requests, green = healthy, red = failure.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:minmax(14rem,1fr) minmax(0,auto);gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* additions */
+button.tag.theme{cursor:pointer;margin-left:auto}
+button.tag.theme:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;max-width:100%;white-space:pre}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:5em;max-height:14em;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.pill{display:inline-block;font-family:var(--mono);font-size:.75rem;padding:2px 8px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.pill.ok{border-color:var(--ok);color:var(--ok);background:var(--ok-soft)} .pill.bad{border-color:var(--bad);color:var(--bad);background:var(--bad-soft)}
+input[type=number],input[type=text]{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+.sheet>.seg,.stack>.seg{align-self:flex-start}
+
+/* page */
+
+.lb{display:flex;flex-direction:column;gap:3px;font-size:.9rem}
+.lb div{display:grid;grid-template-columns:2.5rem minmax(0,1fr) 5rem;gap:8px;padding:5px 10px;border-radius:6px;background:var(--paper);border:1px solid var(--line);transition:background .4s}
+.lb div.me{background:var(--pencil-soft);border-color:var(--pencil)}
+.lb div.up{background:var(--ok-soft);border-color:var(--ok)}
+.lb span:first-child{font-family:var(--mono);color:var(--muted)}
+.lb span:last-child{font-family:var(--mono);text-align:right}
+.shardsT{display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) minmax(0,1.1fr);gap:8px}
+.shardsT>div{border:1px solid var(--line);border-radius:8px;padding:8px;font-family:var(--mono);font-size:.75rem;display:flex;flex-direction:column;gap:2px;background:var(--paper)}
+.shardsT>div.m{background:var(--ok-soft);border-color:var(--ok)}
+.shardsT span.t{color:var(--pencil);font-weight:600}
+@media (max-width:600px){.shardsT{grid-template-columns:1fr 1fr}}
+.tco{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px}
+.tco button{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:10px 6px;font-size:.82rem}
+.tco button[aria-pressed="true"]{background:var(--blue-soft);border-color:var(--blue)}
+@media (max-width:600px){.tco{grid-template-columns:1fr 1fr}}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">System Design on AWS · visual companion</a><span class="tag">Part III · Chapter 17 of 21</span><button class="tag theme" type="button" id="themeBtn" aria-label="Toggle light or dark theme">Theme</button></div>
+  <h1>Designing an Online Game Leaderboard</h1>
+  <p class="lede">Millions of score updates a minute and every player wants to see their rank right now. Sorted sets, smart partitioning and a careful cost model.</p>
+  <nav class="toc" aria-label="Sections"><a href="#scale">Requirements</a><a href="#zset">Sorted sets</a><a href="#partition">Sharding</a><a href="#design">Day 0 on AWS</a><a href="#push">Polling vs push</a><a href="#tco">Cost of ownership</a><a href="#dayn">Day N</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="scale" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Requirements and scale</h2></div>
+  <p>Players submit scores; leaderboards (global, regional, per mode, daily or weekly) update in near real time; players see the top N and their own rank. Nonfunctional targets: writes visible in under a second, reads in well under that, high availability during tournaments, protection against cheating. The book sizes it for 10 million players.</p>
+  <div class="sheet">
+    <div class="three"><label class="rng"><span>Players: <b id="plV"></b></span><input type="range" id="pl" min="5" max="8" step="0.1" value="7"></label><label class="rng"><span>Submissions per player/day: <b id="sbV"></b></span><input type="range" id="sb" min="1" max="50" value="5"></label><label class="rng"><span>Players submitting in a 10-min peak: <b id="pkV"></b></span><input type="range" id="pk" min="0.1" max="5" step="0.1" value="1"></label></div>
+    <div class="kpis" id="sK"></div>
+  </div>
+</section>
+
+<section id="zset" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Why Redis sorted sets</h2></div>
+  <p>A relational <code>ORDER BY score DESC LIMIT 10</code> with an index works for thousands of players, but "what is my rank among 10 million?" needs counting everything above you, and constant score updates churn the index. A Redis <b>sorted set</b> keeps members ordered by score in a skip list plus hash: add or update in O(log n), rank in O(log n), top N in O(log n + N). Play a round.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn primary" id="zMe">You score +150</button><button class="btn" id="zRand">10 random players score</button><button class="btn" id="zReset">Reset</button></div>
+    <div class="two"><div class="lb" id="lb"></div><pre class="code" id="zCmd"></pre></div>
+  </div>
+</section>
+
+<section id="partition" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>When one sorted set is not enough</h2></div>
+  <p>One sorted set of hundreds of millions of entries strains one node's memory and CPU. Options: separate leaderboards per <b>game mode or season</b> (natural keys), per <b>region</b> (lower latency, data residency), or shards by <b>player ID hash</b>. Hash shards spread load evenly, but a global top 10 then needs <b>scatter-gather</b>: ask every shard for its top 10 and merge. Exact global rank for one player needs a count from every shard.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn primary" id="sgRun">Global top 5</button><button class="btn" id="sgNew">New scores</button></div>
+    <div class="shardsT" id="sg"></div>
+    <p class="small">Another trick for approximate ranks: shard by <b>score range</b> and keep a count per range. Your rank ≈ players in higher ranges + your position in your range.</p>
+  </div>
+  <div class="cardgrid" id="conCards"></div>
+</section>
+
+<section id="design" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Day 0 architecture on AWS</h2></div>
+  <p>API Gateway in front of three Lambda functions, DynamoDB as the source of truth, ElastiCache for Redis for ranking, SQS to decouple writes from ranking, and SNS for "you were overtaken" notifications. Step through a score submission and a leaderboard read.</p>
+  <div class="sheet stepper" id="dStep"><div class="svgbox"><svg id="dSvg" viewBox="0 0 660 270" role="img" aria-label="Day 0 architecture"></svg></div></div>
+  <div class="tbl"><table class="t"><tr><th>DynamoDB table</th><th>Partition key</th><th>Sort key</th><th>Holds</th></tr><tr><td>Players</td><td class="mono">playerId</td><td>–</td><td>Profile, region, total stats</td></tr><tr><td>Scores</td><td class="mono">playerId</td><td class="mono">timestamp</td><td>Every submission (history, audit, anti-cheat)</td></tr><tr><td>Leaderboards</td><td class="mono">leaderboardId (global, eu-daily…)</td><td class="mono">score#playerId</td><td>Durable snapshot of rankings to rebuild Redis</td></tr></table></div>
+  <p class="small">A simpler alternative for small games: RDS with an index on score and <code>ORDER BY</code>. It stops scaling when rank queries and update churn grow.</p>
+</section>
+
+<section id="push" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Stop polling the leaderboard</h2></div>
+  <p>On Day 0 clients keep requesting the leaderboard, most of the time getting the same answer. At millions of players that is pure waste. Day N pushes changes instead: AppSync subscriptions or API Gateway WebSockets notify clients only when a board they watch changes.</p>
+  <div class="sheet">
+    <div class="two"><label class="rng"><span>Concurrent players watching: <b id="cwV"></b></span><input type="range" id="cw" min="10" max="2000" step="10" value="500"></label><label class="rng"><span>Poll interval: <b id="piV"></b></span><input type="range" id="pi" min="1" max="30" value="5"></label></div>
+    <div class="bars" id="pBars"></div>
+  </div>
+</section>
+
+<section id="tco" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Total cost of ownership</h2></div>
+  <p>The cloud bill is only part of the cost. TCO spans the product's whole life. Tap a phase.</p>
+  <div class="sheet"><div class="tco" id="tcoB" role="group" aria-label="Phase"></div><div class="detail" id="tcoT" aria-live="polite"></div></div>
+  <p>The book prices DynamoDB on-demand at its scale (750 GB, 167 writes/s, 231 reads/s, us-east-1) at roughly $812 a month. Rebuild that estimate; prices are approximate list prices and change.</p>
+  <div class="sheet">
+    <div class="three"><label class="rng"><span>Storage: <b id="gbV"></b></span><input type="range" id="gb" min="50" max="5000" step="50" value="750"></label><label class="rng"><span>Writes/s: <b id="wsV"></b></span><input type="range" id="ws" min="10" max="2000" step="1" value="167"></label><label class="rng"><span>Reads/s: <b id="rsV"></b></span><input type="range" id="rs" min="10" max="5000" step="1" value="231"></label></div>
+    <div class="bars" id="cBars"></div>
+    <p class="small" id="cTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="dayn" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Day N: scaling Redis and the rest</h2></div>
+  <div class="cardgrid" id="dnCards"></div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qs"></span></div><div class="quiz" id="qq"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>System Design on AWS: Building and Scaling Enterprise Solutions</i> by Jayanth Kumar and Mandeep Singh (O'Reilly, 2025). Explanations, examples, code snippets and drawings are original summaries, not copied from the book. AWS limits and prices change; check current AWS documentation before relying on a number.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch16-social-network.html"><span>Previous · Chapter 16</span><b>Designing a Social Network and Newsfeed</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch18-hotel-reservation.html"><span>Next · Chapter 18</span><b>Designing a Hotel Reservation System</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('sda:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('sda:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle */
+(function(){const b=document.getElementById('themeBtn');if(!b)return;const r=document.documentElement;
+ const cur=store.get('theme',null);if(cur)r.setAttribute('data-theme',cur);
+ b.addEventListener('click',()=>{const dark=r.getAttribute('data-theme')?r.getAttribute('data-theme')==='dark':matchMedia('(prefers-color-scheme: dark)').matches;const n=dark?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n)});})();
+/* code blocks */
+
+
+function drawS(){const P=Math.round(Math.pow(10,+$('#pl').value)),sb=+$('#sb').value,pk=+$('#pk').value;$('#plV').textContent=P.toLocaleString();$('#sbV').textContent=sb;$('#pkV').textContent=pk+'%';
+ const day=P*sb*500;const peak=P*pk/100/600;const reads=P*2/86400;const f=b=>b>=1e12?(b/1e12).toFixed(1)+' TB':b>=1e9?(b/1e9).toFixed(1)+' GB':(b/1e6).toFixed(1)+' MB';
+ $('#sK').innerHTML=`<div class="stat"><span class="big blue" style="font-size:1.4rem">${f(day)}</span><span>new data per day (500 B per score)</span></div><div class="stat"><span class="big" style="font-size:1.4rem">${f(day*365)}</span><span>per year; archive old scores to S3 Glacier</span></div><div class="stat"><span class="big pencil" style="font-size:1.4rem">${Math.round(peak).toLocaleString()}/s</span><span>peak writes (tournaments: ~1,000/s)</span></div><div class="stat"><span class="big okc" style="font-size:1.4rem">${Math.round(reads).toLocaleString()}/s</span><span>average reads (2 checks per player per day)</span></div>`}
+['pl','sb','pk'].forEach(i=>$('#'+i).addEventListener('input',drawS));drawS();
+
+/* sorted set */
+const NAMES=['Akira','Bea','Caio','Dana','Eko','Fumi','Gus','Hana','Ivo','Jae','Kofi','Lu'];let Z,prevRank={};
+function zReset(){Z={you:880};NAMES.forEach((n,i)=>Z[n]=1500-i*60);prevRank=ranks();drawZ([])}
+function ranks(){return Object.entries(Z).sort((a,b)=>b[1]-a[1]).reduce((o,[k],i)=>(o[k]=i,o),{})}
+function drawZ(cmds){const sorted=Object.entries(Z).sort((a,b)=>b[1]-a[1]);const r=ranks();const myR=r.you;const show=sorted.slice(0,5);const around=sorted.slice(Math.max(5,myR-1),myR+2);
+ const row=([k,v])=>`<div class="${k==='you'?'me':(prevRank[k]!=null&&r[k]<prevRank[k]?'up':'')}"><span>#${r[k]+1}</span><span>${k==='you'?'You':k}</span><span>${v}</span></div>`;
+ $('#lb').innerHTML=show.map(row).join('')+(myR>=5?'<div style="border:0;background:none;justify-content:center;display:block;text-align:center">⋯</div>'+around.map(row).join(''):'');
+ $('#zCmd').innerHTML=(cmds.length?cmds.join('\n')+'\n\n':'')+`<span class="c"># read paths</span>\nZREVRANGE lb:global 0 4 WITHSCORES   <span class="c"># top 5</span>\nZREVRANK  lb:global you              <span class="c"># → ${myR}</span>\nZREVRANGE lb:global ${Math.max(0,myR-1)} ${myR+1}               <span class="c"># around me</span>`;prevRank=r}
+$('#zMe').addEventListener('click',()=>{Z.you+=150;drawZ(['ZINCRBY lb:global 150 you   <span class="c"># O(log n)</span>'])});
+$('#zRand').addEventListener('click',()=>{const c=[];for(let i=0;i<10;i++){const n=NAMES[Math.floor(Math.random()*NAMES.length)];const d=Math.floor(Math.random()*200);Z[n]+=d;c.push(`ZINCRBY lb:global ${d} ${n}`)}drawZ(c.slice(0,4).concat(['…']))});$('#zReset').addEventListener('click',zReset);zReset();
+
+/* scatter gather */
+let SH;function sgNew(){SH=[0,1,2].map(()=>Array.from({length:8},()=>({p:'p'+Math.floor(Math.random()*900+100),s:Math.floor(Math.random()*9000+1000)})).sort((a,b)=>b.s-a.s));sgDraw(false)}
+function sgDraw(run){const top=SH.flat().sort((a,b)=>b.s-a.s).slice(0,5);$('#sg').innerHTML=SH.map((s,i)=>`<div><b>shard ${i}</b>${s.slice(0,5).map(x=>`<span class="${run&&top.includes(x)?'t':''}">${x.p} ${x.s}</span>`).join('')}<span>…</span></div>`).join('')+`<div class="${run?'m':''}"><b>merged top 5</b>${run?top.map(x=>`<span>${x.p} ${x.s}</span>`).join(''):'<span>press the button</span>'}</div>`}
+$('#sgRun').addEventListener('click',()=>sgDraw(true));$('#sgNew').addEventListener('click',sgNew);sgNew();
+cards('#conCards',[{t:'Eventual consistency is fine',d:'A rank that is a second old is acceptable; scores are durable in DynamoDB and rankings converge.'},{t:'Idempotent submissions',d:'Retries happen; include a submission ID so a score is never counted twice.'},{t:'Anti-cheat',d:'Validate on the server: plausible score ranges, signed game sessions, rate limits per player.'},{t:'Time-boxed boards',d:'Daily or weekly boards are separate keys with a TTL; old ones are archived.'}]);
+
+/* design stepper */
+const dS=$('#dSvg');const DN={};const db=(id,x,y,t,c,w)=>{w=w||118;const g=el('g');g.appendChild(el('rect',{x:x-w/2,y:y-19,width:w,height:38,rx:6,fill:'var(--surface)',stroke:`var(--${c})`,'stroke-width':1.6}));t.split('\n').forEach((l,i,a)=>g.appendChild(el('text',{x,y:y+4+(i-(a.length-1)/2)*12,'text-anchor':'middle','font-size':11,class:'s-ink'},l)));dS.appendChild(g);DN[id]=g};
+[[60,135,160,135],[160,135,290,60],[160,135,290,210],[290,60,450,60],[450,60,580,60],[450,60,450,135],[450,135,580,135],[580,135,580,210],[290,210,580,210],[580,135,580,60],[450,135,450,210]].forEach(([a,b,c,d])=>dS.appendChild(el('line',{x1:a,y1:b,x2:c,y2:d,stroke:'var(--line)','stroke-width':2})));
+db('cl',60,135,'Game client','pencil',100);db('api',160,135,'API Gateway','d5',100);db('sub',290,60,'λ score\nsubmission','blue');db('get',290,210,'λ leaderboard\nretrieval','blue');db('ddb',580,60,'DynamoDB','d3',110);db('sqs',450,60,'SQS','d2',80);db('rank',450,135,'λ ranking\nprocessor','blue');db('redis',580,210,'ElastiCache\n(Redis)','d4',110);db('sns',580,135,'SNS notify','ok',100);
+const DST=[[['cl','api','sub'],'The client posts a score through API Gateway to the submission Lambda.'],[['sub','ddb'],'It validates the score and writes it to DynamoDB, the source of truth.'],[['sub','sqs'],'It enqueues a message and returns immediately: the player is not kept waiting on ranking.'],[['sqs','rank'],'The ranking Lambda is triggered by SQS batches.'],[['rank','redis','ddb'],'It updates the sorted sets in Redis and the leaderboard snapshot in DynamoDB.'],[['rank','sns'],'If a rank changed a lot (you entered the top 100, a friend overtook you), it publishes to SNS for a push notification.'],[['cl','api','get','redis'],'Reads: the retrieval Lambda asks Redis first; on a miss it rebuilds from DynamoDB and refills the cache.']];
+$('#dStep').insertAdjacentHTML('beforeend',stepHTML());stepper('#dStep',DST.map(s=>s[1]),i=>{const on=new Set(DST[i][0]);Object.entries(DN).forEach(([k,g])=>{g.style.opacity=on.has(k)?1:.25})});
+
+/* polling */
+function drawP(){const c=+$('#cw').value*1000,pi=+$('#pi').value;$('#cwV').textContent=(c/1000)+'k';$('#piV').textContent=pi+' s';const poll=c/pi;const changes=c*0.02;
+ bars('#pBars',[{l:'Polling requests/s',v:poll,c:'bad',txt:Math.round(poll).toLocaleString()},{l:'Push messages/s (only real changes, ~2%/s)',v:changes,c:'ok',txt:Math.round(changes).toLocaleString()}],poll)}
+['cw','pi'].forEach(i=>$('#'+i).addEventListener('input',drawP));drawP();
+
+/* TCO */
+const TCO=[['Initial','Setup: infrastructure (compute, NAT, Cognito, WAF), CI/CD, compliance, plus people: DevOps and software engineers, and any migration tooling. Use the AWS Pricing Calculator per region.'],['Operational','Running costs that grow with traffic: requests, storage, data transfer, logs and metrics. Pay-per-use (DynamoDB, Lambda) versus instance-hours (RDS, EC2).'],['Maintenance','Patching, upgrades, paying down tech debt, keeping dependencies and runtimes current. Managed services shrink this.'],['Support and scaling','On-call, incident management, customer support, capacity planning and re-architecture as players grow.'],['Retirement','Migrating users and data off, running old and new in parallel, archiving, decommissioning.']];
+$('#tcoB').innerHTML=TCO.map((t,i)=>`<button data-i="${i}" aria-pressed="${i===1}">${t[0]}</button>`).join('');seg('#tcoB button',b=>{const t=TCO[+b.dataset.i];$('#tcoT').innerHTML=`<h3 class="blue">${t[0]} costs</h3><p>${t[1]}</p>`});$('#tcoB button[data-i="1"]').click();
+function drawC(){const gb=+$('#gb').value,w=+$('#ws').value,r=+$('#rs').value;$('#gbV').textContent=gb+' GB';$('#wsV').textContent=w;$('#rsV').textContent=r;const mo=2592000;
+ const st=gb*.25,wc=w*mo*1.25/1e6*(1+.05),rc=r*mo*.25/1e6*1.6;const api=(w+r)*mo*3.5/1e6;
+ bars('#cBars',[{l:'DynamoDB storage',v:st,c:'d3',txt:'$'+st.toFixed(0)},{l:'DynamoDB writes',v:wc,c:'pencil',txt:'$'+wc.toFixed(0)},{l:'DynamoDB reads',v:rc,c:'blue',txt:'$'+rc.toFixed(0)},{l:'API Gateway REST',v:api,c:'d5',txt:'$'+api.toFixed(0)}],Math.max(st,wc,rc,api));
+ $('#cTxt').textContent=`DynamoDB ≈ $${(st+wc+rc).toFixed(0)}/month before backups, streams and GSIs. Writes dominate: each 500-byte score is one write unit. Caching reads and choosing HTTP APIs or AppSync for reads changes the API line a lot.`}
+['gb','ws','rs'].forEach(i=>$('#'+i).addEventListener('input',drawC));drawC();
+
+cards('#dnCards',[{t:'Redis Cluster',d:'Shard sorted sets across nodes (one board per hash slot, or split huge boards), each shard with replicas in other AZs; replicas are eventually consistent.'},{t:'Hierarchical caching',d:'CloudFront or API caching for the public top 100, Redis for ranks, local in-process caches for hot boards, each with sensible TTLs.'},{t:'Compute',d:'Lambda limits (concurrency, cold starts, configuration) may push hot paths to ECS or EKS with autoscaling and tuned runtimes.'},{t:'Streams instead of queues',d:'Kinesis or MSK for ordered, replayable score events feeding ranking, analytics and anti-cheat consumers.'},{t:'Reads via AppSync',d:'GraphQL queries plus subscriptions push leaderboard changes to clients instead of polling.'},{t:'Global players',d:'Regional boards near players, DynamoDB global tables for profiles, and an aggregated global board computed asynchronously.'}]);
+
+quiz('#qq','#qs',[
+ {q:'Redis operation to get a player\'s position from the top?',o:['ZADD','ZREVRANK','ZRANGEBYSCORE'],a:1,why:'ZREVRANK returns the 0-based rank in descending score order.'},
+ {q:'Score updates in a sorted set cost…',o:['O(1)','O(log n)','O(n)'],a:1,why:'Skip list insertion is logarithmic.'},
+ {q:'Leaderboards are sharded by player hash. Global top 10 requires…',o:['One shard','Each shard\'s top 10, merged','A full scan of every shard'],a:1,why:'Scatter-gather: the global top 10 must be within the union of shard top 10s.'},
+ {q:'Why put SQS between score submission and ranking?',o:['To encrypt scores','To decouple and absorb bursts so submissions return fast','To sort scores'],a:1,why:'Writes are acknowledged immediately; ranking catches up asynchronously.'},
+ {q:'Which is NOT part of total cost of ownership?',o:['Engineers\' time','Retirement and migration','Neither: both are part of it'],a:2,why:'TCO covers people and the whole lifecycle, not just the cloud bill.'}]);
+
+})();
+</script>
+</body>
+</html>

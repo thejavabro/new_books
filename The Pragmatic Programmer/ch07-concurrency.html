@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Concurrency</title>
+<meta name="description" content="Time is a hidden dependency. Find what can happen at once, stop sharing mutable state, and let independent actors or a shared blackboard do the coordinating.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for The Pragmatic Programmer companion: an engineering-daybook column on blueprint grid paper.
+   Blue ink = code and structure, orange pencil = people and habits, green = good outcome, red = bad outcome. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code, tips, small games */
+pre.code{margin:0;font-family:var(--mono);font-size:.84rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--d2)} pre.code .hl{background:var(--mid-soft);border-radius:3px} pre.code .del{background:var(--bad-soft);color:var(--bad)} pre.code .add{background:var(--ok-soft);color:var(--ok)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.tip{display:flex;gap:12px;align-items:flex-start;border:1.5px dashed var(--blue);border-radius:10px;padding:10px 14px;background:var(--surface)}
+.tip .tn{font-family:var(--mono);font-size:.72rem;color:var(--blue);border:1px solid var(--blue);border-radius:4px;padding:1px 6px;white-space:nowrap;margin-top:3px}
+.tip b{font-family:var(--display);font-weight:600}
+.themebtn{cursor:pointer}
+.pill{display:inline-block;font-family:var(--mono);font-size:.75rem;padding:2px 8px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.pill.ok{background:var(--ok-soft);border-color:var(--ok);color:var(--ok)} .pill.bad{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)} .pill.mid{background:var(--mid-soft);border-color:var(--mid);color:var(--mid)}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media (max-width:560px){.grid2{grid-template-columns:1fr}}
+.choice{display:flex;flex-direction:column;gap:8px}
+.choice button{text-align:left;border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:9px 12px;font-size:.95rem}
+.choice button:hover:not(:disabled){border-color:var(--blue)}
+.choice button.right{background:var(--ok-soft);border-color:var(--ok)} .choice button.wrong{background:var(--bad-soft);border-color:var(--bad)}
+.log{font-family:var(--mono);font-size:.82rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:3em;max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.meter{height:12px;border-radius:6px;background:var(--paper);border:1px solid var(--line);overflow:hidden}
+.meter i{display:block;height:100%;width:0;background:var(--blue);transition:width .5s}
+.grid2>*,.two>*,.three>*,.recap>*,.cardgrid>*{min-width:0}
+.stat span.big{font-size:clamp(1.8rem,5vw,2.6rem);color:var(--ink)}.stat span.big.blue{color:var(--blue)}.stat span.big.okc{color:var(--ok)}.stat span.big.badc{color:var(--bad)}
+pre,code,.mono,.log,.pipe{font-variant-ligatures:none;font-feature-settings:"liga" 0,"calt" 0}
+
+/* page */
+
+.bb{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;min-height:120px;padding:12px;border-radius:10px;background:#1f3a2c;border:6px solid #6b4f2a}
+.bb span{font-family:"Segoe Print","Bradley Hand","Comic Sans MS",cursive;color:#f4f1e6;font-size:.88rem;animation:pop .4s ease;border-bottom:1px dashed rgba(255,255,255,.25);padding:2px 0}
+.bb span.derived{color:#ffd88a}
+@keyframes pop{from{opacity:0;transform:scale(.6)}to{opacity:1;transform:none}}
+.agents{display:flex;flex-wrap:wrap;gap:6px}
+.agents span{font-size:.8rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper);transition:background .3s}
+.agents span.busy{background:var(--mid-soft);border-color:var(--mid)}
+.wt{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.wt .col{border:1px solid var(--line);border-radius:8px;padding:8px;background:var(--paper);display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:.78rem;min-width:0}
+.wt .col b{font-family:var(--body);font-size:.9rem}
+.wt .col div{padding:3px 6px;border-radius:4px;opacity:.35;word-break:break-word}
+.wt .col div.done{opacity:1;background:var(--blue-soft)}
+.wt .col div.bad{opacity:1;background:var(--bad-soft);color:var(--bad)}
+.wt .col div.wait{opacity:1;background:var(--mid-soft)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">The Pragmatic Programmer · visual companion</a><span class="tag">Chapter 6 of 9 · Topics 33–36</span><button class="tag themebtn" type="button" aria-label="Toggle light or dark theme">theme</button></div>
+  <h1>Concurrency</h1>
+  <p class="lede">Time is a hidden dependency. Find what can happen at once, stop sharing mutable state, and let independent actors or a shared blackboard do the coordinating.</p>
+  <nav class="toc" aria-label="Sections"><a href="#intro">Two ideas</a><a href="#temporal">Temporal coupling</a><a href="#shared">Shared state</a><a href="#actors">Actors</a><a href="#blackboard">Blackboards</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="intro" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Concurrency and parallelism</h2></div>
+  <p>Two terms first. <b>Concurrency</b> is when pieces of code act as if they run at the same time: a software mechanism (fibers, threads, processes). <b>Parallelism</b> is when they really do run at the same time: a hardware matter (several cores, several machines). Everything worth doing today needs some of both, because the world is asynchronous: users, networks, sensors and timers all happen at once.</p>
+  <div class="grid2">
+    <div class="callout blue"><b class="h">Temporal coupling</b><span>Code that assumes A always happens before B, when nothing actually requires it. Breaking those false orderings is the first topic.</span></div>
+    <div class="callout"><b class="h">Shared state</b><span>Two pieces of code referencing the same mutable data. That's where the hard bugs live, and the second topic.</span></div>
+  </div>
+</section>
+
+<section id="temporal" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Breaking temporal coupling</h2></div>
+  <p>Requirements are often written as a list of steps, so code follows them one by one. But a list implies an order that may not exist. An <b>activity diagram</b> shows what really depends on what: rounded boxes for actions, arrows for "must finish before", and a bar where several actions must all complete.</p>
+  <div class="tip"><span class="tn">Tip 56</span><b>Analyze Workflow to Improve Concurrency</b></div>
+  <div class="sheet">
+    <div class="row between"><h3>The robotic piña colada</h3><span class="small" id="pcTime"></span></div>
+    <label class="rng"><span>Pairs of hands available: <b id="hV">1</b></span><input type="range" id="hands" min="1" max="5" value="1"></label>
+    <div class="svgbox"><svg id="pcSvg" viewBox="0 0 640 300" role="img" aria-label="Schedule of piña colada tasks across workers"></svg></div>
+    <p class="small" id="pcTxt"></p>
+  </div>
+  <p>Diagrams show where concurrency is <i>possible</i>, not whether it's worth it. A bartender would need five hands to start everything at once. The real win is spotting activities that take time but not time in your code: the one-minute liquefying, a database query, a call to an external service, waiting for the user. While those run, do something useful.</p>
+  <p class="small">The authors' own book build is an example: each processor in the text pipeline runs concurrently, and slow equation conversions (up to half a second each) run in parallel processes, one per formula.</p>
+</section>
+
+<section id="shared" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Shared state is incorrect state</h2></div>
+  <p>A diner. Two customers ask two waiters if there's any apple pie. Both waiters glance at the display case, see one slice, and promise it. One customer is going to be disappointed. In code, "look at the count, then take a slice" is two steps, and another process can run in between.</p>
+  <div class="tip"><span class="tn">Tip 57</span><b>Shared State Is Incorrect State</b></div>
+  <div class="sheet">
+    <div class="row between"><h3>Step through the race</h3><span class="small" id="pieCount">pie in case: 1</span></div>
+    <div class="row"><div class="seg" role="group" aria-label="Protection" id="pieMode"><button data-m="none" aria-pressed="true">No protection</button><button data-m="lock" aria-pressed="false">Semaphore around the case</button><button data-m="atomic" aria-pressed="false">Atomic get_pie()</button></div></div>
+    <div class="wt" id="wt"></div>
+    <div class="row between"><span class="small" id="pieTxt" aria-live="polite"></span><div class="row"><button class="btn" id="pieReset">Reset</button><button class="btn primary" id="pieStep">Next tick</button></div></div>
+  </div>
+  <div class="cardgrid" id="fixes"></div>
+  <h3>Multiple resources</h3>
+  <p>The diner adds ice cream. Pie à la mode needs both, so the waiter takes a slice, then finds no ice cream, and has to put the pie back. Two separate atomic operations don't make one atomic operation. The book's fix is to model the combination as its own resource that grabs both or neither.</p>
+  <p>It isn't only memory. Files, databases, external services, even a printer can be shared state. And because the timing changes between runs, these bugs look random.</p>
+  <div class="tip"><span class="tn">Tip 58</span><b>Random Failures Are Often Concurrency Issues</b></div>
+</section>
+
+<section id="actors" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Actors and processes</h2></div>
+  <p>An <b>actor</b> is an independent virtual processor with its own private state and a mailbox. It sleeps until a message arrives, handles it (maybe changing its state, creating actors or sending messages), then waits again. A <b>process</b> is a more general version, often with OS support. Nothing is in charge, nothing is shared, and the only state is in messages and each actor's local data.</p>
+  <div class="tip"><span class="tn">Tip 59</span><b>Use Actors For Concurrency Without Shared State</b></div>
+  <div class="sheet">
+    <div class="row between"><h3>The diner as actors</h3><span class="small">only the pie case actor touches the pie count</span></div>
+    <div class="svgbox"><svg id="acSvg" viewBox="0 0 640 230" role="img" aria-label="Messages between customer, waiter and pie case actors"></svg></div>
+    <div class="row between"><span class="small mono" id="acStat">slices: 3</span><div class="row"><button class="btn" id="acReset">Restock</button><button class="btn primary" id="acGo">Three customers order at once</button></div></div>
+    <div class="log" id="acLog" aria-live="polite"></div>
+  </div>
+  <p>Because the pie case handles one message at a time, it can never double-promise. No locks, no explicit concurrency in the code at all. The same actors can run on one core or many machines. Erlang (and Elixir on the same runtime) built a whole platform on this idea, with lightweight processes and supervisors that restart failed ones.</p>
+</section>
+
+<section id="blackboard" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Blackboards</h2></div>
+  <p>Picture detectives on a murder case, posting clues on a shared blackboard. No detective needs to know the others exist; they watch the board and add what they find. Different experts come and go, on different shifts, and anything can go on the board. Gradually the facts add up to a conclusion. It's <i>laissez-faire</i> concurrency.</p>
+  <div class="tip"><span class="tn">Tip 60</span><b>Use Blackboards to Coordinate Workflow</b></div>
+  <div class="sheet">
+    <div class="row between"><h3>A loan application blackboard</h3><span class="small">facts arrive in any order</span></div>
+    <div class="agents" id="agents"></div>
+    <div class="bb" id="bb" aria-live="polite"></div>
+    <div class="row between"><span class="small" id="bbTxt">Agents post facts. Rules watch the board and post conclusions when their inputs appear.</span><button class="btn primary" id="bbGo">Open an application</button></div>
+  </div>
+  <p>In a loan workflow, credit checks are slow, names are instant, some data is gathered by people in other offices, and the law changes by region. Hard-coding that flow is a nightmare. With a blackboard, each new fact triggers whichever rules care about it, and new rules can be added without touching the others. Modern messaging systems (Kafka-style event logs, pub/sub buses) can act like blackboards: persistent, ordered, queryable. The cost: it's harder to reason about, so log everything and keep a common message format.</p>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qs"></span></div><div class="quiz" id="qz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>The Pragmatic Programmer: Your Journey to Mastery</i> (20th Anniversary Edition) by David Thomas and Andrew Hunt (Addison-Wesley, 2019). Explanations, code snippets, games and drawings are original summaries, not text from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch06-bend-or-break.html"><span>Previous · Chapter 5</span><b>Bend, or Break</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch08-while-coding.html"><span>Next · Chapter 7</span><b>While You Are Coding (I)</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every Pragmatic Programmer companion page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('pp:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('pp:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: cycles auto -> light -> dark, remembered per browser */
+(function(){const root=document.documentElement;let t=store.get('theme','auto');
+  function apply(){if(t==='auto')root.removeAttribute('data-theme');else root.setAttribute('data-theme',t);
+    $$('.themebtn').forEach(b=>b.textContent='theme: '+t)}
+  apply();$$('.themebtn').forEach(b=>b.addEventListener('click',()=>{t=t==='auto'?'light':t==='light'?'dark':'auto';store.set('theme',t);apply()}))})();
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function shuffle(a){a=a.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a}
+
+
+/* piña colada scheduler */
+const T=[[1,'Open blender',3,[]],[2,'Open mix',4,[]],[3,'Mix into blender',4,[1,2]],[4,'Measure rum',5,[]],[5,'Pour rum',2,[3,4]],[6,'Add ice',4,[3]],[7,'Close blender',2,[5,6]],[8,'Liquefy 1 min',60,[7]],[9,'Open blender',2,[8]],[10,'Get glasses',6,[]],[11,'Get umbrellas',5,[]],[12,'Serve',4,[9,10,11]]];
+function rank(id){const t=T.find(x=>x[0]===id);const succ=T.filter(x=>x[3].includes(id));return t[2]+Math.max(0,...succ.map(x=>rank(x[0])))}
+function schedule(h){const fin={},start={},who={};const free=Array(h).fill(0);const done=new Set();
+  while(done.size<T.length){const ready=T.filter(t=>!done.has(t[0])&&t[3].every(d=>done.has(d))).sort((a,b)=>rank(b[0])-rank(a[0]));
+    const t=ready[0];const est=Math.max(0,...t[3].map(d=>fin[d]));let w=0;for(let i=1;i<h;i++)if(Math.max(free[i],est)<Math.max(free[w],est))w=i;
+    /* liquefy runs by itself: doesn't occupy hands */
+    const st=Math.max(free[w],est);start[t[0]]=st;fin[t[0]]=st+t[2];who[t[0]]=t[0]===8?-1:w;if(t[0]!==8)free[w]=fin[t[0]];done.add(t[0])}
+  return{fin,start,who,end:Math.max(...Object.values(fin))}}
+function pcDraw(){const h=+$('#hands').value;$('#hV').textContent=h;const r=schedule(h);const serial=T.reduce((a,t)=>a+t[2],0);const s=$('#pcSvg');s.innerHTML='';
+  const X=t=>120+t/serial*500;const lanes=h+1;const lh=Math.min(44,250/lanes);s.setAttribute('viewBox',`0 0 640 ${20+(h+1)*Math.min(44,250/(h+1))+30}`);
+  for(let i=0;i<lanes;i++){const y=20+i*lh;s.appendChild(el('text',{x:112,y:y+lh/2+4,'text-anchor':'end','font-size':11,fill:'var(--muted)'},i<h?'hands '+(i+1):'blender'));s.appendChild(el('line',{x1:120,y1:y+lh,x2:620,y2:y+lh,stroke:'var(--line)'}))}
+  T.forEach(t=>{const w=r.who[t[0]];const lane=w<0?h:w;const y=20+lane*lh+3;const x=X(r.start[t[0]]),wd=Math.max(3,X(r.fin[t[0]])-x);
+    s.appendChild(el('rect',{x,y,width:wd,height:lh-6,rx:4,fill:w<0?'var(--mid-soft)':'var(--blue-soft)',stroke:w<0?'var(--mid)':'var(--blue)'}));
+    if(wd>14)s.appendChild(el('text',{x:x+wd/2,y:y+(lh-6)/2+4,'text-anchor':'middle','font-size':10,fill:'var(--ink)','font-family':'var(--mono)'},wd>110?t[1]:String(t[0])))});
+  const ye=20+lanes*lh+16;s.appendChild(el('line',{x1:X(r.end),y1:14,x2:X(r.end),y2:ye-10,stroke:'var(--pencil)','stroke-width':2,'stroke-dasharray':'4 3'}));
+  s.appendChild(el('text',{x:Math.min(X(r.end)+4,560),y:ye,'font-size':11,fill:'var(--pencil)'},'served at '+r.end+'s'));
+  $('#pcTime').textContent=`serial: ${serial}s · with ${h} pair${h>1?'s':''}: ${r.end}s`;
+  $('#pcTxt').textContent=h===1?'Even one bartender wins by fetching glasses and umbrellas while the blender runs, because liquefying takes time but not hands.':h>=3?'Extra hands barely help now: the one-minute blend dominates. Concurrency is possible everywhere; it pays off only around the slow step.':'Two pairs of hands let the opening steps overlap.'}
+$('#hands').addEventListener('input',pcDraw);pcDraw();
+
+/* pie race */
+const PS={none:[['look: case has 1','promise pie','take pie','serve'],['look: case has 1','promise pie','take pie','serve']],
+ lock:[['acquire lock','look: case has 1','promise + take','release lock','serve'],['acquire lock','(waiting...)','look: case has 0','release lock','offer cake instead']],
+ atomic:[['get_pie() → slice','serve'],['get_pie() → none','offer cake instead']]};
+let pm='none',tick=0;const ORDER={none:[[0,0],[1,0],[0,1],[1,1],[0,2],[1,2],[0,3]],lock:[[0,0],[1,0],[0,1],[1,1],[0,2],[0,3],[1,2],[1,3],[0,4],[1,4]],atomic:[[0,0],[1,0],[0,1],[1,1]]};
+function pieDraw(){const done=ORDER[pm].slice(0,tick);let pie=1;const st=[[],[]];done.forEach(([w,i])=>{st[w][i]=1;const txt=PS[pm][w][i];if(txt.startsWith('take')||txt.startsWith('promise +')||txt.includes('→ slice'))pie--});
+  $('#wt').innerHTML=[0,1].map(w=>`<div class="col"><b>Waiter ${w+1}</b>${PS[pm][w].map((x,i)=>{let c=st[w][i]?'done':'';if(st[w][i]&&pm==='none'&&w===1&&i===2&&pie<0)c='bad';if(st[w][i]&&x==='(waiting...)')c='wait';return`<div class="${c}">${x}</div>`}).join('')}</div>`).join('');
+  $('#pieCount').textContent='pie in case: '+Math.max(0,pie)+(pie<0?' (tried to take a slice that isn\'t there)':'');
+  const end=tick>=ORDER[pm].length;$('#pieTxt').innerHTML=!end?`Tick ${tick} of ${ORDER[pm].length}. Execution interleaves between the two waiters.`:pm==='none'?'<b class="badc">Two promises, one pie.</b> Both read the count before either updated it: a non-atomic update.':pm==='lock'?'<b class="okc">Correct.</b> Waiter 2 waited for the semaphore. But every user must remember the convention, and forgetting to release it blocks everyone.':'<b class="okc">Correct, and simpler.</b> The case itself checks and takes in one operation. Nobody outside can get it wrong.';
+  $('#pieStep').disabled=end}
+seg('#pieMode button',b=>{pm=b.dataset.m;tick=0;pieDraw()});$('#pieStep').addEventListener('click',()=>{tick++;pieDraw()});$('#pieReset').addEventListener('click',()=>{tick=0;pieDraw()});pieDraw();
+cards('#fixes',[{t:'Semaphores',d:'A token only one party can hold. Grab it before touching the case, release it after. Works, but relies on everyone following the convention.',c:'d1'},{t:'Make the resource transactional',d:'Move the check-and-take inside the resource as one operation (get_pie). The case enforces the rule; callers can\'t forget.',c:'d2'},{t:'Release on exit',d:'If an exception escapes between acquire and release, nobody gets pie again. Use try/finally or scoped locks.',c:'d3'}]);
+
+/* actors */
+let slices=3;const AP={c:[[60,40],[60,115],[60,190]],w:[300,115],p:[540,115]};
+function acBase(){const s=$('#acSvg');s.innerHTML='';AP.c.forEach((p,i)=>{s.appendChild(el('circle',{cx:p[0],cy:p[1],r:22,fill:'var(--pencil-soft)',stroke:'var(--pencil)','stroke-width':1.6}));s.appendChild(el('text',{x:p[0],y:p[1]+4,'text-anchor':'middle','font-size':11,fill:'var(--ink)'},'cust '+(i+1)))});
+  [['waiter',AP.w],['pie case',AP.p]].forEach(([n,p])=>{s.appendChild(el('rect',{x:p[0]-55,y:p[1]-26,width:110,height:52,rx:10,fill:'var(--blue-soft)',stroke:'var(--blue)','stroke-width':1.6}));s.appendChild(el('text',{x:p[0],y:p[1]-2,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},n));s.appendChild(el('text',{x:p[0],y:p[1]+14,'text-anchor':'middle','font-size':10,fill:'var(--muted)','font-family':'var(--mono)'},'mailbox'))});
+  s.appendChild(el('text',{x:540,y:170,'text-anchor':'middle','font-size':11,fill:'var(--muted)','font-family':'var(--mono)'},'state: '+slices+' slices'))}
+function msg(from,to,label,ms){return new Promise(res=>{const s=$('#acSvg');const g=el('g');const c=el('circle',{r:6,fill:'var(--mid)'});const t=el('text',{'font-size':10,fill:'var(--mid)','font-family':'var(--mono)'},label);g.appendChild(c);g.appendChild(t);s.appendChild(g);
+  const t0=performance.now();(function f(now){const k=Math.min(1,(now-t0)/ms);const x=from[0]+(to[0]-from[0])*k,y=from[1]+(to[1]-from[1])*k;c.setAttribute('cx',x);c.setAttribute('cy',y);t.setAttribute('x',x+8);t.setAttribute('y',y-8);if(k<1)requestAnimationFrame(f);else{g.remove();res()}})(t0)})}
+const log=t=>{$('#acLog').textContent+=t+'\n';$('#acLog').scrollTop=1e5};
+$('#acGo').addEventListener('click',async()=>{$('#acGo').disabled=true;$('#acLog').textContent='';
+  await Promise.all(AP.c.map((p,i)=>new Promise(r=>setTimeout(r,i*120)).then(()=>msg(p,AP.w,'hungry',500))));log('waiter mailbox: 3 "hungry" messages');
+  for(let i=0;i<3;i++){await msg(AP.w,AP.p,'get pie',350);const ok=slices>0;if(ok)slices--;acBase();log(`pie case handles one message: ${ok?'slice for cust '+(i+1)+' ('+slices+' left)':'none left for cust '+(i+1)}`);
+    await msg(AP.p,AP.w,ok?'slice':'none',350);await msg(AP.w,AP.c[i],ok?'pie!':'sorry',350)}
+  log('no locks, no shared memory, no double promises');$('#acGo').disabled=false});
+$('#acReset').addEventListener('click',()=>{slices=3;$('#acLog').textContent='';acBase()});acBase();
+
+/* blackboard */
+const AG=[['Applicant','name & address',200],['Credit bureau','credit score 712',2600],['Employer','income confirmed $84k',1800],['Title office','title clear',3200],['Appraiser','value $410k',2200],['Applicant','loan request $300k',400]];
+const RULES=[[['credit score 712','income confirmed $84k'],'affordability OK'],[['value $410k','loan request $300k'],'loan-to-value 73%'],[['loan-to-value 73%','affordability OK','title clear'],'APPROVE for underwriting'],[['name & address'],'send required disclosures']];
+$('#agents').innerHTML=AG.map((a,i)=>`<span id="ag${i}">${a[0]}</span>`).join('');
+$('#bbGo').addEventListener('click',()=>{$('#bbGo').disabled=true;$('#bb').innerHTML='';const facts=new Set(),fired=new Set();$$('#agents span').forEach(s=>s.classList.add('busy'));
+  function post(f,d){if(facts.has(f))return;facts.add(f);$('#bb').insertAdjacentHTML('beforeend',`<span class="${d?'derived':''}">${d?'⇒ ':''}${f}</span>`);
+    RULES.forEach((r,i)=>{if(!fired.has(i)&&r[0].every(x=>facts.has(x))){fired.add(i);setTimeout(()=>post(r[1],true),300)}});if(f.startsWith('APPROVE')){$('#bbTxt').textContent='Done. Nobody orchestrated the order: each rule fired when its inputs showed up.';$('#bbGo').disabled=false}}
+  AG.forEach((a,i)=>{const d=a[2]*(0.5+Math.random());setTimeout(()=>{$('#ag'+i).classList.remove('busy');post(a[1])},d)})});
+
+quiz('#qz','#qs',[
+ {q:'Concurrency is a ___ concern; parallelism is a ___ concern.',o:['software / hardware','hardware / software'],a:0,why:'Concurrency is how code is structured; parallelism is things physically running at once.'},
+ {q:'Two waiters both promise the last slice. The root cause is...',o:['Slow waiters','A non-atomic check-then-update'],a:1,why:'Reading the count and taking the slice are separate steps another process can interleave.'},
+ {q:'Bug appears in 1 run out of 50 with no code change. First suspect?',o:['Cosmic rays','A concurrency issue'],a:1,why:'Timing changes between runs; random failures are often concurrency issues.'},
+ {q:'Actors share state through...',o:['Locks on shared memory','Messages only'],a:1,why:'Each actor\'s state is private; the only way to affect it is to send a message.'},
+ {q:'A blackboard is a good fit when...',o:['Facts arrive in unpredictable order','Steps must run in strict sequence'],a:0,why:'Independent agents post facts, and rules fire whenever their inputs appear.'}]);
+
+})();
+</script>
+</body>
+</html>

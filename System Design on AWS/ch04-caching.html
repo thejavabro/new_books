@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Caching Policies and Strategies</title>
+<meta name="description" content="The fastest request is the one you never make. Caches keep hot data close, but you must decide what to keep, when to throw it away and how writes reach the source of truth.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the System Design on AWS companion. Layout: a drafting-table reading column on blueprint grid paper.
+   Blue ink = structure and data paths, orange pencil = clients and requests, green = healthy, red = failure.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:minmax(14rem,1fr) minmax(0,auto);gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* additions */
+button.tag.theme{cursor:pointer;margin-left:auto}
+button.tag.theme:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;max-width:100%;white-space:pre}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:5em;max-height:14em;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.pill{display:inline-block;font-family:var(--mono);font-size:.75rem;padding:2px 8px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.pill.ok{border-color:var(--ok);color:var(--ok);background:var(--ok-soft)} .pill.bad{border-color:var(--bad);color:var(--bad);background:var(--bad-soft)}
+input[type=number],input[type=text]{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+.sheet>.seg,.stack>.seg{align-self:flex-start}
+
+/* page */
+
+.cache-row{display:flex;gap:6px;flex-wrap:wrap;min-height:44px;align-items:center}
+.cache-row i{font-style:normal;font-family:var(--mono);font-weight:600;width:38px;height:38px;display:grid;place-items:center;border-radius:6px;border:1.5px solid var(--blue);background:var(--blue-soft);transition:background .3s}
+.cache-row i.new{background:var(--pencil-soft);border-color:var(--pencil)}
+.cache-row i.hit{background:var(--ok-soft);border-color:var(--ok)}
+.cache-row i.empty{border-style:dashed;background:transparent;border-color:var(--line)}
+.reqs{display:flex;gap:4px;flex-wrap:wrap}
+.reqs span{font-family:var(--mono);font-size:.82rem;width:26px;height:26px;display:grid;place-items:center;border-radius:4px;border:1px solid var(--line);background:var(--paper)}
+.reqs span.cur{outline:2px solid var(--pencil)}
+.reqs span.h{background:var(--ok-soft);border-color:var(--ok)} .reqs span.m{background:var(--bad-soft);border-color:var(--bad)}
+.layer{display:flex;flex-direction:column;gap:6px}
+.layer button{display:grid;grid-template-columns:8rem minmax(0,1fr);gap:10px;text-align:left;border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:9px 12px;align-items:baseline}
+.layer button b{font-family:var(--mono);font-size:.8rem;color:var(--blue)}
+.layer button[aria-pressed="true"]{background:var(--blue-soft);border-color:var(--blue)}
+@media (max-width:480px){.layer button{grid-template-columns:1fr}}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">System Design on AWS · visual companion</a><span class="tag">Part I · Chapter 4 of 21</span><button class="tag theme" type="button" id="themeBtn" aria-label="Toggle light or dark theme">Theme</button></div>
+  <h1>Caching Policies and Strategies</h1>
+  <p class="lede">The fastest request is the one you never make. Caches keep hot data close, but you must decide what to keep, when to throw it away and how writes reach the source of truth.</p>
+  <nav class="toc" aria-label="Sections"><a href="#why">Why cache</a><a href="#evict">Eviction</a><a href="#invalidate">Invalidation</a><a href="#strategies">Strategies</a><a href="#deploy">Deployment</a><a href="#cdn">CDNs</a><a href="#redis">Redis & Memcached</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="why" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Why caches work</h2></div>
+  <p>A cache keeps a copy of hot data somewhere faster and closer than its source. Most workloads are skewed: a small set of items gets most of the reads, so even a small cache catches a large share. The payoff is lower latency, less load on the database, cheaper bandwidth and smoother handling of spikes. Slide the hit ratio and watch the average.</p>
+  <div class="sheet">
+    <div class="two">
+      <label class="rng"><span>Hit ratio: <b id="hrV"></b></span><input type="range" id="hr" min="0" max="100" value="80"></label>
+      <label class="rng"><span>Source: <b id="srcV"></b></span><input type="range" id="src" min="0" max="2" value="1"></label>
+    </div>
+    <div class="kpis" id="hK"></div>
+    <div class="bars" id="hBars"></div>
+  </div>
+  <div class="callout blue"><b class="h">Amdahl's law, applied</b><span>Speeding up one part only helps as much as that part's share of the total time. Caching a lookup that is 5% of the request barely matters; caching the database call that is 80% of it changes everything. Measure first.</span></div>
+</section>
+
+<section id="evict" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Eviction policies, raced</h2></div>
+  <p>When the cache is full, something must go. <b>Queue-based</b>: FIFO evicts the oldest arrival, LIFO the newest. <b>Recency-based</b>: LRU evicts what was used longest ago, MRU what was used most recently (handy for scans). <b>Frequency-based</b>: LFU evicts the least-used. <b>Belady's</b> optimal algorithm evicts the item needed farthest in the future; it needs a crystal ball, so it is only a benchmark. Step through the same request stream under each policy.</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" id="polSeg" role="group" aria-label="Policy"></div><label class="small">Cache slots <select id="cap"><option>2</option><option selected>3</option><option>4</option></select></label></div>
+    <div class="reqs" id="reqs"></div>
+    <div class="cache-row" id="crow"></div>
+    <div class="row"><button class="btn" id="eBack">Back</button><button class="btn primary" id="eNext">Next request</button><button class="btn" id="eAll">Run all</button><button class="btn" id="eNew">New stream</button></div>
+    <p id="eTxt" class="small" aria-live="polite"></p>
+    <div class="bars" id="eBars"></div>
+  </div>
+  <p class="small">An <b>allowlist</b> policy adds business rules on top: items on a priority list (for example, the home page assets) are never evicted.</p>
+</section>
+
+<section id="invalidate" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Keeping the cache honest</h2></div>
+  <p>A cache that serves outdated data is worse than none. Options: invalidate <b>on write</b> (delete or update the entry when the source changes), <b>on read</b> (check a version, for example an HTTP ETag, and refetch if it changed), or let entries expire after a <b>TTL</b>. TTL is the simplest: you trade freshness for hit ratio. A price changes at minute 10; when do users see it?</p>
+  <div class="sheet">
+    <label class="rng"><span>TTL: <b id="ttlV"></b></span><input type="range" id="ttl" min="1" max="60" value="30"></label>
+    <div class="svgbox"><svg id="ttlSvg" viewBox="0 0 640 120" role="img" aria-label="Timeline of cache refreshes"></svg></div>
+    <div class="kpis" id="ttlK"></div>
+  </div>
+</section>
+
+<section id="strategies" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Six caching strategies</h2></div>
+  <p>Who loads the cache, and when do writes reach the database? Read-heavy strategies on the left, write-heavy on the right. Pick one and play it.</p>
+  <div class="sheet">
+    <div class="seg" id="sSeg" role="group" aria-label="Strategy"></div>
+    <div class="row"><button class="btn primary" id="sPlay">Play</button><span class="small" id="sTag"></span></div>
+    <div class="svgbox"><svg id="sSvg" viewBox="0 0 640 230" role="img" aria-label="App, cache and database message flow"></svg></div>
+    <div class="detail" id="sTxt" aria-live="polite"></div>
+  </div>
+  <pre class="code" id="sCode"></pre>
+</section>
+
+<section id="deploy" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Where the cache lives</h2></div>
+  <div class="tbl"><table class="t">
+    <tr><th></th><th>In-process</th><th>Interprocess</th><th>Remote</th></tr>
+    <tr><td><b>Where</b></td><td>Inside the app's memory</td><td>Separate process on the same host</td><td>Separate cluster over the network</td></tr>
+    <tr><td><b>Latency</b></td><td>Nanoseconds</td><td>Microseconds</td><td>Sub-millisecond to ms</td></tr>
+    <tr><td><b>Shared?</b></td><td>No, one copy per instance</td><td>By apps on that host</td><td>By every service</td></tr>
+    <tr><td><b>Scale and survival</b></td><td>Lost on restart, limited by app RAM</td><td>Survives app restarts</td><td>Scales and replicates independently</td></tr>
+    <tr><td><b>Example</b></td><td>A hash map, Caffeine</td><td>Local Redis or Memcached</td><td>ElastiCache cluster</td></tr>
+  </table></div>
+  <p>Caching also happens at every hop of a request. Tap a layer.</p>
+  <div class="sheet"><div class="layer" id="layers" role="group" aria-label="Layer"></div><div class="detail" id="lTxt" aria-live="polite"></div></div>
+</section>
+
+<section id="cdn" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Content delivery networks</h2></div>
+  <p>A CDN is a cache spread across hundreds of edge locations so content is served from near the user. A <b>pull CDN</b> fetches from the origin on the first request and caches it; a <b>push CDN</b> has content uploaded ahead of time. Send requests from different cities.</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Mode"><button data-cm="pull" aria-pressed="true">Pull</button><button data-cm="push" aria-pressed="false">Push</button></div><button class="btn" id="cdnReset">Empty edges</button></div>
+    <div class="svgbox"><svg id="cdnSvg" viewBox="0 0 640 260" role="img" aria-label="Users, edge locations and origin"></svg></div>
+    <p id="cdnTxt" class="small" aria-live="polite">Tap a user to send a request.</p>
+  </div>
+  <div class="cardgrid" id="cdnCards"></div>
+</section>
+
+<section id="redis" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Memcached and Redis</h2></div>
+  <div class="two">
+    <div class="sheet"><h3 class="blue">Memcached</h3><p class="small">A lean, multithreaded, distributed key-value cache of strings. Memory is carved into slabs of fixed-size chunks to avoid fragmentation; LRU eviction. Clients hash keys across servers. No persistence, no replication: pure cache, very fast, easy to scale out.</p></div>
+    <div class="sheet"><h3 class="pencil">Redis</h3><p class="small">An in-memory <i>data structure</i> server: strings, hashes, lists, sets, sorted sets, streams, plus pub/sub, Lua scripts and transactions. Single-threaded command loop, optional persistence and replication, several eviction policies including LRU, LFU and TTL-based.</p></div>
+  </div>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Redis deployment"><button data-rd="single" aria-pressed="true">Single</button><button data-rd="ha" aria-pressed="false">Primary + replicas</button><button data-rd="sentinel" aria-pressed="false">Sentinel</button><button data-rd="cluster" aria-pressed="false">Cluster</button></div>
+    <div class="svgbox"><svg id="rdSvg" viewBox="0 0 640 200" role="img" aria-label="Redis deployment"></svg></div>
+    <p id="rdTxt" aria-live="polite"></p>
+  </div>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Persistence"><button data-pz="rdb" aria-pressed="true">RDB snapshots</button><button data-pz="aof" aria-pressed="false">AOF log</button><button data-pz="both" aria-pressed="false">Both</button></div>
+    <p id="pzTxt" aria-live="polite"></p>
+    <p class="small">Snapshots use <code>fork()</code>: the child writes the dataset while the parent keeps serving, and copy-on-write means only pages modified during the snapshot get duplicated. Need durability as a database? AWS offers MemoryDB, a Redis-compatible store with a durable multi-AZ log.</p>
+  </div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qs"></span></div><div class="quiz" id="qq"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>System Design on AWS: Building and Scaling Enterprise Solutions</i> by Jayanth Kumar and Mandeep Singh (O'Reilly, 2025). Explanations, examples, code snippets and drawings are original summaries, not copied from the book. AWS limits and prices change; check current AWS documentation before relying on a number.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch03-nonrelational.html"><span>Previous · Chapter 3</span><b>Nonrelational Stores</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch05-load-balancing.html"><span>Next · Chapter 5</span><b>Load Balancing Approaches and Techniques</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('sda:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('sda:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle */
+(function(){const b=document.getElementById('themeBtn');if(!b)return;const r=document.documentElement;
+ const cur=store.get('theme',null);if(cur)r.setAttribute('data-theme',cur);
+ b.addEventListener('click',()=>{const dark=r.getAttribute('data-theme')?r.getAttribute('data-theme')==='dark':matchMedia('(prefers-color-scheme: dark)').matches;const n=dark?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n)});})();
+/* code blocks */
+
+
+/* hit ratio */
+const SRC=[['SSD database read',2],['database query over network',10],['remote API call',120]];
+function drawH(){const r=+$('#hr').value/100,sI=+$('#src').value,m=SRC[sI][1],c=.3;$('#hrV').textContent=Math.round(r*100)+'%';$('#srcV').textContent=SRC[sI][0]+' ('+m+' ms)';
+ const avg=r*c+(1-r)*(c+m);$('#hK').innerHTML=`<div class="stat"><span class="big blue" style="font-size:1.6rem">${avg.toFixed(1)} ms</span><span>average latency (cache ${c} ms)</span></div><div class="stat"><span class="big okc" style="font-size:1.6rem">${(m/avg).toFixed(1)}×</span><span>faster than no cache</span></div><div class="stat"><span class="big pencil" style="font-size:1.6rem">${Math.round((1-r)*100)}%</span><span>of reads still hit the source</span></div>`;
+ bars('#hBars',[{l:'No cache',v:m,c:'bad',txt:m+' ms'},{l:'With cache',v:avg,c:'ok',txt:avg.toFixed(1)+' ms'}],m)}
+['hr','src'].forEach(i=>$('#'+i).addEventListener('input',drawH));drawH();
+
+/* eviction */
+const POL=['FIFO','LIFO','LRU','MRU','LFU','Belady'];let pol='LRU',stream=[],pos=0;
+function newStream(){const hot=['A','B','C'],cold=['D','E','F','G'];stream=Array.from({length:18},()=>Math.random()<.7?hot[Math.floor(Math.random()*3)]:cold[Math.floor(Math.random()*4)]);pos=0}
+function simulate(p,cap,upto){let c=[],meta={},hits=0,log=[];
+ for(let i=0;i<upto;i++){const k=stream[i];let ev=null,hit=c.includes(k);
+  if(hit){hits++;meta[k].last=i;meta[k].f++}
+  else{if(c.length>=cap){let v;
+    if(p==='FIFO')v=c.reduce((a,b)=>meta[a].in<meta[b].in?a:b);
+    if(p==='LIFO')v=c.reduce((a,b)=>meta[a].in>meta[b].in?a:b);
+    if(p==='LRU')v=c.reduce((a,b)=>meta[a].last<meta[b].last?a:b);
+    if(p==='MRU')v=c.reduce((a,b)=>meta[a].last>meta[b].last?a:b);
+    if(p==='LFU')v=c.reduce((a,b)=>meta[a].f<meta[b].f||(meta[a].f===meta[b].f&&meta[a].last<meta[b].last)?a:b);
+    if(p==='Belady'){const nx=x=>{const j=stream.indexOf(x,i+1);return j<0?1e9:j};v=c.reduce((a,b)=>nx(a)>=nx(b)?a:b)}
+    c=c.filter(x=>x!==v);ev=v}
+   c.push(k);meta[k]={in:i,last:i,f:1}}
+  log.push({k,hit,ev})}
+ return{c,hits,log}}
+$('#polSeg').innerHTML=POL.map(p=>`<button data-p="${p}" aria-pressed="${p===pol}">${p}</button>`).join('');
+function drawE(){const cap=+$('#cap').value;const r=simulate(pol,cap,pos);
+ $('#reqs').innerHTML=stream.map((k,i)=>`<span class="${i<pos?(r.log[i].hit?'h':'m'):''} ${i===pos-1?'cur':''}">${k}</span>`).join('');
+ const last=r.log[pos-1];$('#crow').innerHTML=r.c.map(k=>`<i class="${last&&k===last.k?(last.hit?'hit':'new'):''}">${k}</i>`).join('')+Array(Math.max(0,cap-r.c.length)).fill('<i class="empty"></i>').join('');
+ $('#eTxt').innerHTML=last?`Request <b>${last.k}</b>: ${last.hit?'<span class="okc">hit</span>':'<span class="badc">miss</span>'+(last.ev?`, evicted <b>${last.ev}</b>`:'')}. Hits so far: ${r.hits} / ${pos}.`:'Press Next request.';
+ bars('#eBars',POL.map(p=>{const h=simulate(p,cap,stream.length).hits;return{l:p,v:h,c:p===pol?'blue':p==='Belady'?'ok':'muted',txt:h+' / '+stream.length}}),stream.length)}
+seg('#polSeg button',b=>{pol=b.dataset.p;drawE()});$('#cap').addEventListener('change',drawE);
+$('#eNext').addEventListener('click',()=>{if(pos<stream.length)pos++;drawE()});$('#eBack').addEventListener('click',()=>{if(pos>0)pos--;drawE()});$('#eAll').addEventListener('click',()=>{pos=stream.length;drawE()});$('#eNew').addEventListener('click',()=>{newStream();drawE()});
+stream='A B C A D A B E A C B F A B C G A B'.split(' ');drawE();
+
+/* TTL */
+function drawT(){const t=+$('#ttl').value;$('#ttlV').textContent=t+' min';const s=$('#ttlSvg');s.innerHTML='';const W=600,span=90,X=m=>20+m/span*W;
+ s.appendChild(el('line',{x1:20,y1:60,x2:620,y2:60,class:'st-line','stroke-width':3}));
+ let refreshes=0,seen=null;for(let m=0;m<=span;m+=t){refreshes++;s.appendChild(el('rect',{x:X(m)-2,y:46,width:4,height:28,fill:'var(--blue)'}));if(m>=10&&seen===null)seen=m}
+ s.appendChild(el('rect',{x:X(10),y:52,width:X(seen)-X(10),height:16,fill:'var(--bad)',opacity:.35}));
+ s.appendChild(el('text',{x:X(10),y:34,'font-size':12,fill:'var(--pencil)','text-anchor':'middle'},'price changes'));s.appendChild(el('polygon',{points:`${X(10)},44 ${X(10)-5},37 ${X(10)+5},37`,fill:'var(--pencil)'}));
+ s.appendChild(el('text',{x:X(seen),y:96,'font-size':12,fill:'var(--ok)','text-anchor':'middle'},'users see it'));s.appendChild(el('text',{x:20,y:115,'font-size':10,class:'s-muted'},'0'));s.appendChild(el('text',{x:620,y:115,'font-size':10,class:'s-muted','text-anchor':'end'},'90 min'));
+ $('#ttlK').innerHTML=`<div class="stat"><span class="big badc" style="font-size:1.6rem">${seen-10} min</span><span>stale window this time (worst case ${t})</span></div><div class="stat"><span class="big blue" style="font-size:1.6rem">${Math.round(span/t)}</span><span>source reads per key in 90 min</span></div>`}
+$('#ttl').addEventListener('input',drawT);drawT();
+
+/* strategies */
+const STR={
+ 'Cache-aside':{tag:'read · app manages cache',m:[['A','C','get(k)'],['C','A','miss'],['A','D','SELECT'],['D','A','row'],['A','C','set(k,row,ttl)']],d:'Also called lazy loading. The application checks the cache, and on a miss reads the database and fills the cache itself. Only requested data is cached and a cache failure is survivable, but every miss costs three trips and data can go stale. The most common pattern, and the default with Redis.',code:'def get_user(id):\n    u = cache.get(f"user:{id}")\n    if u is None:                      # miss\n        u = db.query("SELECT ... WHERE id=%s", id)\n        cache.set(f"user:{id}", u, ex=300)\n    return u'},
+ 'Read-through':{tag:'read · cache manages itself',m:[['A','C','get(k)'],['C','D','load on miss'],['D','C','row'],['C','A','value']],d:'The application only ever talks to the cache; on a miss the cache (via a loader you configure) fetches from the database. Simpler application code, but the cache library must know your data source, and the first read is still slow.',code:'cache = ReadThroughCache(loader=lambda k: db.load(k))\nuser = cache.get("user:42")   # loader runs only on a miss'},
+ 'Refresh-ahead':{tag:'read · prefetch before expiry',m:[['C','D','refresh hot k (TTL 80% used)'],['D','C','fresh row'],['A','C','get(k)'],['C','A','hit, never stale-expired']],d:'The cache reloads popular entries shortly before they expire, so readers rarely see a miss. Great for predictable hot keys; wasted work if the prediction is wrong. Related idea: warm the cache at startup to avoid a cold start.',code:'if ttl_remaining(k) < 0.2 * TTL and is_hot(k):\n    background(refresh, k)'},
+ 'Write-through':{tag:'write · cache and DB together',m:[['A','C','put(k,v)'],['C','D','write v'],['D','C','ok'],['C','A','ok']],d:'Every write goes to the cache and synchronously to the database. Cache and database always agree, and reads after writes hit. The cost: writes are slower, and data that is written but never read still fills the cache.',code:'def save(k, v):\n    cache.set(k, v)\n    db.write(k, v)      # both before returning'},
+ 'Write-around':{tag:'write · skip the cache',m:[['A','D','write v'],['D','A','ok'],['A','C','delete(k)'],['A','C','later get(k) → miss']],d:'Writes go straight to the database (and usually invalidate the cache entry). Avoids filling the cache with write-once data such as logs, but the next read of fresh data is a miss.',code:'def save(k, v):\n    db.write(k, v)\n    cache.delete(k)     # next reader reloads'},
+ 'Write-back':{tag:'write · flush later',m:[['A','C','put(k,v)'],['C','A','ok (fast!)'],['C','C','batch…'],['C','D','flush dirty keys']],d:'Also called write-behind. Writes land only in the cache and are flushed to the database asynchronously, often batched. Very fast writes and fewer database hits, but anything not yet flushed is lost if the cache node dies.',code:'def save(k, v):\n    cache.set(k, v); dirty.add(k)   # return now\n# every second:\n    db.bulk_write({k: cache.get(k) for k in dirty}); dirty.clear()'}};
+let sKey='Cache-aside',sT=[];
+$('#sSeg').innerHTML=Object.keys(STR).map(k=>`<button data-s="${k}" aria-pressed="${k===sKey}">${k}</button>`).join('');
+function drawS(n){const s=$('#sSvg');s.innerHTML='';const X={A:90,C:320,D:550},st=STR[sKey];
+ [['A','App'],['C','Cache'],['D','Database']].forEach(([k,t])=>{s.appendChild(el('rect',{x:X[k]-55,y:6,width:110,height:28,rx:6,class:'s-surface',stroke:k==='C'?'var(--pencil)':'var(--blue)','stroke-width':1.5}));s.appendChild(el('text',{x:X[k],y:25,'text-anchor':'middle','font-size':13,'font-weight':600,class:'s-ink'},t));s.appendChild(el('line',{x1:X[k],y1:36,x2:X[k],y2:225,stroke:'var(--line)','stroke-dasharray':'4 4','stroke-width':2}))});
+ st.m.forEach(([a,b,l],i)=>{const y=60+i*36,g=el('g',{opacity:i<n?1:.08});if(a===b){g.appendChild(el('rect',{x:X[a]-6,y:y-12,width:12,height:24,rx:3,class:'s-pencil'}));g.appendChild(el('text',{x:X[a]+14,y:y+4,'font-size':12,class:'s-muted'},l))}else{const d=X[b]>X[a]?1:-1;g.appendChild(el('line',{x1:X[a],y1:y,x2:X[b]-d*9,y2:y,stroke:'var(--blue)','stroke-width':2}));g.appendChild(el('polygon',{points:`${X[b]},${y} ${X[b]-d*10},${y-5} ${X[b]-d*10},${y+5}`,fill:'var(--blue)'}));g.appendChild(el('text',{x:(X[a]+X[b])/2,y:y-5,'text-anchor':'middle','font-size':12,class:'s-ink'},l))}s.appendChild(g)});
+ $('#sTxt').innerHTML=`<h3 class="blue">${sKey}</h3><p>${st.d}</p>`;$('#sTag').textContent=st.tag;$('#sCode').textContent=st.code}
+function playS(){sT.forEach(clearTimeout);drawS(0);STR[sKey].m.forEach((_,i)=>sT.push(setTimeout(()=>drawS(i+1),(i+1)*550)))}
+seg('#sSeg button',b=>{sKey=b.dataset.s;playS()});$('#sPlay').addEventListener('click',playS);drawS(9);
+
+/* layers */
+const LY=[['Client','Browser and app caches honour Cache-Control and ETag headers. Zero network cost on a hit, but you cannot purge a user\'s device, so use versioned file names.'],['CDN','Static and some dynamic content cached at edge locations near users. Cuts latency and origin load.'],['Web server','Reverse proxies such as nginx cache whole HTTP responses for anonymous pages.'],['Application','In-process or remote (Redis) caches for computed objects, sessions and query results. Object-level caching stores assembled objects instead of raw rows.'],['Database','The buffer pool keeps hot pages in memory; some engines cache query results. Free, but limited to one server\'s RAM.']];
+$('#layers').innerHTML=LY.map((l,i)=>`<button data-l="${i}" aria-pressed="${i===1}"><b>${l[0]}</b><span>${l[1].split('.')[0]}.</span></button>`).join('');
+seg('#layers button',b=>{const l=LY[+b.dataset.l];$('#lTxt').innerHTML=`<h3 class="blue">${l[0]} caching</h3><p>${l[1]}</p>`});$('#layers button[data-l="1"]').click();
+
+/* CDN */
+let cm='pull',edge={};const U=[['Lisbon',60,60,'eu'],['Paris',140,150,'eu'],['Tokyo',560,60,'ap'],['Sydney',580,200,'ap']],E={eu:[180,80,'Edge EU'],ap:[460,130,'Edge AP']};
+function drawC(hl){const s=$('#cdnSvg');s.innerHTML='';s.appendChild(el('rect',{x:270,y:200,width:110,height:40,rx:6,class:'s-bluesoft st-blue'}));s.appendChild(el('text',{x:325,y:225,'text-anchor':'middle','font-size':12,class:'s-ink'},'Origin (S3)'));
+ Object.entries(E).forEach(([k,[x,y,t]])=>{const has=edge[k];s.appendChild(el('line',{x1:x,y1:y+20,x2:325,y2:200,stroke:hl&&hl.e===k&&hl.miss?'var(--bad)':'var(--line)','stroke-width':2,class:hl&&hl.e===k&&hl.miss?'flow':''}));s.appendChild(el('rect',{x:x-55,y:y-20,width:110,height:40,rx:6,fill:has?'var(--ok-soft)':'var(--paper)',stroke:has?'var(--ok)':'var(--muted)','stroke-width':1.5}));s.appendChild(el('text',{x,y:y-2,'text-anchor':'middle','font-size':12,class:'s-ink'},t));s.appendChild(el('text',{x,y:y+13,'text-anchor':'middle','font-size':10,class:'s-muted'},has?'logo.png cached':'empty'))});
+ U.forEach(([n,x,y,e],i)=>{const g=el('g',{tabindex:0,role:'button',style:'cursor:pointer'});const on=hl&&hl.u===i;s.appendChild(el('line',{x1:x,y1:y,x2:E[e][0],y2:E[e][1],stroke:on?'var(--pencil)':'var(--line)','stroke-width':on?2.5:1,class:on?'flow':''}));g.appendChild(el('circle',{cx:x,cy:y,r:18,fill:'var(--pencil-soft)',stroke:'var(--pencil)','stroke-width':on?3:1.5}));g.appendChild(el('text',{x,y:y+34,'text-anchor':'middle','font-size':11,class:'s-ink'},n));g.addEventListener('click',()=>req(i));g.addEventListener('keydown',ev=>{if(ev.key==='Enter')req(i)});s.appendChild(g)})}
+function req(i){const e=U[i][3];const miss=!edge[e];edge[e]=true;drawC({u:i,e,miss});$('#cdnTxt').innerHTML=miss?`<b class="badc">Miss</b> at ${E[e][2]}: it pulls logo.png from the origin (~${e==='ap'?180:40} ms), caches it, then serves ${U[i][0]}.`:`<b class="okc">Hit</b> at ${E[e][2]}: served in ~10 ms without touching the origin.`}
+seg('[data-cm]',b=>{cm=b.dataset.cm;edge=cm==='push'?{eu:true,ap:true}:{};drawC();$('#cdnTxt').textContent=cm==='push'?'Push: you uploaded the file to every edge in advance. Every request hits, but you pay to store content that may never be requested there.':'Pull: edges start empty and fill on demand.'});
+$('#cdnReset').addEventListener('click',()=>{edge={};drawC();$('#cdnTxt').textContent='Edges emptied (like a purge or TTL expiry).'});drawC();
+cards('#cdnCards',[{t:'Dynamic content',d:'Cache personalised pages in fragments: Edge Side Includes stitch cached and fresh pieces together at the edge.'},{t:'Multitier CDN',d:'Regional mid-tier caches sit between edges and the origin, so many edges missing at once still hit a cache, not your servers.'},{t:'DNS redirection',d:'The CDN\'s DNS answers with the IP of a nearby, healthy edge, steering each user to the right location.'},{t:'Client multiplexing',d:'HTTP/2 and HTTP/3 carry many requests over one connection to the edge, cutting handshakes.'},{t:'Consistency',d:'Purge or invalidate paths when content changes, and use versioned URLs so old and new never collide.'},{t:'Cost',d:'CDNs bill for transfer and requests. Compare against the origin capacity and bandwidth you no longer need.'}]);
+
+/* redis deployment */
+const RD={single:'One server. Simple, but if it dies the cache is gone and every request falls through to the database.',ha:'A primary takes writes and replicates asynchronously to replicas that serve reads. Failover needs someone to promote a replica.',sentinel:'Sentinel processes watch the primary; when a quorum of sentinels agrees it is down, they promote a replica and tell clients the new address.',cluster:'Data is split across shards using 16,384 hash slots (CRC16 of the key, mod 16384). Each shard has its own primary and replicas, so both memory and throughput scale out.'};
+function drawRd(m){const s=$('#rdSvg');s.innerHTML='';const node=(x,y,t,c)=>{s.appendChild(el('rect',{x:x-45,y:y-18,width:90,height:36,rx:6,fill:'var(--surface)',stroke:`var(--${c})`,'stroke-width':1.6}));s.appendChild(el('text',{x,y:y+5,'text-anchor':'middle','font-size':12,class:'s-ink'},t))};const ln=(a,b,c,d)=>s.appendChild(el('line',{x1:a,y1:b,x2:c,y2:d,stroke:'var(--muted)','stroke-width':1.4,'stroke-dasharray':'4 3'}));
+ if(m==='single')node(320,100,'Redis','blue');
+ if(m==='ha'||m==='sentinel'){node(320,60,'Primary','blue');[200,320,440].forEach(x=>{ln(320,78,x,132);node(x,150,'Replica','d2')});if(m==='sentinel')[90,550,320].forEach((x,i)=>{const y=i<2?60:190;s.appendChild(el('circle',{cx:x,cy:y,r:16,fill:'var(--pencil-soft)',stroke:'var(--pencil)'}));s.appendChild(el('text',{x,y:y+4,'text-anchor':'middle','font-size':10,class:'s-ink'},'S'))})}
+ if(m==='cluster'){[['0–5460',110],['5461–10922',320],['10923–16383',530]].forEach(([r,x])=>{node(x,60,'Primary','blue');ln(x,78,x,122);node(x,140,'Replica','d2');s.appendChild(el('text',{x,y:190,'text-anchor':'middle','font-size':11,class:'s-muted t-mono'},'slots '+r))})}
+ $('#rdTxt').textContent=RD[m]}
+seg('[data-rd]',b=>drawRd(b.dataset.rd));drawRd('single');
+const PZ={rdb:'<b>RDB</b> writes a compact point-in-time snapshot every few minutes. Fast restarts and small files, but you can lose everything since the last snapshot.',aof:'<b>AOF</b> appends every write command to a log, fsynced every second (or always). Loses at most about a second, but files are larger and replay is slower; Redis rewrites the log in the background to shrink it.',both:'Running <b>both</b> gives fast restore from the snapshot plus minimal loss from the log: the usual choice when you care about the data.'};
+seg('[data-pz]',b=>$('#pzTxt').innerHTML=PZ[b.dataset.pz]);$('#pzTxt').innerHTML=PZ.rdb;
+
+quiz('#qq','#qs',[
+ {q:'Which policy is the theoretical best and needs knowledge of future requests?',o:['LRU','LFU','Belady'],a:2,why:'Evict whatever is needed farthest in the future: optimal but impossible in practice.'},
+ {q:'Which strategy risks losing writes if a cache node fails?',o:['Write-through','Write-around','Write-back'],a:2,why:'Writes sit only in the cache until the asynchronous flush.'},
+ {q:'In cache-aside, who loads data into the cache on a miss?',o:['The application','The cache','The database'],a:0,why:'The app reads the database and populates the cache itself.'},
+ {q:'A pull CDN\'s first request for a file at a new edge is…',o:['A hit','A miss that fetches from the origin','Rejected'],a:1,why:'Content is cached on demand, after the first request.'},
+ {q:'Redis Cluster maps keys to shards using…',o:['16,384 hash slots','Consistent hashing with vnodes','Range partitioning'],a:0,why:'CRC16(key) mod 16384 picks a slot; slots are assigned to shards.'}]);
+
+})();
+</script>
+</body>
+</html>

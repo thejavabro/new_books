@@ -1,0 +1,529 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Virtual Threads Deep Dive</title>
+<meta name="description" content="How a virtual thread actually parks and resumes, why synchronized can pin it to a carrier, and how ScopedValue replaces ThreadLocal for a world with millions of threads.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Java Coding Problems companion. Layout: a workbench reading column on blueprint grid paper.
+   Blue ink = structure and the JVM, orange pencil = your code, green = works, red = breaks.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code */
+:root{--codebg:#f7f9fc}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--codebg:#0e1a28}}
+:root[data-theme="dark"]{--codebg:#0e1a28}
+pre.code{font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--codebg);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:0;overflow-x:auto;white-space:pre;tab-size:4;min-width:0;max-width:100%}
+code{font-family:var(--mono);font-size:.88em;background:var(--codebg);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+pre.code .tk{color:var(--d4);font-weight:600} pre.code .ts{color:var(--d2)} pre.code .tc{color:var(--muted);font-style:italic}
+pre.code .tn{color:var(--d3)} pre.code .tt{color:var(--blue)} pre.code .ta{color:var(--d5)}
+pre.code mark,.hl{background:var(--mid-soft);color:inherit;border-radius:3px;outline:1px solid var(--mid)}
+.out{font-family:var(--mono);font-size:.82rem;background:var(--ink);color:var(--paper);border-radius:8px;padding:10px 14px;white-space:pre-wrap;overflow-wrap:anywhere;min-height:2.6em}
+.out .err{color:#ff9b8f}
+.theme-btn{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted)}
+.theme-btn:hover{border-color:var(--blue);color:var(--blue)}
+.pnum{font-family:var(--mono);font-size:.72rem;color:var(--pencil);border:1px solid var(--pencil);border-radius:4px;padding:1px 6px;white-space:nowrap}
+.cells{display:flex;flex-wrap:wrap;gap:4px}
+.cell{min-width:34px;height:34px;padding:0 6px;display:inline-grid;place-items:center;border:1px solid var(--line);border-radius:6px;background:var(--paper);font-family:var(--mono);font-size:.8rem;transition:background .3s,border-color .3s}
+.cell.on{background:var(--blue-soft);border-color:var(--blue)}
+.cell.hot{background:var(--pencil-soft);border-color:var(--pencil)}
+.cell.ok{background:var(--ok-soft);border-color:var(--ok)}
+.cell.bad{background:var(--bad-soft);border-color:var(--bad)}
+input[type=text],input[type=number]{font:inherit;font-family:var(--mono);font-size:.9rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+.sheet>.seg,.stack>.seg{align-self:flex-start}
+
+/* page */
+
+.scopes{display:flex;flex-direction:column;gap:6px}
+.scp{border:2px solid var(--blue);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:6px;background:var(--surface)}
+.scp .scp{border-color:var(--pencil)}
+.scp .scp .scp{border-color:var(--d5)}
+.scp code{background:none;border:0;padding:0}
+.scp.active>.lbl{font-weight:700}
+.lanes2{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+@media (max-width:560px){.lanes2{grid-template-columns:1fr 1fr}}
+.cr{border:2px solid var(--blue);border-radius:10px;padding:8px;min-height:58px;display:flex;flex-direction:column;align-items:center;gap:4px;font-size:.8rem}
+.cr.pin{border-color:var(--bad);background:var(--bad-soft)}
+.vt2{font-family:var(--mono);font-size:.72rem;padding:2px 7px;border-radius:999px;border:1px solid var(--pencil);background:var(--pencil-soft)}
+.vt2.w{border-color:var(--d5);background:transparent;color:var(--d5)}
+.vt2.ok{border-color:var(--ok);background:var(--ok-soft)}
+.pool2{display:flex;flex-wrap:wrap;gap:4px;min-height:28px;border:1px dashed var(--line);border-radius:8px;padding:6px}
+.qbar{display:flex;gap:3px;flex-wrap:wrap;min-height:26px}
+.qbar i{width:14px;height:22px;border-radius:3px;background:var(--blue)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Java Coding Problems · visual companion</a><span class="tag">Chapter 11 of 13 · Problems 225–242</span><button class="theme-btn" id="themeBtn" type="button">Dark theme</button></div>
+  <h1>Virtual Threads Deep Dive</h1>
+  <p class="lede">How a virtual thread actually parks and resumes, why synchronized can pin it to a carrier, and how ScopedValue replaces ThreadLocal for a world with millions of threads.</p>
+  <nav class="toc" aria-label="Sections"><a href="#cont">Continuations</a><a href="#states">States</a><a href="#scopes">Custom scopes</a><a href="#scoped">ScopedValue</a><a href="#semaphore">Semaphore</a><a href="#pinning">Pinning</a><a href="#prodcons">Producer-consumer</a><a href="#check">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="cont" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Continuations: the engine under virtual threads</h2></div>
+  <p>A virtual thread is a <b>continuation</b> plus a scheduler (<span class="pnum">P225</span>). A continuation is a piece of code that can <i>suspend itself</i> with <code>yield</code>, saving its stack, and later <i>resume</i> exactly where it stopped when someone calls <code>run</code> again. The JDK's class is internal (<code>jdk.internal.vm.Continuation</code>, reachable with <code>--add-exports</code>), but stepping through it shows the whole trick.</p>
+  <div class="two">
+    <pre class="code" id="cCode"></pre>
+    <div class="sheet stepper" id="cStp"><div class="out" id="cOut"></div></div>
+  </div>
+</section>
+
+<section id="states" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Virtual thread states and transitions</h2></div>
+  <p>Internally a virtual thread has more states than <code>Thread.State</code> shows (<span class="pnum">P226</span>). The interesting fork is after <b>PARKING</b>: if the stack can be moved to the heap, the thread is <b>PARKED</b> and its carrier is free; if not, it is <b>PINNED</b> and the carrier waits with it. Click a state, or replay a scenario.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn" data-sc="io">socket read</button><button class="btn" data-sc="pin">sleep inside synchronized (pre-JDK 24)</button><button class="btn" data-sc="yield">Thread.yield()</button></div>
+    <div class="svgbox"><svg id="stSvg" viewBox="0 0 700 330" role="img" aria-label="Virtual thread state machine"></svg></div>
+    <div class="detail" id="stTip"></div>
+  </div>
+</section>
+
+<section id="scopes" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Extending and assembling StructuredTaskScope</h2></div>
+  <p><code>ShutdownOnSuccess</code> and <code>ShutdownOnFailure</code> are final, but <code>StructuredTaskScope</code> itself can be extended by overriding <code>handleComplete(Subtask)</code>, which runs as each subtask finishes (<span class="pnum">P227</span>). Scopes can also be nested and assembled: an outer scope forks subtasks that open their own inner scopes (<span class="pnum">P228</span>), and <code>joinUntil(deadline)</code> adds a timeout (<span class="pnum">P229</span>).</p>
+  <pre class="code">class BestPriceScope extends StructuredTaskScope&lt;Offer&gt; {
+    private final Queue&lt;Offer&gt; offers = new ConcurrentLinkedQueue&lt;&gt;();
+    @Override protected void handleComplete(Subtask&lt;? extends Offer&gt; s) {
+        if (s.state() == Subtask.State.SUCCESS) offers.add(s.get());
+    }
+    Offer best() { return offers.stream().min(comparing(Offer::price)).orElseThrow(); }
+}
+try (var scope = new BestPriceScope()) {
+    sellers.forEach(id -&gt; scope.fork(() -&gt; fetchOffer(id)));
+    scope.joinUntil(Instant.now().plusMillis(500));   // TimeoutException if too slow
+    return scope.best();
+}</pre>
+</section>
+
+<section id="scoped" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>ThreadLocal vs ScopedValue</h2></div>
+  <p><code>ThreadLocal</code> gives each thread its own mutable copy, forever, unless you remember to <code>remove()</code>; <code>InheritableThreadLocal</code> copies the whole map into every child thread. With millions of virtual threads that is a lot of memory and a lot of leaks (<span class="pnum">P230</span>). <code>ScopedValue</code> (preview in JDK 21) binds an <b>immutable</b> value for the duration of a call, visible to everything that call runs, then it is gone (<span class="pnum">P231</span>). Bindings can be nested to <b>rebind</b> (<span class="pnum">P233</span>), and are inherited by subtasks forked in a <code>StructuredTaskScope</code> (<span class="pnum">P234</span>). Step through.</p>
+  <div class="two">
+    <pre class="code">static final ScopedValue&lt;String&gt; USER = ScopedValue.newInstance();
+
+ScopedValue.where(USER, "ana").run(() -&gt; {
+    handle();                              // USER.get() == "ana"
+    ScopedValue.where(USER, "admin").run(() -&gt; {
+        audit();                           // "admin" (rebinding)
+    });
+    try (var scope = new StructuredTaskScope&lt;&gt;()) {
+        scope.fork(() -&gt; report());        // forked: still "ana"
+        scope.join();
+    }
+});
+USER.isBound();                            // false: binding gone</pre>
+    <div class="sheet stepper" id="svStp"><div class="scopes" id="svView"></div></div>
+  </div>
+  <div class="tbl"><table class="t" id="tlT"></table></div>
+  <p class="small"><span class="pnum">P232</span>: scoped values are <i>not</i> inherited by tasks submitted to an ordinary <code>ExecutorService</code>; bind the value inside the task, or use a structured scope.</p>
+</section>
+
+<section id="semaphore" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Limit concurrency with a Semaphore, not a pool</h2></div>
+  <p>With platform threads, a fixed pool doubled as a limit on how many tasks hit the database at once. Virtual threads should not be pooled, so express the limit directly: a <code>Semaphore</code> with N permits (<span class="pnum">P235</span>). Launch 12 virtual threads against a database that tolerates a few connections.</p>
+  <div class="sheet">
+    <div class="row"><label class="rng" style="flex:1"><span>Permits: <b id="pmV"></b></span><input type="range" id="pm" min="1" max="6" value="3"></label><button class="btn primary" id="smGo">Start 12 tasks</button></div>
+    <div class="stack"><span class="eyebrow">Inside the guarded section (using a connection)</span><div class="pool2" id="smIn"></div></div>
+    <div class="stack"><span class="eyebrow">Waiting in acquire() (parked, carrier free)</span><div class="pool2" id="smWait"></div></div>
+    <div class="stack"><span class="eyebrow">Done</span><div class="pool2" id="smDone"></div></div>
+  </div>
+  <pre class="code">Semaphore db = new Semaphore(3);
+executor.submit(() -&gt; {
+    db.acquire();
+    try { return query(); } finally { db.release(); }
+});</pre>
+</section>
+
+<section id="pinning" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Pinning: when a virtual thread can't let go</h2></div>
+  <p>In JDK 21 a virtual thread that blocks <b>inside a <code>synchronized</code> block</b> (or a native call) cannot unmount: the monitor is tied to the carrier. It is <b>pinned</b>, and the carrier is blocked with it. With few carriers, a handful of pinned threads can stall everything. The book's fix is to use a <code>ReentrantLock</code>, which parks properly (<span class="pnum">P236</span>). Run 8 tasks that each hold a lock while waiting on I/O for 3 ticks, on 4 carriers.</p>
+  <div class="sheet">
+    <div class="row"><div class="seg" role="group" aria-label="Lock" id="pnSeg"><button data-l="sync" aria-pressed="true">synchronized</button><button data-l="lock" aria-pressed="false">ReentrantLock</button></div><button class="btn primary" id="pnGo">Run</button><span class="small mono" id="pnT"></span></div>
+    <div class="lanes2" id="pnCar"></div>
+    <div class="stack"><span class="eyebrow">Other virtual threads waiting for a carrier</span><div class="pool2" id="pnQ"></div></div>
+    <p class="small" id="pnTxt"></p>
+  </div>
+  <div class="callout blue"><b class="h">Update after the book</b><span>JDK 24 (JEP 491) reworked monitors so <code>synchronized</code> no longer pins in most cases. On JDK 21, which the book targets, the advice stands: avoid long blocking operations inside <code>synchronized</code>, and use <code>-Djdk.tracePinnedThreads=full</code> or the <code>jdk.VirtualThreadPinned</code> JFR event to find them.</span></div>
+</section>
+
+<section id="prodcons" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Producer-consumer with virtual threads</h2></div>
+  <p><span class="pnum">P237–P239</span> solve the producer-consumer problem with a <code>BlockingQueue</code> and virtual threads, then control it: a Semaphore caps active consumers, and a monitor adds or removes consumers as the queue grows or shrinks. Tune the rates and watch the queue.</p>
+  <div class="sheet">
+    <div class="two"><label class="rng"><span>Items produced per tick: <b id="prV"></b></span><input type="range" id="pr" min="1" max="8" value="4"></label><label class="rng"><span>Consumers (each takes 1 per tick): <b id="coV"></b></span><input type="range" id="co" min="1" max="8" value="3"></label></div>
+    <label class="small"><input type="checkbox" id="auto"> auto-scale consumers (P239): add one when queue &gt; 10, remove one when empty</label>
+    <div class="row"><button class="btn primary" id="pcGo">Run</button><span class="small mono" id="pcT"></span></div>
+    <div class="qbar" id="pcQ"></div>
+    <div class="svgbox"><svg id="pcSvg" viewBox="0 0 640 120" role="img" aria-label="Queue length over time"></svg></div>
+  </div>
+  <div class="cardgrid" id="moreCards"></div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Test yourself</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b class="blue">Continuation</b><span>run() resumes, yield() suspends and saves the stack.</span></div>
+    <div><b>PARKED vs PINNED</b><span>Parked frees the carrier; pinned holds it.</span></div>
+    <div><b class="pencil">Custom scopes</b><span>Override handleComplete; joinUntil for deadlines.</span></div>
+    <div><b class="okc">ScopedValue</b><span>Immutable, bounded, rebindable, inherited by forks.</span></div>
+    <div><b>Semaphore</b><span>Limit concurrency without pooling threads.</span></div>
+    <div><b class="badc">Pinning</b><span>synchronized + blocking on JDK 21: switch to ReentrantLock.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Java Coding Problems, Second Edition</i> by Anghel Leonard (Packt, 2024). Explanations, code snippets, diagrams and simulations are original summaries written for this companion; problem numbers refer to the book so you can look up the full solutions there.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch10-virtual-threads.html"><span>Previous · Chapter 10</span><b>Virtual Threads and Structured Concurrency</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch12-garbage-collectors.html"><span>Next · Chapter 12</span><b>Garbage Collectors and Dynamic CDS Archives</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('jcp:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('jcp:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* tiny Java highlighter for every pre.code (write plain escaped code; use ⟦...⟧ to mark a highlight) */
+const JKW=new Set('abstract assert boolean break byte case catch char class const continue default do double else enum extends final finally float for goto if implements import instanceof int interface long native new package private protected public return short static strictfp super switch synchronized this throw throws transient try void volatile while var record sealed permits non-sealed yield when true false null'.split(' '));
+function hiJava(src){const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const re=/(\/\/[^\n]*|\/\*[\s\S]*?\*\/)|("""[\s\S]*?"""|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*')|(@[A-Za-z]\w*)|(\b\d[\d_]*(?:\.\d+)?[LlFfDd]?\b|\b0x[0-9a-fA-F_]+\b)|(\b[A-Za-z_]\w*(?:-sealed)?\b)|(⟦|⟧)/g;
+  let out='',last=0,m;while((m=re.exec(src))){out+=esc(src.slice(last,m.index));last=re.lastIndex;
+    if(m[1])out+=`<span class="tc">${esc(m[1])}</span>`;else if(m[2])out+=`<span class="ts">${esc(m[2])}</span>`;else if(m[3])out+=`<span class="ta">${m[3]}</span>`;
+    else if(m[4])out+=`<span class="tn">${m[4]}</span>`;else if(m[5]){const w=m[5];out+=JKW.has(w)?`<span class="tk">${w}</span>`:/^[A-Z]/.test(w)?`<span class="tt">${w}</span>`:w}
+    else if(m[6])out+=m[6]==='⟦'?'<mark>':'</mark>';}
+  return out+esc(src.slice(last));}
+function hiAll(root){(root||document).querySelectorAll('pre.code:not([data-hi])').forEach(p=>{p.innerHTML=hiJava(p.textContent.replace(/^\n/,''));p.dataset.hi=1})}
+function setCode(elOrSel,src){const p=typeof elOrSel==='string'?$(elOrSel):elOrSel;p.innerHTML=hiJava(src.replace(/^\n/,''));p.dataset.hi=1}
+/* theme toggle */
+(function(){const r=document.documentElement;const t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+  const b=document.getElementById('themeBtn');if(!b)return;const cur=()=>r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+  const lab=()=>{b.textContent=cur()==='dark'?'Light theme':'Dark theme'};lab();
+  b.addEventListener('click',()=>{const n=cur()==='dark'?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n);lab()});})();
+document.addEventListener('DOMContentLoaded',()=>hiAll());
+
+
+/* continuation */
+setCode('#cCode',`ContinuationScope scope = new ContinuationScope("demo");
+Continuation cont = new Continuation(scope, () -> {
+    System.out.println("A");
+    Continuation.yield(scope);       // suspend here
+    System.out.println("B");
+    Continuation.yield(scope);
+    System.out.println("C");
+});
+cont.run();   // prints A
+cont.run();   // prints B
+cont.run();   // prints C
+cont.isDone(); // true`);
+const CS=['Create the continuation. Nothing runs yet.','First cont.run(): the body starts, prints A, then yield() freezes its stack frames into a heap object and returns control to the caller.','Second cont.run(): the frames are thawed back onto the current thread\'s stack, and execution continues after the first yield. Prints B.','Third run(): prints C and the body ends. isDone() is now true. A virtual thread\'s scheduler does exactly this: run() = mount, yield() = unmount.'];
+$('#cStp').insertAdjacentHTML('beforeend',stepHTML());stepper('#cStp',CS,i=>{$('#cOut').textContent=['(nothing printed)','A\n[suspended at yield #1]','A\nB\n[suspended at yield #2]','A\nB\nC\n[done]'][i]});
+
+/* states */
+const SN=[{id:'NEW',x:70,y:40,w:100},{id:'STARTED',x:220,y:40,w:110},{id:'RUNNING',x:390,y:40,w:110,c:'ok'},{id:'TERMINATED',x:630,y:170,w:130,c:'muted'},{id:'PARKING',x:390,y:150,w:110,c:'mid'},{id:'PARKED',x:220,y:280,w:110,c:'d5'},{id:'PINNED',x:560,y:280,w:110,c:'bad'},{id:'RUNNABLE',x:220,y:150,w:120,c:'blue'},{id:'YIELDING',x:620,y:40,w:120,c:'pencil'}].map(n=>({...n,t:n.id,c:n.c||'blue'}));
+const SE=[['NEW','STARTED'],['STARTED','RUNNING'],['RUNNING','TERMINATED'],['RUNNING','PARKING'],['PARKING','PARKED'],['PARKING','PINNED'],['PINNED','RUNNING'],['PARKED','RUNNABLE'],['RUNNABLE','RUNNING'],['RUNNING','YIELDING'],['YIELDING','RUNNABLE']];
+const SI={NEW:'Created with Thread.ofVirtual().unstarted(task): not scheduled, not mounted.',STARTED:'start() was called; the continuation is submitted to the scheduler.',RUNNING:'Mounted on a carrier and executing.',TERMINATED:'The task finished, or the thread could not be started.',PARKING:'A blocking call (park) was reached. Transitional: the JVM tries to yield the continuation.',PARKED:'Success: the stack is on the heap, the carrier is free. Unpark or interrupt makes it RUNNABLE.',PINNED:'Failure to unmount (synchronized frame on JDK 21, or a native frame): parked on its carrier, which is blocked too. Resumes straight to RUNNING.',RUNNABLE:'Unmounted but ready; waiting for a free carrier to mount it again.',YIELDING:'Thread.yield() or sleep(0). If the yield works the thread becomes RUNNABLE, else it stays RUNNING.'};
+const G=graph('#stSvg',{kind:'State',start:'RUNNING',nodes:SN,edges:SE,info:SI},'#stTip');
+const SCN={io:['NEW','STARTED','RUNNING','PARKING','PARKED','RUNNABLE','RUNNING','TERMINATED'],pin:['RUNNING','PARKING','PINNED','RUNNING','TERMINATED'],yield:['RUNNING','YIELDING','RUNNABLE','RUNNING']};
+let scT=null;$$('[data-sc]').forEach(b=>b.addEventListener('click',()=>{clearInterval(scT);const p=SCN[b.dataset.sc];let k=0;G.sel(p[0]);scT=setInterval(()=>{k++;if(k>=p.length){clearInterval(scT);return}G.sel(p[k])},800)}));
+
+/* scoped values stepper */
+const SV=[['outside','USER unbound: USER.get() throws NoSuchElementException.'],['ana','where(USER, "ana").run(...) binds it for this call. handle() sees "ana", however deep it goes.'],['admin','A nested where() rebinds USER for the inner call only. audit() sees "admin".'],['ana2','Back in the outer call: "ana" again. Rebinding never mutates the outer binding.'],['fork','A subtask forked in a StructuredTaskScope inherits the binding, with no copying: report() sees "ana".'],['gone','After run() returns, the binding is gone: no remove() to forget, no leak.']];
+function svDraw(i){const k=SV[i][0];const box=(lbl,inner,on)=>`<div class="scp${on?' active':''}"><span class="lbl small">${lbl}</span>${inner||''}</div>`;
+  let h;if(k==='outside'||k==='gone')h=box('top level: USER unbound',k==='gone'?'<span class="small">binding released</span>':'',true);
+  else{const inner2=k==='admin'?box('where(USER, "admin").run → audit(): <code>"admin"</code>','',true):'';const fork=k==='fork'?box('forked subtask → report(): <code>"ana"</code>','',true):'';h=box(`where(USER, "ana").run → ${k==='ana'||k==='ana2'?'handle(): <code>"ana"</code>':'…'}`,inner2+fork,k==='ana'||k==='ana2')}
+  $('#svView').innerHTML=h+`<p class="small">${SV[i][1]}</p>`}
+$('#svStp').insertAdjacentHTML('beforeend',stepHTML());stepper('#svStp',SV.map(x=>x[1].split(':')[0]),svDraw);
+$('#tlT').innerHTML='<tr><th></th><th>ThreadLocal</th><th>ScopedValue</th></tr>'+[['Mutability','set() any time','immutable binding'],['Lifetime','until remove() or thread death','the dynamic scope of run()/call()'],['Inheritance','InheritableThreadLocal copies the map','shared by forked subtasks, no copy'],['Cost with 1M threads','1M maps, easy leaks','one binding object'],['Status','since JDK 1.2','preview in JDK 21']].map(r=>`<tr><td><b>${r[0]}</b></td><td>${r[1]}</td><td>${r[2]}</td></tr>`).join('');
+
+/* semaphore */
+let smT=null;
+$('#pm').addEventListener('input',()=>$('#pmV').textContent=$('#pm').value);$('#pmV').textContent=$('#pm').value;
+function smDraw(ts){$('#smIn').innerHTML=ts.filter(t=>t.s==='in').map(t=>`<span class="vt2">vt${t.id}</span>`).join('');$('#smWait').innerHTML=ts.filter(t=>t.s==='w').map(t=>`<span class="vt2 w">vt${t.id}</span>`).join('');$('#smDone').innerHTML=ts.filter(t=>t.s==='d').map(t=>`<span class="vt2 ok">vt${t.id}</span>`).join('')}
+$('#smGo').addEventListener('click',()=>{clearInterval(smT);const P=+$('#pm').value;const ts=Array.from({length:12},(_,i)=>({id:i,s:'w',left:2+(i%3)}));smDraw(ts);
+  smT=setInterval(()=>{ts.filter(t=>t.s==='in').forEach(t=>{t.left--;if(t.left<=0)t.s='d'});let inN=ts.filter(t=>t.s==='in').length;ts.filter(t=>t.s==='w').forEach(t=>{if(inN<P){t.s='in';inN++}});smDraw(ts);if(ts.every(t=>t.s==='d'))clearInterval(smT)},500)});smDraw([]);
+
+/* pinning */
+let pnMode='sync',pnTm=null;seg('#pnSeg button',b=>{pnMode=b.dataset.l});
+function pnRun(){clearInterval(pnTm);const vts=Array.from({length:8},(_,i)=>({id:i,st:'q',io:3,cpu:1}));const others=Array.from({length:6},(_,i)=>({id:'x'+i,st:'q'}));const car=Array(4).fill(null);let t=0;
+  const draw=()=>{$('#pnT').textContent='tick '+t;$('#pnCar').innerHTML=car.map((c,k)=>{if(!c)return `<div class="cr"><span class="small">carrier ${k}</span><span class="small">idle</span></div>`;const pin=c.st==='io'&&pnMode==='sync';return `<div class="cr${pin?' pin':''}"><span class="small">carrier ${k}</span><span class="vt2">${typeof c.id==='number'?'vt'+c.id:c.id}</span><span class="small">${pin?'PINNED (I/O in synchronized)':c.st==='io'?'':'running'}</span></div>`}).join('');
+    $('#pnQ').innerHTML=[...vts,...others].filter(v=>v.st==='q').map(v=>`<span class="vt2">${typeof v.id==='number'?'vt'+v.id:v.id}</span>`).join('')+(pnMode==='lock'?vts.filter(v=>v.st==='io').map(v=>`<span class="vt2 w">vt${v.id} parked</span>`).join(''):'')};
+  draw();pnTm=setInterval(()=>{t++;
+    vts.forEach(v=>{if(v.st==='io'){v.io--;if(v.io<=0)v.st='d'}});
+    car.forEach((c,k)=>{if(!c)return;if(c.st==='d'||c.st==='q2'||c.st==='done'){car[k]=null;if(c.st==='q2'){c.st='d'}}else if(c.st==='run'){if(typeof c.id==='number'){c.st='io';if(pnMode==='lock')car[k]=null}else{c.st='done';car[k]=null}}});
+    car.forEach((c,k)=>{if(!c){const v=[...vts,...others].find(x=>x.st==='q');if(v){v.st='run';car[k]=v}}});
+    draw();const fin=vts.every(v=>v.st==='d')&&others.every(o=>o.st==='done');
+    if(fin||t>40){clearInterval(pnTm);$('#pnTxt').innerHTML=pnMode==='sync'?`Finished in <b>${t}</b> ticks. Carriers sat blocked (red) during every I/O wait, so the 6 unrelated tasks (x0–x5) starved too.`:`Finished in <b>${t}</b> ticks. Lock holders parked during I/O and their carriers ran other work meanwhile.`}},450)}
+$('#pnGo').addEventListener('click',pnRun);
+
+/* producer-consumer */
+let pcTm=null;['#pr','#co'].forEach(s=>{const f=()=>$(s+'V').textContent=$(s).value;$(s).addEventListener('input',f);f()});
+$('#pcGo').addEventListener('click',()=>{clearInterval(pcTm);let q=0,t=0,hist=[];
+  pcTm=setInterval(()=>{t++;const p=+$('#pr').value;let c=+$('#co').value;q+=p;q=Math.max(0,q-c);if($('#auto').checked){if(q>10&&c<8){c++;$('#co').value=c}else if(q===0&&c>1){c--;$('#co').value=c}$('#coV').textContent=c}
+    hist.push(q);$('#pcT').textContent=`tick ${t} · queue ${q}`;$('#pcQ').innerHTML='<i></i>'.repeat(Math.min(q,60))+(q>60?` <span class="small">+${q-60}</span>`:'');
+    const s=$('#pcSvg');s.innerHTML='';const mx=Math.max(20,...hist);let d='';hist.forEach((v,i)=>d+=(i?'L':'M')+(10+i*15.5)+' '+(110-v/mx*100));s.appendChild(el('path',{d,fill:'none',stroke:'var(--pencil)','stroke-width':2.5}));s.appendChild(el('text',{x:630,y:14,'text-anchor':'end','font-size':11,class:'s-muted'},`max ${mx}`));
+    if(t>=40)clearInterval(pcTm)},250)});
+cards('#moreCards',[{t:'HTTP server on virtual threads (P240)',d:'A plain blocking server: accept a socket, hand it to newVirtualThreadPerTaskExecutor, read and write synchronously. Thousands of slow clients, simple code.'},{t:'CompletableFuture (P241)',d:'Pass a virtual-thread executor to supplyAsync(task, executor) and keep the composition API, without tying up the common ForkJoinPool.',c:'pencil'},{t:'wait() and notify() (P242)',d:'They work on virtual threads, but wait() inside synchronized pins on JDK 21. Prefer Condition with ReentrantLock, or a BlockingQueue.',c:'bad'}]);
+
+quiz('#qQuiz','#qScore',[
+ {q:'After <code>Continuation.yield</code>, the next <code>run()</code>…',o:['restarts the body','resumes after the yield'],a:1,why:'The frozen frames are restored.'},
+ {q:'A virtual thread that cannot unmount while blocking is…',o:['PARKED','PINNED'],a:1,why:'It parks on its carrier, blocking it.'},
+ {q:'On JDK 21, the book\'s fix for blocking inside synchronized is…',o:['a bigger carrier pool','ReentrantLock'],a:1,why:'j.u.c locks park and unmount properly.'},
+ {q:'A ScopedValue bound with where().run() is visible in a subtask forked in a StructuredTaskScope inside it?',o:['Yes','No'],a:0,why:'Structured forks inherit bindings.'},
+ {q:'To allow at most 5 concurrent DB calls from virtual threads, use…',o:['newFixedThreadPool(5)','new Semaphore(5)'],a:1,why:'Limit the resource, not the threads.'}]);
+
+})();
+</script>
+</body>
+</html>

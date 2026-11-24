@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Designing a Web Crawler and Search Engine</title>
+<meta name="description" content="Fetch a large slice of the web, keep it fresh, and answer keyword queries in milliseconds. Two systems joined by a giant index.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the System Design on AWS companion. Layout: a drafting-table reading column on blueprint grid paper.
+   Blue ink = structure and data paths, orange pencil = clients and requests, green = healthy, red = failure.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:minmax(14rem,1fr) minmax(0,auto);gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* additions */
+button.tag.theme{cursor:pointer;margin-left:auto}
+button.tag.theme:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;max-width:100%;white-space:pre}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:5em;max-height:14em;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.pill{display:inline-block;font-family:var(--mono);font-size:.75rem;padding:2px 8px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.pill.ok{border-color:var(--ok);color:var(--ok);background:var(--ok-soft)} .pill.bad{border-color:var(--bad);color:var(--bad);background:var(--bad-soft)}
+input[type=number],input[type=text]{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+.sheet>.seg,.stack>.seg{align-self:flex-start}
+
+/* page */
+
+.bloom{display:grid;grid-template-columns:repeat(32,minmax(0,1fr));gap:2px}
+.bloom i{display:block;aspect-ratio:1;border-radius:2px;background:var(--paper);border:1px solid var(--line);transition:background .3s}
+.bloom i.on{background:var(--blue);border-color:var(--blue)}
+.bloom i.chk{outline:2px solid var(--pencil)}
+.qs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.qs>div{border:1px solid var(--line);border-radius:8px;padding:8px;min-height:80px;display:flex;flex-direction:column;gap:4px;background:var(--paper)}
+.qs b{font-family:var(--mono);font-size:.72rem}
+.qs .u{display:flex;flex-wrap:wrap;gap:3px}
+.qs .u i{font-style:normal;font-family:var(--mono);font-size:.68rem;padding:1px 5px;border-radius:3px;border:1px solid var(--line);background:var(--surface)}
+.qs .u i.hi{border-color:var(--pencil);background:var(--pencil-soft)}
+@media (max-width:560px){.qs{grid-template-columns:1fr}}
+.docs textarea{width:100%;font:inherit;font-size:.9rem;border:1px solid var(--line);border-radius:6px;background:var(--paper);color:var(--ink);padding:6px 8px;resize:vertical}
+.inv{font-family:var(--mono);font-size:.8rem;display:flex;flex-direction:column;gap:2px;max-height:240px;overflow:auto}
+.inv div.hit{background:var(--ok-soft)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">System Design on AWS · visual companion</a><span class="tag">Part III · Chapter 15 of 21</span><button class="tag theme" type="button" id="themeBtn" aria-label="Toggle light or dark theme">Theme</button></div>
+  <h1>Designing a Web Crawler and Search Engine</h1>
+  <p class="lede">Fetch a large slice of the web, keep it fresh, and answer keyword queries in milliseconds. Two systems joined by a giant index.</p>
+  <nav class="toc" aria-label="Sections"><a href="#scale">Scale</a><a href="#classic">Classic pipeline</a><a href="#frontier">URL frontier</a><a href="#bloom">Dedup & Bloom</a><a href="#index">Inverted index</a><a href="#rank">Ranking</a><a href="#aws">On AWS</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="scale" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Two systems and their scale</h2></div>
+  <p>A search engine is really two systems. The <b>crawler</b> fetches pages and keeps them fresh; the <b>search engine</b> indexes them and answers queries in milliseconds. The book scopes it to English text search and estimates from about 200 million active websites. Adjust the assumptions.</p>
+  <div class="sheet">
+    <div class="three"><label class="rng"><span>Active sites: <b id="sV"></b></span><input type="range" id="s" min="10" max="1000" step="10" value="200"></label><label class="rng"><span>Pages per site: <b id="pV"></b></span><input type="range" id="p" min="5" max="200" step="5" value="50"></label><label class="rng"><span>Stored per page: <b id="kbV"></b></span><input type="range" id="kb" min="50" max="2000" step="50" value="500"></label></div>
+    <label class="rng"><span>Recrawl every: <b id="rcV"></b></span><input type="range" id="rc" min="1" max="60" value="30"></label>
+    <div class="kpis" id="sK"></div>
+  </div>
+</section>
+
+<section id="classic" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>The classic crawl-and-index pipeline</h2></div>
+  <p>The 1997 Google paper still frames the problem. Step through it.</p>
+  <div class="sheet stepper" id="cStep"><div class="svgbox"><svg id="cSvg" viewBox="0 0 660 260" role="img" aria-label="Crawl and index pipeline"></svg></div></div>
+</section>
+
+<section id="frontier" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>The URL frontier: priority and politeness</h2></div>
+  <p>Which URL next? The Mercator-style frontier has two layers. A <b>prioritizer</b> scores URLs (page rank, change rate) into <b>front queues</b> by priority. A <b>back-queue router</b> puts each host in its own <b>back queue</b>, and a heap tracks when each host may next be contacted, so no site is hammered. robots.txt rules and crawl delays are cached per host. Add URLs and fetch.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn" id="fAdd">Discover 6 URLs</button><button class="btn primary" id="fFetch">Fetch next</button><button class="btn" id="fAuto">Run</button></div>
+    <span class="eyebrow">Front queues (priority)</span><div class="qs" id="front"></div>
+    <span class="eyebrow">Back queues (one host each)</span><div class="qs" id="back"></div>
+    <div class="log" id="fLog"></div>
+  </div>
+  <div class="cardgrid" id="freshCards"></div>
+</section>
+
+<section id="bloom" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Have we seen this URL? Bloom filters</h2></div>
+  <p>Billions of URLs, each checked before enqueueing. A global key-value store (DynamoDB) works but costs a lookup each time. A <b>Bloom filter</b> answers "definitely new" or "probably seen" from a compact bit array: each URL sets <i>k</i> bits chosen by <i>k</i> hash functions. No false negatives, some false positives, which here means occasionally skipping a page that was actually new. Content duplicates are caught separately with checksums or similarity hashes of the page body.</p>
+  <div class="sheet">
+    <div class="row"><input type="text" id="bu" value="example.com/menu" aria-label="URL"><button class="btn primary" id="bAdd">Add</button><button class="btn" id="bChk">Check</button><button class="btn" id="bFill">Add 20 random</button><button class="btn" id="bClr">Clear</button><label class="small">k = <select id="bk"><option>1</option><option>2</option><option selected>3</option><option>5</option></select></label></div>
+    <div class="bloom" id="bits"></div>
+    <p id="bTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="index" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Forward and inverted indexes</h2></div>
+  <p>A <b>forward index</b> maps document → words (what the parser produces). The <b>inverted index</b> flips it: word → list of documents (posting list), with positions and other signals. Queries become intersections of posting lists. Edit the pages and search.</p>
+  <div class="sheet">
+    <div class="three docs"><textarea id="d1" rows="3" aria-label="Doc 1">Best biryani recipe with saffron rice</textarea><textarea id="d2" rows="3" aria-label="Doc 2">Quick rice recipes for busy weeknights</textarea><textarea id="d3" rows="3" aria-label="Doc 3">Saffron history and the spice trade</textarea></div>
+    <div class="row"><input type="text" id="q" value="saffron rice" aria-label="Query"><span class="small" id="qRes"></span></div>
+    <div class="inv" id="inv"></div>
+  </div>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Partitioning"><button data-pt="doc" aria-pressed="true">Document-partitioned</button><button data-pt="term" aria-pressed="false">Term-partitioned</button></div>
+    <div class="svgbox"><svg id="ptSvg" viewBox="0 0 640 200" role="img" aria-label="Index partitioning"></svg></div>
+    <p id="ptTxt" class="small" aria-live="polite"></p>
+  </div>
+  <div class="cardgrid" id="perfCards"></div>
+</section>
+
+<section id="rank" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Relevance: PageRank in miniature</h2></div>
+  <p>Matching is only half the job; the results must be ordered. Signals include term frequency and rarity (TF-IDF, BM25), where words appear (title, headings), freshness and the link graph. <b>PageRank</b> treats links as votes: a page is important if important pages link to it. Iterate it.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn primary" id="prStep">Iterate</button><button class="btn" id="prReset">Reset</button><span class="small" id="prIt"></span></div>
+    <div class="svgbox"><svg id="prSvg" viewBox="0 0 640 230" role="img" aria-label="Link graph with PageRank"></svg></div>
+  </div>
+</section>
+
+<section id="aws" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Day 0 and Day N on AWS</h2></div>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Stage"><button data-dn="0" aria-pressed="true">Day 0: serverless + Kendra</button><button data-dn="1" aria-pressed="false">Day N: custom services</button></div>
+    <div class="svgbox"><svg id="dnSvg" viewBox="0 0 660 250" role="img" aria-label="AWS architecture"></svg></div>
+    <p id="dnTxt" aria-live="polite"></p>
+  </div>
+  <div class="tbl"><table class="t"><tr><th>Crawler data</th><th>AWS service</th></tr><tr><td>Seed URLs, discovered URLs, blocked URLs</td><td>DynamoDB (key-value, no relationships)</td></tr><tr><td>robots.txt and DNS caches</td><td>ElastiCache and/or DynamoDB</td></tr><tr><td>Page content</td><td>S3, with metadata (URL → S3 path, hash, last crawl) in DynamoDB</td></tr><tr><td>Frontier queues</td><td>SNS topic fanning out to priority SQS FIFO queues (or MSK)</td></tr><tr><td>Fetchers</td><td>ECS/EC2 in private subnets reaching the web through NAT</td></tr></table></div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qs"></span></div><div class="quiz" id="qq"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>System Design on AWS: Building and Scaling Enterprise Solutions</i> by Jayanth Kumar and Mandeep Singh (O'Reilly, 2025). Explanations, examples, code snippets and drawings are original summaries, not copied from the book. AWS limits and prices change; check current AWS documentation before relying on a number.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch14-url-shortener.html"><span>Previous · Chapter 14</span><b>Designing a URL Shortener</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch16-social-network.html"><span>Next · Chapter 16</span><b>Designing a Social Network and Newsfeed</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('sda:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('sda:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle */
+(function(){const b=document.getElementById('themeBtn');if(!b)return;const r=document.documentElement;
+ const cur=store.get('theme',null);if(cur)r.setAttribute('data-theme',cur);
+ b.addEventListener('click',()=>{const dark=r.getAttribute('data-theme')?r.getAttribute('data-theme')==='dark':matchMedia('(prefers-color-scheme: dark)').matches;const n=dark?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n)});})();
+/* code blocks */
+
+
+function fB(b){return b>=1e15?(b/1e15).toFixed(1)+' PB':b>=1e12?(b/1e12).toFixed(1)+' TB':(b/1e9).toFixed(1)+' GB'}
+function drawS(){const s=+$('#s').value*1e6,p=+$('#p').value,kb=+$('#kb').value,rc=+$('#rc').value;$('#sV').textContent=(s/1e6)+' million';$('#pV').textContent=p;$('#kbV').textContent=kb+' KB';$('#rcV').textContent=rc+' days';
+ const pages=s*p;$('#sK').innerHTML=`<div class="stat"><span class="big blue" style="font-size:1.4rem">${(pages/1e9).toFixed(1)} billion</span><span>pages</span></div><div class="stat"><span class="big pencil" style="font-size:1.4rem">${fB(pages*kb*1000)}</span><span>raw content</span></div><div class="stat"><span class="big" style="font-size:1.4rem">${Math.round(pages/(rc*86400)).toLocaleString()}/s</span><span>fetches to stay fresh</span></div><div class="stat"><span class="big okc" style="font-size:1.4rem">~99,000/s</span><span>search queries at Google scale (8.5 B/day)</span></div>`}
+['s','p','kb','rc'].forEach(i=>$('#'+i).addEventListener('input',drawS));drawS();
+
+/* classic pipeline */
+const cS=$('#cSvg');const CN={};const cb=(id,x,y,t,c)=>{const g=el('g');g.appendChild(el('rect',{x:x-58,y:y-18,width:116,height:36,rx:6,fill:'var(--surface)',stroke:`var(--${c})`,'stroke-width':1.6}));g.appendChild(el('text',{x,y:y+4,'text-anchor':'middle','font-size':11.5,class:'s-ink'},t));cS.appendChild(g);CN[id]=g};
+[[70,40,190,40],[190,40,330,40],[330,40,470,40],[470,40,600,40],[600,58,600,112],[600,130,470,130],[470,148,470,200],[470,130,330,130],[330,130,190,130],[190,130,70,130],[70,112,70,58],[330,148,330,200]].forEach(([a,b,c,d])=>cS.appendChild(el('line',{x1:a,y1:b,x2:c,y2:d,stroke:'var(--line)','stroke-width':2})));
+cb('url',70,40,'URL server','pencil');cb('crawl',190,40,'Crawlers','blue');cb('store',330,40,'Store server','blue');cb('repo',470,40,'Repository','d3');cb('idx',600,40,'Indexer','d2');cb('barrels',600,130,'Barrels','d2');cb('sort',470,130,'Sorter','d2');cb('inv',470,215,'Inverted index','ok');cb('lex',330,130,'Lexicon','d5');cb('resolver',190,130,'URL resolver','d5');cb('links',70,130,'Links → doc IDs','d5');cb('search',330,215,'Searcher','ok');
+const CST=[['url','A URL server hands lists of URLs to fetch.'],['crawl','Many crawlers download pages in parallel (DNS lookups cached).'],['store','A store server compresses pages and writes them to the repository with a doc ID.'],['repo','The repository holds every page\'s full HTML.'],['idx','The indexer parses pages into hits: word, position, font size, capitalisation.'],['barrels','Hits go into barrels partitioned by doc ID: a forward index.'],['resolver','Links are pulled out; the URL resolver turns relative links into absolute ones and assigns doc IDs, feeding PageRank and new URLs back to the URL server.'],['sort','The sorter re-sorts barrels by word ID, producing the inverted index.'],['search','The searcher uses the lexicon, inverted index and PageRank to answer queries.']];
+$('#cStep').insertAdjacentHTML('beforeend',stepHTML());stepper('#cStep',CST.map(s=>s[1]),i=>{const on=new Set(CST.slice(0,i+1).map(s=>s[0]));if(i>=6){on.add('links');on.add('lex')}if(i>=7)on.add('inv');Object.entries(CN).forEach(([k,g])=>{g.style.opacity=on.has(k)?1:.25;g.querySelector('rect').setAttribute('stroke-width',k===CST[i][0]?3:1.6)})});
+
+/* frontier */
+const HOSTS=['news.site','blog.io','shop.com','wiki.org','docs.dev'];let front=[[],[],[]],back={},nextOk={},t=0,auto=null;
+function addUrls(){for(let i=0;i<6;i++){const h=HOSTS[Math.floor(Math.random()*5)];const pr=h==='news.site'?0:h==='wiki.org'?1:Math.floor(Math.random()*3);front[pr].push(h+'/'+Math.random().toString(36).slice(2,6))}route();drawF()}
+function route(){for(let pr=0;pr<3;pr++){while(front[pr].length){const u=front[pr].shift();const h=u.split('/')[0];(back[h]=back[h]||[]).push({u,pr})}}}
+function drawF(){$('#front').innerHTML=['high','medium','low'].map((n,i)=>`<div><b>${n} priority</b><div class="u">${front[i].map(u=>`<i>${u}</i>`).join('')}</div></div>`).join('');
+ $('#back').innerHTML=Object.keys(back).map(h=>`<div><b>${h} · ${(nextOk[h]||0)>t?'wait '+((nextOk[h]-t))+'s':'ready'}</b><div class="u">${back[h].map(x=>`<i class="${x.pr===0?'hi':''}">${x.u.split('/')[1]}</i>`).join('')}</div></div>`).join('')||'<div class="small">empty</div>'}
+function fetchNext(){t++;const ready=Object.keys(back).filter(h=>back[h].length&&(nextOk[h]||0)<=t);if(!ready.length){$('#fLog').textContent+=`t=${t}s  every host with work is in its politeness delay; fetcher waits\n`;drawF();return}
+ ready.sort((a,b)=>back[a][0].pr-back[b][0].pr);const h=ready[0];const x=back[h].shift();if(!back[h].length)delete back[h];nextOk[h]=t+3;$('#fLog').textContent+=`t=${t}s  GET https://${x.u}  (next visit to ${h} not before t=${t+3}s)\n`;$('#fLog').scrollTop=1e6;drawF()}
+$('#fAdd').addEventListener('click',addUrls);$('#fFetch').addEventListener('click',fetchNext);$('#fAuto').addEventListener('click',()=>{if(auto){clearInterval(auto);auto=null;$('#fAuto').textContent='Run';return}$('#fAuto').textContent='Pause';auto=setInterval(fetchNext,500)});addUrls();
+cards('#freshCards',[{t:'Seed URLs',d:'There is no list of the whole web; start from well-known domains and follow links outward.'},{t:'Recrawl by TTL',d:'Each page gets a revisit interval; news front pages every few minutes, an old blog post every few weeks.'},{t:'Cheap change detection',d:'Conditional GETs with ETag or Last-Modified return 304 when nothing changed; a content hash catches the rest.'},{t:'robots.txt',d:'Fetch and cache each host\'s robots.txt; skip disallowed paths and honour crawl delays.'},{t:'DRUM',d:'IRLBot\'s disk-based structure batches URL-uniqueness checks in memory buckets flushed to disk, keeping billions of checks fast.'},{t:'Spider traps',d:'Infinite calendars and session-ID URLs: cap depth per host, normalise URLs and blocklist offenders.'}]);
+
+/* bloom */
+const M=128;let bits=new Array(M).fill(0),added=[];
+function hk(s,i){let h=2166136261^i*16777619;for(const c of s){h^=c.charCodeAt(0);h=Math.imul(h,16777619)}h^=h>>>13;h=Math.imul(h,0x5bd1e995);h^=h>>>15;return (h>>>0)%M}
+function drawB(chk){const k=+$('#bk').value;const idx=chk?[...Array(k)].map((_,i)=>hk(chk,i)):[];$('#bits').innerHTML=bits.map((b,i)=>`<i class="${b?'on':''} ${idx.includes(i)?'chk':''}"></i>`).join('');const fill=bits.filter(Boolean).length/M;const fp=Math.pow(fill,k);return{idx,fp}}
+function bAdd(u){const k=+$('#bk').value;for(let i=0;i<k;i++)bits[hk(u,i)]=1;added.push(u)}
+$('#bAdd').addEventListener('click',()=>{const u=$('#bu').value;bAdd(u);const r=drawB(u);$('#bTxt').innerHTML=`Added. ${added.length} URLs in a ${M}-bit filter; false-positive rate now about <b>${(r.fp*100).toFixed(1)}%</b>.`});
+$('#bChk').addEventListener('click',()=>{const u=$('#bu').value;const r=drawB(u);const all=r.idx.every(i=>bits[i]);const real=added.includes(u);$('#bTxt').innerHTML=all?(real?'<b class="okc">Probably seen</b> (and it really was).':'<b class="badc">Probably seen, but it never was: a false positive.</b> The crawler would wrongly skip it.'):'<b class="okc">Definitely new</b>: at least one of its bits is 0.'});
+$('#bFill').addEventListener('click',()=>{for(let i=0;i<20;i++)bAdd('site'+Math.floor(Math.random()*1e6)+'.com/p');const r=drawB();$('#bTxt').innerHTML=`${added.length} URLs added; false-positive rate about <b>${(r.fp*100).toFixed(1)}%</b>. Real filters size m and k for a target rate, around 10 bits per item for 1%.`});
+$('#bClr').addEventListener('click',()=>{bits.fill(0);added=[];drawB();$('#bTxt').textContent='Empty filter.'});$('#bk').addEventListener('change',()=>{bits.fill(0);added=[];drawB();$('#bTxt').textContent='Changed k: filter cleared.'});drawB();$('#bTxt').textContent='Empty filter. Add a URL, then check it and some others.';
+
+/* inverted index */
+const STOP=new Set(['and','the','for','with','a','of','to','in']);
+function tok(s){return s.toLowerCase().match(/[a-z]+/g)||[]}
+function drawInv(){const D=['d1','d2','d3'].map(i=>$('#'+i).value);const inv={};D.forEach((d,di)=>tok(d).forEach((w,pos)=>{if(STOP.has(w))return;(inv[w]=inv[w]||[]);inv[w].push(`D${di+1}@${pos}`)}));
+ const q=tok($('#q').value).filter(w=>!STOP.has(w));let res=null;q.forEach(w=>{const ds=new Set((inv[w]||[]).map(x=>x.split('@')[0]));res=res===null?ds:new Set([...res].filter(x=>ds.has(x)))});
+ $('#inv').innerHTML=Object.keys(inv).sort().map(w=>`<div class="${q.includes(w)?'hit':''}">${w.padEnd(10,' ')} → ${inv[w].join(', ')}</div>`).join('');
+ $('#qRes').innerHTML=q.length?`AND query → <b>${res&&res.size?[...res].join(', '):'no documents'}</b>`:''}
+['d1','d2','d3','q'].forEach(i=>$('#'+i).addEventListener('input',drawInv));drawInv();
+function drawPt(m){const s=$('#ptSvg');s.innerHTML='';s.appendChild(el('rect',{x:260,y:10,width:120,height:36,rx:6,fill:'var(--blue-soft)',stroke:'var(--blue)'}));s.appendChild(el('text',{x:320,y:33,'text-anchor':'middle','font-size':12,class:'s-ink'},'query: saffron rice'));
+ const W=m==='doc'?['docs 1–1M','docs 1M–2M','docs 2M–3M','docs 3M–4M']:['terms a–f','terms g–m','terms n–r','terms s–z'];const hit=m==='doc'?[1,1,1,1]:[0,0,1,1];
+ W.forEach((w,i)=>{const x=40+i*150;s.appendChild(el('line',{x1:320,y1:46,x2:x+55,y2:120,stroke:hit[i]?'var(--pencil)':'var(--line)','stroke-width':hit[i]?2:1,class:hit[i]?'flow':''}));s.appendChild(el('rect',{x,y:120,width:110,height:50,rx:6,fill:hit[i]?'var(--pencil-soft)':'var(--paper)',stroke:hit[i]?'var(--pencil)':'var(--line)'}));s.appendChild(el('text',{x:x+55,y:150,'text-anchor':'middle','font-size':12,class:'s-ink'},w))});
+ $('#ptTxt').textContent=m==='doc'?'Each node indexes all words of its share of documents. Every query fans out to every node and results are merged, but each node can score its documents completely, and adding documents is easy. This is how Elasticsearch/OpenSearch shards work.':'Each node owns some words. A query touches only the nodes holding its terms, but posting lists for common words are huge, multi-word queries must ship lists between nodes, and updating one document touches many nodes.'}
+seg('[data-pt]',b=>drawPt(b.dataset.pt));drawPt('doc');
+cards('#perfCards',[{t:'Shards and replicas',d:'An index is split into primary shards spread over data nodes; replicas on other nodes serve reads and survive failures.'},{t:'Separate indexing from search',d:'Build index segments in one cluster, publish them to S3, and let search nodes load them, so a crawl burst never slows queries.'},{t:'Memory first',d:'Keep the hottest parts of the index in RAM and the long tail on SSD; cache popular queries.'},{t:'Compression',d:'Posting lists store gaps between doc IDs with variable-byte or similar encodings: smaller and often faster to scan.'}]);
+
+/* PageRank */
+const PN=[['A',100,60],['B',300,40],['C',520,70],['D',200,180],['E',420,180]];const PE=[['A','B'],['B','C'],['C','A'],['D','B'],['E','B'],['D','E'],['A','D'],['E','C']];let pr,it;
+function prReset(){pr={};PN.forEach(n=>pr[n[0]]=1/PN.length);it=0;drawPr()}
+function prStep(){const d=.85,N=PN.length,nx={};PN.forEach(n=>nx[n[0]]=(1-d)/N);PN.forEach(([id])=>{const out=PE.filter(e=>e[0]===id);out.forEach(e=>nx[e[1]]+=d*pr[id]/out.length)});pr=nx;it++;drawPr()}
+function drawPr(){const s=$('#prSvg');s.innerHTML='';const P={};PN.forEach(n=>P[n[0]]=n);
+ PE.forEach(([a,b])=>{const A=P[a],Bn=P[b];const dx=Bn[1]-A[1],dy=Bn[2]-A[2],L=Math.hypot(dx,dy);const ra=16+pr[a]*90,rb=16+pr[b]*90;s.appendChild(el('line',{x1:A[1]+dx/L*ra,y1:A[2]+dy/L*ra,x2:Bn[1]-dx/L*(rb+8),y2:Bn[2]-dy/L*(rb+8),stroke:'var(--muted)','stroke-width':1.5}));s.appendChild(el('polygon',{points:`${Bn[1]-dx/L*rb},${Bn[2]-dy/L*rb} ${Bn[1]-dx/L*(rb+10)-dy/L*5},${Bn[2]-dy/L*(rb+10)+dx/L*5} ${Bn[1]-dx/L*(rb+10)+dy/L*5},${Bn[2]-dy/L*(rb+10)-dx/L*5}`,fill:'var(--muted)'}))});
+ PN.forEach(([id,x,y])=>{const r=16+pr[id]*90;s.appendChild(el('circle',{cx:x,cy:y,r,fill:'var(--blue-soft)',stroke:'var(--blue)','stroke-width':2}));s.appendChild(el('text',{x,y:y+4,'text-anchor':'middle','font-size':12,'font-weight':700,class:'s-ink'},id+' '+pr[id].toFixed(2)))});
+ $('#prIt').textContent=`iteration ${it}: B collects links from three pages, so it grows; C benefits from B's vote.`}
+$('#prStep').addEventListener('click',prStep);$('#prReset').addEventListener('click',prReset);prReset();
+
+/* AWS */
+function drawDn(n){const s=$('#dnSvg');s.innerHTML='';const bx=(x,y,t,c,w)=>{w=w||110;s.appendChild(el('rect',{x:x-w/2,y:y-18,width:w,height:36,rx:6,fill:'var(--surface)',stroke:`var(--${c})`,'stroke-width':1.6}));t.split('\n').forEach((l,i,a)=>s.appendChild(el('text',{x,y:y+4+(i-(a.length-1)/2)*12,'text-anchor':'middle','font-size':11,class:'s-ink'},l)))};const ar=(a,b,c,d)=>s.appendChild(el('line',{x1:a,y1:b,x2:c,y2:d,stroke:'var(--line)','stroke-width':2,class:'flow'}));
+ if(n==='0'){ar(80,60,230,60);ar(230,60,380,60);ar(380,78,380,140);ar(380,60,540,60);ar(540,78,540,140);ar(540,160,380,210);bx(80,60,'Seed URLs','pencil');bx(230,60,'Step Functions\n(Map state)','d5',130);bx(380,60,'Lambda:\nfetch + parse','blue');bx(380,160,'DynamoDB:\nURLs visited','d3');bx(540,60,'S3: pages','d3');bx(540,160,'Amazon Kendra\nindex + search','ok',130);bx(380,215,'Users query','pencil');
+  $('#dnTxt').innerHTML='A Step Functions state machine reads the frontier, fans out Lambda crawlers with Map, stores pages in S3 and visited URLs in DynamoDB, and loops until done. <b>Amazon Kendra</b> indexes S3 and serves search (it even has a web crawler connector). Fast to ship; but Kendra\'s capacity units, document limits and cost do not stretch to web scale, and you cannot tune its storage.'}
+ else{[[70,50,190,50],[190,50,310,50],[310,50,430,50],[430,50,560,50],[560,68,560,120],[560,140,430,140],[430,140,310,140],[310,140,190,140],[190,140,190,210],[310,140,310,210],[430,140,430,210]].forEach(a=>ar(...a));bx(70,50,'Frontier\n(SNS→SQS FIFO)','pencil',120);bx(190,50,'Fetchers\n(ECS, NAT)','blue');bx(310,50,'S3 content','d3');bx(430,50,'Content reader','blue');bx(560,50,'Forward index\nbuilder','d2');bx(560,140,'Inverted index\nbuilder','d2');bx(430,140,'S3: index\nsegments','d3');bx(310,140,'Index reader','blue');bx(190,140,'Keyword parser','d5');bx(190,215,'Users','pencil');bx(310,215,'Ranker','ok');bx(430,215,'Query cache','d4');
+  $('#dnTxt').innerHTML='Kendra is replaced by microservices: a content reader prepares pages, forward and inverted index builders write segments to S3, an index reader loads them for queries, a keyword parser handles input, a ranker orders results, with caches in front. Crawler and search sit in separate accounts and VPCs, scaling independently.'}}
+seg('[data-dn]',b=>drawDn(b.dataset.dn));drawDn('0');
+
+quiz('#qq','#qs',[
+ {q:'Back queues in the URL frontier exist mainly for…',o:['Priority','Politeness: one host per queue with delays','Deduplication'],a:1,why:'They stop the crawler hitting any one site too often.'},
+ {q:'A Bloom filter says a URL is "definitely new". It is…',o:['Always right','Sometimes wrong'],a:0,why:'Bloom filters have no false negatives; only "probably seen" can be wrong.'},
+ {q:'An inverted index maps…',o:['Document → words','Word → documents','URL → IP'],a:1,why:'It inverts the forward index into posting lists.'},
+ {q:'Which partitioning sends every query to every node?',o:['Document-based','Term-based'],a:0,why:'Each node holds some documents with all their words, so all must be asked.'},
+ {q:'Cheapest way to learn a page has not changed?',o:['Download and diff it','Conditional GET with ETag/If-Modified-Since','Run PageRank'],a:1,why:'The server replies 304 Not Modified without a body.'}]);
+
+})();
+</script>
+</body>
+</html>

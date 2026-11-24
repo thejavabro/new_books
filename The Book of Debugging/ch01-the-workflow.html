@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>The Workflow</title>
+<meta name="description" content="Debugging without a plan means poking around until an hour has gone and you are not sure what you ruled out. The book replaces that with a loop of four steps (reproduce, probe, examine, fix) and a list of root causes worth recognising on sight.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for The Book of Debugging companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = the program and its structure, orange pencil = the investigator, green = fixed / good, red = bug / bad.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:minmax(0,1fr)}}
+.two>*,.three>*,.stack>*{min-width:0}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* additions for the debugging companion */
+pre.code{margin:0;font-family:var(--mono);font-size:.84rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)} pre.code .h{background:var(--bad-soft);color:var(--bad);border-radius:3px} pre.code .g{background:var(--ok-soft);color:var(--ok);border-radius:3px}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.term{font-family:var(--mono);font-size:.82rem;background:#0f1b2a;color:#d6e2f0;border-radius:8px;padding:12px 14px;min-height:5em;overflow-x:auto;white-space:pre-wrap;word-break:break-word}
+.term .e{color:#f2877c} .term .o{color:#76cf91} .term .m{color:#94a6ba}
+.theme-btn{position:absolute;top:6px;right:max(16px,env(safe-area-inset-right,0px));z-index:5;border:1px solid var(--line);background:var(--surface);color:var(--muted);border-radius:999px;padding:4px 11px;font-family:var(--mono);font-size:.72rem}
+.theme-btn:hover{border-color:var(--blue);color:var(--blue)}
+.pill{display:inline-block;font-family:var(--mono);font-size:.72rem;padding:2px 8px;border-radius:999px;border:1px solid currentColor}
+.meter{height:12px;border-radius:6px;background:var(--paper);border:1px solid var(--line);overflow:hidden}
+.meter>i{display:block;height:100%;width:0;background:var(--blue);transition:width .5s ease}
+.game{display:flex;flex-direction:column;gap:12px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.tiles button{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:10px;text-align:left;font-size:.9rem;display:flex;flex-direction:column;gap:2px}
+.tiles button b{font-family:var(--display);font-weight:600}
+.tiles button[aria-pressed="true"]{background:var(--blue-soft);border-color:var(--blue)}
+.tiles button.good{background:var(--ok-soft);border-color:var(--ok)} .tiles button.badt{background:var(--bad-soft);border-color:var(--bad)}
+.stat span.big{font-size:clamp(1.7rem,5vw,2.5rem);color:var(--ink)}
+.stat span.big.blue{color:var(--blue)} .stat span.big.badc{color:var(--bad)} .stat span.big.okc{color:var(--ok)} .stat span.big.pencil{color:var(--pencil)} .stat span.big.midc{color:var(--mid)}
+
+/* page */
+
+.why{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+.exposed{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.dotgrid{display:grid;grid-template-columns:repeat(50,1fr);gap:2px}
+.dotgrid i{aspect-ratio:1;border-radius:50%;background:var(--line)}
+.dotgrid i.hit{background:var(--bad)}
+.cause-q{font-size:1.05rem;padding:12px 14px;border:1px dashed var(--line);border-radius:8px;background:var(--paper)}
+.fp td.bad{color:var(--bad);font-weight:600}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">The Book of Debugging · visual companion</a><span class="tag">Introduction · Introduction</span><span class="tag">Page 1 of 16</span></div>
+  <h1>The Workflow</h1>
+  <p class="lede">Debugging without a plan means poking around until an hour has gone and you are not sure what you ruled out. The book replaces that with a loop of four steps (reproduce, probe, examine, fix) and a list of root causes worth recognising on sight.</p>
+  <nav class="toc" aria-label="Sections"><a href="#why">Why fix bugs</a><a href="#scale">Rare is not rare</a><a href="#own">Own it</a><a href="#loop">The four steps</a><a href="#chain">Follow the trail</a><a href="#team">As a team</a><a href="#causes">Root causes</a><a href="#float">Floats</a><a href="#expect">Expectations</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="why" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Why bother fixing bugs at all?</h2></div>
+  <p>The book uses a deliberately loose definition: <span class="key">a bug is anything that does not behave as intended.</span> That covers crashes, but also slowness, visual glitches, broken audio, data leaks and features that simply feel wrong. With a definition that wide, the question is less "is this a bug?" than "why should it be fixed now?". Six reasons come up again and again. Open each card.</p>
+  <div class="why" id="whyCards"></div>
+</section>
+
+<section id="scale" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>A rare bug at scale is a daily bug</h2></div>
+  <p>One of those reasons deserves a drawing. A tester who needs a full day and a hundred tries to hit a bug will call it rare. Ship the program to a big audience and the same one percent becomes a steady stream of victims. Move the sliders.</p>
+  <div class="sheet">
+    <div class="two">
+      <label class="rng"><span>Reproduction rate per session: <b id="rateV">1%</b></span><input id="rate" type="range" min="0.01" max="10" step="0.01" value="1"></label>
+      <label class="rng"><span>Sessions per day: <b id="usersV">100,000</b></span><input id="users" type="range" min="2" max="7" step="0.05" value="5"></label>
+    </div>
+    <div class="exposed">
+      <div class="stat"><span class="big badc" id="perDay">1,000</span><span>people hit it every day</span></div>
+      <div class="stat"><span class="big" id="perYear">365,000</span><span>in a year</span></div>
+      <div class="stat"><span class="big blue" id="tries">100</span><span>tries a tester needs, on average, for one sighting</span></div>
+    </div>
+    <div>
+      <p class="small">Each dot is one session out of 500; red dots hit the bug.</p>
+      <div class="dotgrid" id="dots" aria-hidden="true"></div>
+    </div>
+  </div>
+</section>
+
+<section id="own" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Debugging is your job</h2></div>
+  <div class="two">
+    <div class="stack">
+      <p>Whether a bug reaches you from a tester, a user or your own screen, the first move is mental: <span class="key">accept that it is now yours to fix.</span> Blaming the compiler, the user or a colleague is tempting, but code written for one specific project is far more likely to be wrong than a widely used third-party system that thousands of others have already exercised.</p>
+      <p>The second trap is pushing back: the report is vague, the area is unfamiliar, or "that cannot possibly be broken". If someone saw it, it is probably real. A thin report is a reason to go and gather more information, not to close the ticket.</p>
+    </div>
+    <div class="sheet">
+      <h3>Where is the bug most likely to be?</h3>
+      <p class="small">A rough intuition, not a measurement: the less a piece of code has been exercised by other people, the more suspicion it deserves.</p>
+      <div class="bars" id="suspect"></div>
+    </div>
+  </div>
+</section>
+
+<section id="loop" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>The loop: reproduce, probe, examine, fix</h2></div>
+  <p>A workflow does three things for you: it makes sure you collect every essential detail, it splits an open-ended problem into steps you can concentrate on one at a time, and it tells you when you are actually done. The book's workflow has four steps. You always start with the first; after that you will move back and forth, and the loop only ends when the bug can no longer be reproduced.</p>
+  <div class="sheet stepper" id="loopStep">
+    <div class="svgbox"><svg id="loopSvg" viewBox="0 0 720 260" role="img" aria-label="The four-step debugging loop"></svg></div>
+  </div>
+  <div class="callout"><b class="h">Probe and examine are a pair</b><span>Probing looks at the big picture to narrow your focus quickly, like finding the loose end of a tangled thread. Examining zooms right in on one spot. In practice you alternate between them in short iterations until the trail ends at the root cause.</span></div>
+</section>
+
+<section id="chain" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>From symptom to root cause, one link at a time</h2></div>
+  <p>The root cause is often several hops away from the symptom, and the hops can cross different kinds of material: a UI asset, a function, a data file, a tool that produced that file. If you stop at the first spot where you can make the symptom go away, you have only masked it. Walk the trail below and watch where the "fix" would land at each depth.</p>
+  <div class="sheet stepper" id="chainStep">
+    <div class="svgbox"><svg id="chainSvg" viewBox="0 0 760 160" role="img" aria-label="A chain of five links from a symptom to its root cause"></svg></div>
+  </div>
+  <p>How do you know you have arrived? Ideally you understand exactly how the bug comes about and how it produces its symptoms. When there is no time for full understanding, the practical definition is <span class="key">the spot where a change fixes the bug and no obvious deeper cause remains.</span></p>
+</section>
+
+<section id="team" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Handle bugs as a team</h2></div>
+  <div class="three">
+    <div class="sheet"><span class="eyebrow">QA</span><h3>Test early, write it all down</h3><p class="small">A good tester records exactly what they did, cuts the steps down to the minimum, and reports usability, accessibility and spec gaps as well as crashes.</p></div>
+    <div class="sheet"><span class="eyebrow">Tracker</span><h3>One place for everything</h3><p class="small">Every report goes through the bug tracker, and so does most of the conversation about it, so the bug and its discussion stay together.</p></div>
+    <div class="sheet"><span class="eyebrow">History</span><h3>Reopen, don't refile</h3><p class="small">When the same bug comes back, reopen the old report. Whoever picks it up inherits the earlier investigation and attempted fixes.</p></div>
+  </div>
+  <p>When a fix is out of reach because you lack the context or the skills, the right move is to find the person who should be working on it and hand it over, with everything you learned.</p>
+</section>
+
+<section id="causes" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Common root causes</h2></div>
+  <p>After enough bugs you start to see families. Recognising the family early tells you what kind of evidence to look for. Here are the eight the book lists; tap one for a short explanation.</p>
+  <div class="cardgrid" id="causeCards"></div>
+  <div class="sheet game">
+    <div class="row between"><h3>Name that root cause</h3><span class="score" id="cScore">0 / 0</span></div>
+    <p class="cause-q" id="cQ"></p>
+    <div class="tiles" id="cOpts"></div>
+    <div class="detail" id="cFb" aria-live="polite"></div>
+    <div class="row"><button class="btn primary" id="cNext">Next symptom</button></div>
+  </div>
+</section>
+
+<section id="float" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Floating-point drift you can see</h2></div>
+  <p>One cause in the list is easy to demonstrate. A 32-bit <code>float</code> carries about seven significant digits, so far from the origin, small steps get swallowed. An object at position 10,000,000 that moves by 0.1 per frame may not move at all. Switching to a 64-bit <code>double</code> is often a quick way to buy breathing room.</p>
+  <div class="sheet">
+    <label class="rng"><span>Distance from origin: <b id="magV">1,000</b></span><input id="mag" type="range" min="0" max="9" step="0.1" value="3"></label>
+    <div class="tbl"><table class="t fp"><thead><tr><th>Type</th><th>Start</th><th>After +0.1 × 10</th><th>Error</th></tr></thead><tbody id="fpRows"></tbody></table></div>
+    <p class="small">Computed live in your browser with <code>Math.fround</code>, which rounds to the nearest 32-bit float.</p>
+  </div>
+</section>
+
+<section id="expect" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Manage expectations, including your own</h2></div>
+  <div class="two">
+    <p>Debugging is stressful and hard to estimate. Users expect quick answers, and only trivial bugs or lucky guesses deliver them. The advice: under-promise and over-deliver, find a place where you can concentrate, and when you are stuck, stop and sleep on it. The hopeful part is that computers are deterministic. However tangled the path, <span class="key">every bug has a real cause</span>, connected to its symptoms by a chain you can follow.</p>
+    <div class="callout ok"><b class="h">The book's map</b><span><b>Part I</b> reproduce · <b>Part II</b> probe for an entry point · <b>Part III</b> examine it down to the root cause · <b>Part IV</b> fix it, or choose the best fallback when you cannot.</span></div>
+  </div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">10</span><h2>Quick check</h2></div>
+  <div class="row between"><span class="small">Pick an answer for each.</span><span class="score" id="qScore"></span></div>
+  <div class="quiz" id="quizBox"></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>The Book of Debugging: A Systematic Workflow for Finding and Fixing Bugs</i> by Johannes Kuhlmann (No Starch Press). Explanations, code snippets, simulations and drawings are original summaries, not text from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><span></span><a class="home" href="index.html">All chapters</a><a class="nx" href="ch02-reproduce-yourself.html"><span>Next · Strategy 1</span><b>Bug Reports and Reproducing the Bug Yourself</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every page of The Book of Debugging companion. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('dbg:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('acc:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: auto -> light -> dark */
+(function(){const b=document.createElement('button');b.className='theme-btn';b.type='button';const modes=['auto','light','dark'];let m=store.get('theme','auto');
+function ap(){if(m==='auto')document.documentElement.removeAttribute('data-theme');else document.documentElement.setAttribute('data-theme',m);b.textContent='theme: '+m;b.setAttribute('aria-label','Colour theme: '+m+'. Click to change.')}
+b.addEventListener('click',()=>{m=modes[(modes.indexOf(m)+1)%3];store.set('theme',m);ap()});ap();document.body.appendChild(b)})();
+
+
+cards('#whyCards',[
+ {t:'Quality matters',d:'Even small glitches make software look cheap and erode trust; users switch to alternatives quickly.',c:'blue'},
+ {t:'Bugs slow development',d:'A bug in an internal tool or test setup taxes everyone who uses it, every day, even if no customer ever sees it.',c:'blue'},
+ {t:'Bugs spread',d:'Copy-paste and code reuse carry bugs into other modules and even other projects.',c:'pencil'},
+ {t:'Old bugs get harder',d:'Fresh bugs are cheap: the author remembers the change. Over time other code starts to depend on the buggy behaviour.',c:'pencil'},
+ {t:'Private data leaks',d:'Exposing personal data loses trust, possibly for good, and can bring fines.',c:'bad'},
+ {t:'Scale magnifies',d:'A one-in-a-hundred bug sounds rare until a hundred thousand people use the program daily.',c:'bad'}]);
+
+const rate=$('#rate'),users=$('#users');
+const dots=$('#dots');dots.innerHTML='<i></i>'.repeat(500);
+const rnd=[];for(let i=0;i<500;i++)rnd.push(((i*7919)%997)/997);
+function upd(){const r=+rate.value/100,u=Math.round(Math.pow(10,+users.value));
+ $('#rateV').textContent=(+rate.value).toFixed(2).replace(/\.?0+$/,'')+'%';$('#usersV').textContent=u.toLocaleString();
+ $('#perDay').textContent=Math.round(r*u).toLocaleString();$('#perYear').textContent=Math.round(r*u*365).toLocaleString();$('#tries').textContent=Math.round(1/r).toLocaleString();
+ dots.querySelectorAll('i').forEach((d,i)=>d.classList.toggle('hit',rnd[i]<r));}
+rate.addEventListener('input',upd);users.addEventListener('input',upd);upd();
+
+bars('#suspect',[{l:'Your new code',v:90,c:'bad',txt:'high'},{l:'Your team\'s older code',v:65,c:'mid',txt:'medium'},{l:'Popular library',v:22,c:'blue',txt:'low'},{l:'OS / compiler',v:8,c:'ok',txt:'very low'}],100);
+
+/* loop stepper */
+const LS=[{t:'Reproduce',c:'pencil',x:100,y:70},{t:'Probe',c:'blue',x:620,y:70},{t:'Examine',c:'d2',x:620,y:190},{t:'Fix',c:'ok',x:100,y:190}];
+const lsvg=$('#loopSvg');
+const md=el('defs');const mk=el('marker',{id:'ah1',viewBox:'0 0 10 10',refX:9,refY:5,markerWidth:7,markerHeight:7,orient:'auto-start-reverse'});mk.appendChild(el('path',{d:'M0,0 L10,5 L0,10 z',fill:'var(--muted)'}));md.appendChild(mk);lsvg.appendChild(md);
+const arrows=[[180,70,540,70],[620,98,620,162],[540,190,180,190],[100,162,100,98]].map(a=>{const l=el('line',{x1:a[0],y1:a[1],x2:a[2],y2:a[3],stroke:'var(--muted)','stroke-width':2,'marker-end':'url(#ah1)'});lsvg.appendChild(l);return l});
+const lab=el('text',{x:360,y:130,'text-anchor':'middle','font-size':15,fill:'var(--ink)','font-weight':600});lsvg.appendChild(lab);
+const lab2=el('text',{x:360,y:152,'text-anchor':'middle','font-size':13,fill:'var(--muted)'});lsvg.appendChild(lab2);
+const nodes=LS.map((n,i)=>{const g=el('g',{class:'fade'});g.appendChild(el('rect',{x:n.x-78,y:n.y-28,width:156,height:56,rx:10,fill:'var(--surface)',stroke:`var(--${n.c})`,'stroke-width':2}));
+ g.appendChild(el('text',{x:n.x,y:n.y-6,'text-anchor':'middle','font-size':10.5,'font-family':'var(--mono)',fill:'var(--muted)'},'STEP '+(i+1)));
+ g.appendChild(el('text',{x:n.x,y:n.y+15,'text-anchor':'middle','font-size':17,'font-weight':700,fill:`var(--${n.c})`},n.t));lsvg.appendChild(g);return g});
+const L1=['Bug report in hand','Entry point found','Root cause understood','Fix in place, verify it'];
+const L2=['make it happen yourself, on demand','a spot in the sources linked to the symptom','why, not just where','go round again: can you still reproduce it?'];
+$('#loopStep').insertAdjacentHTML('beforeend',stepHTML());
+stepper('#loopStep',[
+ 'Reproduce. Make the bug happen yourself. This is the one step you cannot skip: if you cannot reproduce it, you cannot tell whether a fix works. Some bugs only show up in a test environment; then you reproduce there and investigate elsewhere, but you still need the repro.',
+ 'Probe. Find an entry point: anything that connects the symptom to the program\'s sources. Remember that sources include assets, configuration and documentation, not only code.',
+ 'Examine. Study the entry point in detail and follow the connections (function calls, data dependencies) until you reach the root cause. You will often hop back to probing on the way.',
+ 'Fix. Change the root cause, then go back to step 1. If the bug no longer reproduces, you are done; if it does, keep looping.'],
+ i=>{nodes.forEach((g,k)=>g.classList.toggle('off',k>i));arrows.forEach((a,k)=>{a.classList.toggle('off',k>=i&&!(i===3&&k===3));a.classList.toggle('flow',k===i-1||(i===3&&k===3))});lab.textContent=L1[i];lab2.textContent=L2[i]});
+
+/* chain stepper */
+const CH=[['Symptom','slow, then an error'],['UI asset','window definition'],['Handler function','reads a data file'],['Data file','one malformed entry'],['Export tool','writes bad entries']];
+const csvg=$('#chainSvg');const cx=i=>76+i*152;
+const cd=el('defs');const mk2=el('marker',{id:'ah2',viewBox:'0 0 10 10',refX:9,refY:5,markerWidth:7,markerHeight:7,orient:'auto-start-reverse'});mk2.appendChild(el('path',{d:'M0,0 L10,5 L0,10 z',fill:'var(--muted)'}));cd.appendChild(mk2);csvg.appendChild(cd);
+for(let i=0;i<4;i++)csvg.appendChild(el('line',{x1:cx(i)+64,y1:74,x2:cx(i+1)-66,y2:74,stroke:'var(--muted)','stroke-width':2,'marker-end':'url(#ah2)'}));
+const cn=CH.map((c,i)=>{const g=el('g',{class:'fade'});const r=el('rect',{x:cx(i)-64,y:44,width:128,height:60,rx:8,fill:'var(--surface)',stroke:'var(--line)','stroke-width':1.6});g.appendChild(r);
+ g.appendChild(el('text',{x:cx(i),y:70,'text-anchor':'middle','font-size':13.5,'font-weight':700,fill:'var(--ink)'},c[0]));
+ g.appendChild(el('text',{x:cx(i),y:89,'text-anchor':'middle','font-size':10.5,fill:'var(--muted)'},c[1]));csvg.appendChild(g);return{g,r}});
+const pin=el('g');pin.appendChild(el('path',{d:'M0,0 l-9,-16 h18 z',fill:'var(--pencil)'}));pin.appendChild(el('text',{x:0,y:-22,'text-anchor':'middle','font-size':11,'font-weight':700,fill:'var(--pencil)'},'you are here'));csvg.appendChild(pin);
+const verdict=el('text',{x:380,y:140,'text-anchor':'middle','font-size':14,'font-weight':600});csvg.appendChild(verdict);
+const V=[['Patching here hides the symptom only','bad'],['Still a mask: other windows hit it too','bad'],['Catching the error just moves the problem','bad'],['Fixing the file helps until the next export','mid'],['Root cause: fix the exporter','ok']];
+$('#chainStep').insertAdjacentHTML('beforeend',stepHTML());
+stepper('#chainStep',['You see the symptom. A tempting quick fix: add a timeout to the button.','The window asset tells you which function the button triggers.','The function loads a file. You could wrap the load in a try/catch and carry on.','The file has one broken entry. Repairing the file by hand makes the bug disappear today.','The entry was written by an export tool with a bug. Fix that and every future file is correct. This is the root cause.'],
+ i=>{cn.forEach((n,k)=>{n.g.classList.toggle('off',k>i);n.r.setAttribute('stroke',k===i?`var(--${V[i][1]==='ok'?'ok':'pencil'})`:'var(--line)')});pin.setAttribute('transform',`translate(${cx(i)},40)`);verdict.textContent=V[i][0];verdict.setAttribute('fill',`var(--${V[i][1]})`)});
+
+/* causes */
+const C=[
+ {t:'Bad data',d:'Input that makes no sense in context (a button placed off-screen) or data corrupted on disk or in memory. Includes bad pointers: never set, not updated after a move, used after free, wrong arithmetic, or null.',c:'bad'},
+ {t:'Bad logic',d:'Nothing crashes, but the behaviour is wrong: a progress bar finishing early, a button opening the wrong dialog, a sum that is off.',c:'bad'},
+ {t:'Edge cases',d:'Behaviour at the extremes, where the usual assumptions break. Off-by-one errors when iterating are the classic example.',c:'mid'},
+ {t:'Floating-point inaccuracy',d:'Jitter, drift and positions that will not land exactly where you asked, especially with very large or very small values.',c:'mid'},
+ {t:'Stale code or assets',d:'You built one configuration but run another, an asset was not reprocessed, or you edited the wrong file. Users on old releases also count.',c:'blue'},
+ {t:'Wrong timing or order',d:'Hidden dependencies between steps run in the wrong order or at the wrong time. Worse when the order varies, and worse again with threads.',c:'blue'},
+ {t:'Unclear or bad requirements',d:'The code does exactly what the spec said, but the spec was wrong or ambiguous. Fixing it means clarifying with people beyond the programmers.',c:'pencil'},
+ {t:'User experience issues',d:'Technically correct, but awkward, unsatisfying or not fun. QA reports these as bugs and they get fixed the same way.',c:'pencil'}];
+cards('#causeCards',C);
+const G=[
+ ['The total on the invoice is always missing the last line item.',2,'Missing the last element of a list is the textbook off-by-one edge case.'],
+ ['Your change "does nothing", no matter what you edit. Then a colleague notices you are launching last week\'s binary.',4,'Running a different build from the one you changed is stale code.'],
+ ['A spaceship far from the world origin shakes slightly even when it is standing still.',3,'Large coordinates lose precision in 32-bit floats, which shows up as jitter.'],
+ ['The app crashes only when two background downloads finish at almost the same moment.',5,'Behaviour that depends on which event comes first is wrong timing or order.'],
+ ['The spec said "sort by date". It does, oldest first. Every user expected newest first.',6,'The code met the stated requirement; the requirement was ambiguous.'],
+ ['A character model loads with all its vertices at (0,0,0) after an import from an old file.',0,'The code is fine; the input data is not. That is bad data.'],
+ ['The "Save" button opens the "Export" dialog.',1,'No crash, no strange data, just wrong behaviour: bad logic.'],
+ ['Everything works, but testers say the menu feels sluggish and confusing.',7,'Technically correct yet unpleasant to use is a user experience issue.']];
+let gi=0,gr=0,gn=0,locked=false;const order=G.map((_,i)=>i).sort(()=>Math.random()-.5);
+function gshow(){locked=false;const g=G[order[gi%G.length]];$('#cQ').textContent=g[0];$('#cFb').innerHTML='';
+ $('#cOpts').innerHTML=C.map((c,i)=>`<button data-i="${i}"><b>${c.t}</b></button>`).join('');
+ $$('#cOpts button').forEach(b=>b.addEventListener('click',()=>{if(locked)return;locked=true;gn++;const ok=+b.dataset.i===g[1];if(ok)gr++;
+  b.classList.add(ok?'good':'badt');if(!ok)$(`#cOpts [data-i="${g[1]}"]`).classList.add('good');
+  $('#cFb').innerHTML=`<p><b class="${ok?'okc':'badc'}">${ok?'Yes.':'Not this time.'}</b> ${g[2]}</p>`;$('#cScore').textContent=`${gr} / ${gn}`;}))}
+$('#cNext').addEventListener('click',()=>{gi++;gshow()});gshow();
+
+/* float */
+function fpu(){const m=+$('#mag').value;const start=Math.round(Math.pow(10,m));$('#magV').textContent=start.toLocaleString();
+ let f=Math.fround(start),d=start;const step=Math.fround(0.1);for(let i=0;i<10;i++){f=Math.fround(f+step);d=d+0.1}
+ const exp=start+1;const ef=Math.abs(f-exp),ed=Math.abs(d-exp);
+ const fmt=v=>v.toLocaleString(undefined,{maximumFractionDigits:6});
+ $('#fpRows').innerHTML=`<tr><td class="mono">float (32-bit)</td><td>${fmt(Math.fround(start))}</td><td>${fmt(f)}</td><td class="${ef>1e-3?'bad':''}">${ef.toExponential(1)}</td></tr><tr><td class="mono">double (64-bit)</td><td>${fmt(start)}</td><td>${fmt(d)}</td><td>${ed.toExponential(1)}</td></tr>`}
+$('#mag').addEventListener('input',fpu);fpu();
+
+quiz('#quizBox','#qScore',[
+ {q:'Which step of the workflow can you never skip?',o:['Reproduce','Probe','Examine'],a:0,why:'Without a reproduction you cannot investigate effectively or confirm that a fix worked.'},
+ {q:'What is an entry point?',o:['The main() function','Any spot in the sources linked to the symptom','The line that crashed'],a:1,why:'It is wherever the symptom first connects to code, assets or configuration you can investigate.'},
+ {q:'A bug appears in your project. Where should your suspicion start?',o:['The compiler','Your project\'s own code','The user'],a:1,why:'Project-specific code has had far less testing than widely used third-party systems.'},
+ {q:'How do you know a fix is done?',o:['The code compiles','You go back to step 1 and cannot reproduce the bug','A reviewer approves'],a:1,why:'The loop ends only when the reproduction no longer triggers the bug.'},
+ {q:'Code matches the spec exactly, but users wanted something else. Which root cause?',o:['Bad logic','Unclear or bad requirements','Edge case'],a:1,why:'The fault is in the requirement, so the fix starts with clarifying it.'}]);
+
+})();
+</script>
+</body>
+</html>

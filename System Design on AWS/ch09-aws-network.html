@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AWS Network Services</title>
+<meta name="description" content="Part II maps the concepts onto AWS. First the network: where your resources physically live, how a VPC fences them in, and how traffic gets in, out and around.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the System Design on AWS companion. Layout: a drafting-table reading column on blueprint grid paper.
+   Blue ink = structure and data paths, orange pencil = clients and requests, green = healthy, red = failure.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:minmax(14rem,1fr) minmax(0,auto);gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* additions */
+button.tag.theme{cursor:pointer;margin-left:auto}
+button.tag.theme:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;max-width:100%;white-space:pre}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:5em;max-height:14em;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.pill{display:inline-block;font-family:var(--mono);font-size:.75rem;padding:2px 8px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.pill.ok{border-color:var(--ok);color:var(--ok);background:var(--ok-soft)} .pill.bad{border-color:var(--bad);color:var(--bad);background:var(--bad-soft)}
+input[type=number],input[type=text]{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+.sheet>.seg,.stack>.seg{align-self:flex-start}
+
+/* page */
+
+.cidr{display:flex;flex-wrap:wrap;gap:3px;font-family:var(--mono);font-size:.72rem}
+.cidr span{padding:6px 4px;border-radius:4px;text-align:center;flex:1 1 118px;white-space:nowrap}
+.bits{font-family:var(--mono);font-size:.78rem;word-break:break-all;line-height:1.8}
+.bits .n{color:var(--blue);font-weight:600} .bits .h{color:var(--pencil)}
+.rtab{border-collapse:collapse;font-size:.82rem;width:100%}
+.rtab td,.rtab th{border:1px solid var(--line);padding:4px 8px;font-family:var(--mono)}
+.rtab th{background:var(--paper);font-size:.7rem}
+.rtab tr.hit td{background:var(--ok-soft)}
+.fw{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media (max-width:600px){.fw{grid-template-columns:1fr}}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">System Design on AWS · visual companion</a><span class="tag">Part II · Chapter 9 of 21</span><button class="tag theme" type="button" id="themeBtn" aria-label="Toggle light or dark theme">Theme</button></div>
+  <h1>AWS Network Services</h1>
+  <p class="lede">Part II maps the concepts onto AWS. First the network: where your resources physically live, how a VPC fences them in, and how traffic gets in, out and around.</p>
+  <nav class="toc" aria-label="Sections"><a href="#global">Regions & AZs</a><a href="#cidr">IPs & CIDR</a><a href="#vpc">VPC routing</a><a href="#filters">SGs vs NACLs</a><a href="#connect">Connecting VPCs</a><a href="#hybrid">Hybrid</a><a href="#edge">Route 53, ELB, CloudFront</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="global" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Where AWS lives</h2></div>
+  <p>Everything starts with an AWS account (ideally several, organised under AWS Organizations: one per environment or team). Resources then live somewhere physical. Click each level, from largest to closest to the user.</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="gSvg" viewBox="0 0 640 250" role="img" aria-label="Region, availability zones, local zone and edge locations"></svg></div>
+    <div class="detail" id="gTxt" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="cidr" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>IP addresses, CIDR and subnets</h2></div>
+  <p>A VPC is defined by a private IPv4 range written in <b>CIDR</b> notation: <code>10.0.0.0/16</code> means the first 16 bits name the network and the remaining 16 address hosts. Classful addressing (classes A, B, C) wasted space; CIDR and variable-length masks let you cut ranges to size. IPv6 (128 bits) is the long-term fix for address exhaustion. In every AWS subnet, <b>5 addresses are reserved</b>: the first four and the last.</p>
+  <div class="sheet">
+    <div class="two"><label class="rng"><span>VPC prefix: <b id="vpV"></b></span><input type="range" id="vp" min="16" max="28" value="16"></label><label class="rng"><span>Split into subnets of: <b id="spV"></b></span><input type="range" id="sp" min="16" max="28" value="20"></label></div>
+    <div class="bits" id="bits"></div>
+    <div class="kpis" id="cK"></div>
+    <div class="cidr" id="cBar"></div>
+  </div>
+  <div class="cardgrid" id="ipCards"></div>
+</section>
+
+<section id="vpc" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Inside a VPC: subnets, gateways and route tables</h2></div>
+  <p>A subnet is <b>public</b> if its route table sends <code>0.0.0.0/0</code> to an <b>internet gateway</b> (IGW). Instances in <b>private</b> subnets reach the internet only outward, through a <b>NAT gateway</b> that sits in a public subnet. Every route table also has a <code>local</code> route for traffic inside the VPC. Trace a packet.</p>
+  <div class="sheet">
+    <div class="seg" id="trSeg" role="group" aria-label="Packet"></div>
+    <div class="svgbox"><svg id="vSvg" viewBox="0 0 660 330" role="img" aria-label="VPC with public and private subnets in two AZs"></svg></div>
+    <div class="two"><div class="tbl"><table class="rtab" id="rt"></table></div><p id="trTxt" aria-live="polite"></p></div>
+  </div>
+</section>
+
+<section id="filters" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Security groups and network ACLs</h2></div>
+  <p>Route tables decide where traffic goes; two filters decide whether it may. <b>Security groups</b> attach to instances (network interfaces), allow-only, and are <b>stateful</b>: a reply to allowed traffic is automatically allowed. <b>Network ACLs</b> attach to subnets, have numbered allow and deny rules evaluated in order, and are <b>stateless</b>: return traffic needs its own rule, usually for ephemeral ports 1024–65535. Test a web request.</p>
+  <div class="sheet">
+    <div class="fw">
+      <div class="stack" style="gap:8px"><b>Security group (web server)</b><label class="small"><input type="checkbox" id="sg443" checked> Inbound TCP 443 from 0.0.0.0/0</label><label class="small"><input type="checkbox" id="sg22"> Inbound TCP 22 from 0.0.0.0/0</label></div>
+      <div class="stack" style="gap:8px"><b>Network ACL (public subnet)</b><label class="small"><input type="checkbox" id="nIn" checked> Rule 100 inbound allow TCP 443</label><label class="small"><input type="checkbox" id="nOut"> Rule 100 outbound allow TCP 1024–65535</label><label class="small"><input type="checkbox" id="nDeny"> Rule 90 inbound deny 198.51.100.0/24</label></div>
+    </div>
+    <div class="row"><label class="small">Client <select id="cli"><option value="203.0.113.5">203.0.113.5</option><option value="198.51.100.20">198.51.100.20 (abusive)</option></select></label><label class="small">Port <select id="port"><option>443</option><option>22</option></select></label></div>
+    <div class="log" id="fwLog" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="connect" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Connecting VPCs: peering, Transit Gateway, PrivateLink</h2></div>
+  <p><b>VPC peering</b> links two VPCs privately, one to one, and is not transitive: if A peers with B and B with C, A still cannot reach C. With many VPCs the mesh explodes. <b>Transit Gateway</b> is a regional hub: each VPC (and VPN or Direct Connect) attaches once. <b>PrivateLink</b> exposes one service, not a whole network, to consumers in other VPCs through an interface endpoint.</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Topology"><button data-tp="peer" aria-pressed="true">Full peering mesh</button><button data-tp="tgw" aria-pressed="false">Transit Gateway</button></div><label class="rng" style="min-width:200px"><span>VPCs: <b id="nvV"></b></span><input type="range" id="nv" min="2" max="12" value="6"></label></div>
+    <div class="svgbox fit"><svg id="tpSvg" viewBox="0 0 640 260" role="img" aria-label="VPC connections"></svg></div>
+    <div class="kpis" id="tpK"></div>
+  </div>
+</section>
+
+<section id="hybrid" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Reaching your own data center</h2></div>
+  <div class="tbl"><table class="t">
+    <tr><th></th><th>Site-to-Site VPN</th><th>Direct Connect</th></tr>
+    <tr><td><b>Path</b></td><td>Encrypted IPsec tunnels over the public internet, from a customer gateway device to a virtual private gateway or Transit Gateway</td><td>A dedicated fibre link from your router, through a Direct Connect location, into AWS</td></tr>
+    <tr><td><b>Setup</b></td><td>Minutes</td><td>Weeks (a physical cross-connect)</td></tr>
+    <tr><td><b>Performance</b></td><td>Varies with the internet</td><td>Consistent bandwidth and latency</td></tr>
+    <tr><td><b>Interfaces</b></td><td>Two tunnels per connection for redundancy</td><td>Public VIF (public AWS endpoints like S3), private VIF (a VPC), transit VIF (via Transit Gateway)</td></tr>
+    <tr><td><b>Typical use</b></td><td>Quick start, backup path, low volume</td><td>Large, steady hybrid traffic; often with VPN as backup</td></tr>
+  </table></div>
+</section>
+
+<section id="edge" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>The front door: Route 53, ELB, API Gateway, CloudFront</h2></div>
+  <p><b>Route 53</b> is AWS's DNS: domain registration, hosted zones of records (A, AAAA, CNAME, MX, TXT and free <b>alias</b> records pointing at AWS resources), health checks and routing policies, served over anycast. Pick a policy and send a query from a user.</p>
+  <div class="sheet">
+    <div class="seg" id="r53Seg" role="group" aria-label="Routing policy"></div>
+    <div class="row"><label class="small">User in <select id="r53U"><option value="eu">Paris</option><option value="us">Ohio</option><option value="ap">Singapore</option></select></label><label class="small"><input type="checkbox" id="r53Down"> us-east-1 unhealthy</label><button class="btn primary" id="r53Q">Resolve shop.example.com</button></div>
+    <div class="log" id="r53Log" aria-live="polite"></div>
+  </div>
+  <div class="tbl"><table class="t">
+    <tr><th>Elastic Load Balancing</th><th>Layer</th><th>Use it for</th></tr>
+    <tr><td><b>Application LB</b></td><td>L7: HTTP, HTTPS, gRPC</td><td>Path and host routing, Lambda or container targets, auth, WebSockets</td></tr>
+    <tr><td><b>Network LB</b></td><td>L4: TCP, UDP, TLS</td><td>Millions of requests per second, static IPs per AZ, PrivateLink, preserving client IP</td></tr>
+    <tr><td><b>Gateway LB</b></td><td>L3 gateway + L4</td><td>Inserting third-party firewalls and inspection appliances transparently</td></tr>
+    <tr><td><b>Classic LB</b></td><td>L4 and L7</td><td>Legacy; migrate off it</td></tr>
+  </table></div>
+  <div class="cardgrid" id="edgeCards"></div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qs"></span></div><div class="quiz" id="qq"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>System Design on AWS: Building and Scaling Enterprise Solutions</i> by Jayanth Kumar and Mandeep Singh (O'Reilly, 2025). Explanations, examples, code snippets and drawings are original summaries, not copied from the book. AWS limits and prices change; check current AWS documentation before relying on a number.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch08-architecture.html"><span>Previous · Chapter 8</span><b>Architectural Designs and Patterns</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch10-aws-storage.html"><span>Next · Chapter 10</span><b>AWS Storage Services</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('sda:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('sda:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle */
+(function(){const b=document.getElementById('themeBtn');if(!b)return;const r=document.documentElement;
+ const cur=store.get('theme',null);if(cur)r.setAttribute('data-theme',cur);
+ b.addEventListener('click',()=>{const dark=r.getAttribute('data-theme')?r.getAttribute('data-theme')==='dark':matchMedia('(prefers-color-scheme: dark)').matches;const n=dark?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n)});})();
+/* code blocks */
+
+
+const B=(s,x,y,w,h,t,c,f,fs)=>{const g=el('g');g.appendChild(el('rect',{x,y,width:w,height:h,rx:6,fill:f||'var(--surface)',stroke:`var(--${c})`,'stroke-width':1.5}));String(t).split('\n').forEach((l,i,a)=>g.appendChild(el('text',{x:x+w/2,y:y+h/2+4+(i-(a.length-1)/2)*13,'text-anchor':'middle','font-size':fs||12,class:'s-ink'},l)));s.appendChild(g);return g};
+
+/* global */
+const GL={region:['Region','A separate geographic area (for example eu-west-1, Ireland) with its own independent infrastructure. Choose by latency to users, data residency law, price and which services are offered there. Data stays in a region unless you move it.'],az:['Availability Zone','One or more discrete data centers with independent power, cooling and networking, a few kilometres apart and joined by fast private links. Spreading across at least two AZs survives a data-center failure without the cost of multiple regions.'],lz:['Local Zone','An extension of a region placed in a large city (say, closer to users in a metro area than the parent region) for single-digit millisecond latency to compute and storage.'],edge:['Edge location','Hundreds of points of presence used by CloudFront, Route 53 and Global Accelerator. Users connect to the nearest one, then ride the AWS backbone instead of the public internet.']};
+const gS=$('#gSvg');const gG={};
+gG.region=B(gS,20,20,420,210,'','blue','var(--blue-soft)');gS.appendChild(el('text',{x:32,y:40,'font-size':12,'font-weight':700,fill:'var(--blue)'},'Region eu-west-1'));
+['a','b','c'].forEach((z,i)=>{const g=B(gS,40+i*133,60,120,150,'AZ '+z+'\n\n(data centers)','d2');if(i===0)gG.az=g;else g.style.pointerEvents='none'});
+gG.lz=B(gS,470,30,150,60,'Local Zone\n(metro city)','d3');gS.appendChild(el('line',{x1:440,y1:60,x2:470,y2:60,stroke:'var(--d3)','stroke-dasharray':'4 3'}));
+gG.edge=el('g');[[500,140],[560,170],[610,130],[530,210],[600,215]].forEach(([x,y])=>gG.edge.appendChild(el('circle',{cx:x,cy:y,r:9,fill:'var(--pencil)'})));gG.edge.appendChild(el('text',{x:545,y:245,'text-anchor':'middle','font-size':12,class:'s-ink'},'Edge locations'));gS.appendChild(gG.edge);
+function showG(k){Object.entries(gG).forEach(([kk,g])=>g.style.opacity=kk===k?1:.55);$('#gTxt').innerHTML=`<h3 class="blue">${GL[k][0]}</h3><p>${GL[k][1]}</p>`}
+Object.entries(gG).forEach(([k,g])=>{g.style.cursor='pointer';g.setAttribute('tabindex',0);g.setAttribute('role','button');g.addEventListener('click',e=>{e.stopPropagation();showG(k)});g.addEventListener('keydown',e=>{if(e.key==='Enter')showG(k)})});showG('az');
+
+/* CIDR */
+function drawCidr(){const vp=+$('#vp').value;$('#sp').min=vp;if(+$('#sp').value<vp)$('#sp').value=vp;const sp=+$('#sp').value;$('#vpV').textContent='10.0.0.0/'+vp;$('#spV').textContent='/'+sp;
+ const total=Math.pow(2,32-vp),per=Math.pow(2,32-sp),n=total/per;const bits='00001010000000000000000000000000';$('#bits').innerHTML=`<span class="n">${bits.slice(0,vp).replace(/(.{8})/g,'$1 ')}</span><span class="h">${bits.slice(vp).replace(/(.{8})/g,'$1 ')}</span> <span class="small">(blue = network, orange = host bits)</span>`;
+ $('#cK').innerHTML=`<div class="stat"><span class="big blue" style="font-size:1.5rem">${total.toLocaleString()}</span><span>addresses in the VPC</span></div><div class="stat"><span class="big pencil" style="font-size:1.5rem">${n.toLocaleString()}</span><span>subnets of /${sp}</span></div><div class="stat"><span class="big okc" style="font-size:1.5rem">${(per-5).toLocaleString()}</span><span>usable per subnet (${per} − 5 reserved)</span></div>`;
+ const show=Math.min(n,16);let html='';for(let i=0;i<show;i++){const start=i*per;const o3=Math.floor(start/256)%256,o4=start%256;html+=`<span style="background:var(--${['blue-soft','pencil-soft','ok-soft','mid-soft'][i%4]})" title="10.0.${o3}.${o4}/${sp}">10.0.${o3}.${o4}/${sp}</span>`}if(n>16)html+=`<span style="background:var(--paper)">+${(n-16).toLocaleString()} more</span>`;$('#cBar').innerHTML=html}
+['vp','sp'].forEach(i=>$('#'+i).addEventListener('input',drawCidr));drawCidr();
+cards('#ipCards',[{t:'Private ranges',d:'10.0.0.0/8, 172.16.0.0/12 and 192.168.0.0/16 are never routed on the internet. VPCs use them; pick ranges that will not overlap with other VPCs or your office.'},{t:'Public IPs',d:'Assigned from Amazon\'s pool when an instance in a public subnet starts, released when it stops.'},{t:'Elastic IP',d:'A static public IPv4 address you own in your account and can move between instances. Note: AWS now charges for public IPv4 addresses.'},{t:'Tenancy',d:'Default (shared hardware) or dedicated (single-tenant hardware) for compliance needs, at a premium.'}]);
+
+/* VPC trace */
+const TR=[['in','Internet → web server'],['out','Private app → internet'],['bad','Internet → private app'],['local','Web → app (same VPC)']];
+$('#trSeg').innerHTML=TR.map((t,i)=>`<button data-t="${t[0]}" aria-pressed="${i===0}">${t[1]}</button>`).join('');
+function drawV(k){const s=$('#vSvg');s.innerHTML='';
+ B(s,10,10,640,310,'','blue','transparent');s.appendChild(el('text',{x:22,y:28,'font-size':12,'font-weight':700,fill:'var(--blue)'},'VPC 10.0.0.0/16'));
+ [['AZ a',30],['AZ b',340]].forEach(([n,x])=>{s.appendChild(el('rect',{x,y:40,width:290,height:270,rx:8,fill:'none',stroke:'var(--line)','stroke-dasharray':'5 4'}));s.appendChild(el('text',{x:x+10,y:56,'font-size':11,class:'s-muted'},n));
+  B(s,x+10,65,270,95,'','ok','var(--ok-soft)');s.appendChild(el('text',{x:x+18,y:80,'font-size':11,fill:'var(--ok)'},'public subnet 10.0.'+(x<100?'1':'2')+'.0/24'));
+  B(s,x+10,185,270,110,'','d3','var(--mid-soft)');s.appendChild(el('text',{x:x+18,y:200,'font-size':11,fill:'var(--d3)'},'private subnet 10.0.'+(x<100?'11':'12')+'.0/24'))});
+ B(s,50,95,100,44,'Web EC2','pencil');B(s,180,95,90,44,'NAT GW','d5');B(s,360,95,100,44,'Web EC2','pencil');B(s,50,220,110,44,'App EC2','pencil');B(s,360,220,110,44,'RDS replica','pencil');
+ B(s,280,0,100,24,'IGW','d5','var(--surface)',11);
+ const path={in:[[330,24,100,95]],out:[[105,220,225,139],[225,95,330,24]],bad:[[330,24,105,220]],local:[[100,139,105,220]]}[k];
+ path.forEach(([a,b,c,d])=>{s.appendChild(el('line',{x1:a,y1:b,x2:c,y2:d,stroke:k==='bad'?'var(--bad)':'var(--ok)','stroke-width':3,class:'flow'}))});if(k==='bad')s.appendChild(el('text',{x:230,y:150,'font-size':22,fill:'var(--bad)','font-weight':700},'✕'));
+ const RT={in:['public','10.0.0.0/16 → local','0.0.0.0/0 → igw-1a2b',1,'The IGW maps the instance\'s public IP to its private IP. The public subnet\'s table has a default route to the IGW, so replies flow straight back out.'],out:['private','10.0.0.0/16 → local','0.0.0.0/0 → nat-9f8e',1,'The private subnet\'s default route points at the NAT gateway, which translates the source to its own Elastic IP and forwards via the IGW. Replies come back through it.'],bad:['private','10.0.0.0/16 → local','0.0.0.0/0 → nat-9f8e',-1,'There is no route from the internet into a private subnet, and NAT only allows connections that started inside. The app server is unreachable from outside, by design.'],local:['public','10.0.0.0/16 → local','0.0.0.0/0 → igw-1a2b',0,'Destination 10.0.11.20 matches the more specific local route, so traffic stays inside the VPC, across AZs if needed. Security groups still apply.']}[k];
+ $('#rt').innerHTML=`<tr><th colspan="2">${RT[0]} route table</th></tr><tr><th>destination</th><th>target</th></tr>`+[RT[1],RT[2]].map((r,i)=>{const [d,t]=r.split(' → ');return `<tr class="${RT[3]===i?'hit':''}"><td>${d}</td><td>${t}</td></tr>`}).join('');$('#trTxt').textContent=RT[4]}
+seg('#trSeg button',b=>drawV(b.dataset.t));drawV('in');
+
+/* SG/NACL */
+function fw(){const ip=$('#cli').value,port=+$('#port').value;const L=[];let ok=true;
+ const deny=$('#nDeny').checked&&ip.startsWith('198.51.100');
+ L.push(`→ SYN from ${ip} to :${port}`);
+ if(deny){L.push('  NACL inbound rule 90: DENY (lowest number matches first) ✕');ok=false}
+ else if($('#nIn').checked&&port===443)L.push('  NACL inbound rule 100: allow ✓');else{L.push('  NACL inbound: no allow rule matches → default * DENY ✕');ok=false}
+ if(ok){const sg=(port===443&&$('#sg443').checked)||(port===22&&$('#sg22').checked);if(sg)L.push('  SG inbound: allowed ✓ (connection tracked)');else{L.push('  SG inbound: no matching allow → dropped ✕');ok=false}}
+ if(ok){L.push(`← reply from server :${port} to ${ip}:51544`);L.push('  SG: return traffic allowed automatically (stateful) ✓');if($('#nOut').checked)L.push('  NACL outbound 1024–65535: allow ✓\nRESULT: page loads');else L.push('  NACL outbound: no rule for ephemeral port → DENY ✕\nRESULT: client times out. Stateless NACLs need explicit return rules.')}
+ else L.push('RESULT: blocked');$('#fwLog').textContent=L.join('\n')}
+['sg443','sg22','nIn','nOut','nDeny','cli','port'].forEach(i=>$('#'+i).addEventListener('change',fw));fw();
+
+/* topology */
+let tp='peer';
+function drawTp(){const n=+$('#nv').value;$('#nvV').textContent=n;const s=$('#tpSvg');s.innerHTML='';const cx=320,cy=130,R=105;const P=[...Array(n)].map((_,i)=>[cx+Math.cos(i/n*2*Math.PI-Math.PI/2)*R*1.5,cy+Math.sin(i/n*2*Math.PI-Math.PI/2)*R]);
+ if(tp==='peer'){for(let i=0;i<n;i++)for(let j=i+1;j<n;j++)s.appendChild(el('line',{x1:P[i][0],y1:P[i][1],x2:P[j][0],y2:P[j][1],stroke:'var(--pencil)','stroke-width':1.2,opacity:.7}))}
+ else{P.forEach(p=>s.appendChild(el('line',{x1:p[0],y1:p[1],x2:cx,y2:cy,stroke:'var(--blue)','stroke-width':2})));B(s,cx-45,cy-18,90,36,'TGW','d5','var(--blue-soft)')}
+ P.forEach((p,i)=>B(s,p[0]-26,p[1]-14,52,28,'VPC'+(i+1),'ok','var(--surface)',10));
+ const links=tp==='peer'?n*(n-1)/2:n;$('#tpK').innerHTML=`<div class="stat"><span class="big ${tp==='peer'?'pencil':'blue'}" style="font-size:1.6rem">${links}</span><span>${tp==='peer'?'peering connections (n(n−1)/2)':'attachments (n)'}</span></div><div class="stat"><span class="big" style="font-size:1.6rem">${tp==='peer'?links*2:n}</span><span>route table entries to manage (roughly)</span></div>`}
+seg('[data-tp]',b=>{tp=b.dataset.tp;drawTp()});$('#nv').addEventListener('input',drawTp);drawTp();
+
+/* Route 53 */
+const POL=[['simple','Simple'],['weighted','Weighted'],['latency','Latency'],['failover','Failover'],['geo','Geolocation']];let pol='latency';
+$('#r53Seg').innerHTML=POL.map(p=>`<button data-p="${p[0]}" aria-pressed="${p[0]===pol}">${p[1]}</button>`).join('');
+const LAT={eu:{'eu-west-1':20,'us-east-1':85,'ap-southeast-1':160},us:{'eu-west-1':90,'us-east-1':12,'ap-southeast-1':210},ap:{'eu-west-1':170,'us-east-1':220,'ap-southeast-1':8}};
+function r53(){const u=$('#r53U').value,down=$('#r53Down').checked;const regs=['eu-west-1','us-east-1','ap-southeast-1'].filter(r=>!(down&&r==='us-east-1'));let L=[],ans;
+ if(pol==='simple'){ans='us-east-1';L.push('One record, no health checks: always the same answer.'+(down?' Users get a dead endpoint!':''))}
+ if(pol==='weighted'){const w={'us-east-1':70,'eu-west-1':20,'ap-southeast-1':10};const tot=regs.reduce((a,r)=>a+w[r],0);let x=Math.random()*tot;ans=regs.find(r=>(x-=w[r])<0);L.push(`Weights 70/20/10 (unhealthy records skipped). Good for canaries and gradual migrations. This answer: ${ans}.`)}
+ if(pol==='latency'){ans=regs.reduce((a,b)=>LAT[u][a]<LAT[u][b]?a:b);L.push('Route 53 picks the region with the lowest measured latency from the user\'s network: '+regs.map(r=>`${r} ${LAT[u][r]} ms`).join(', '))}
+ if(pol==='failover'){ans=down?'eu-west-1':'us-east-1';L.push(down?'Primary us-east-1 failed its health check → answer with secondary eu-west-1.':'Primary us-east-1 healthy → answer with primary.')}
+ if(pol==='geo'){const g={eu:'eu-west-1',us:'us-east-1',ap:'ap-southeast-1'}[u];ans=down&&g==='us-east-1'?'(default) eu-west-1':g;L.push('Answer by the user\'s location, for content rules or data residency; a default record covers everyone else.')}
+ $('#r53Log').textContent=`dig shop.example.com  (from ${$('#r53U').selectedOptions[0].text})\n→ ALB in ${ans}\n${L.join('\n')}`}
+seg('#r53Seg button',b=>{pol=b.dataset.p;r53()});$('#r53Q').addEventListener('click',r53);['r53U','r53Down'].forEach(i=>$('#'+i).addEventListener('change',r53));r53();
+cards('#edgeCards',[{t:'ELB building blocks',d:'A load balancer has listeners (protocol and port), rules that pick a target group, and target groups of instances, IPs, containers or Lambda functions with health checks.'},{t:'API Gateway',d:'Managed front door for REST, HTTP and WebSocket APIs: auth (IAM, Cognito, Lambda authorizers), throttling, caching, request validation, and direct integrations with Lambda and other AWS services.'},{t:'API Gateway limits to know',d:'Integrations time out after about 29 seconds by default and WebSocket connections idle out after 10 minutes, so long work belongs behind a queue.'},{t:'CloudFront',d:'AWS\'s pull CDN with 600+ points of presence. Origins can be S3, ALB, EC2 or any HTTP server; TLS, WAF and Shield DDoS protection integrate at the edge.'},{t:'CloudFront tips',d:'Lock S3 origins to CloudFront with origin access control, tune cache keys and TTLs, and invalidate or version files on deploy.'}]);
+
+quiz('#qq','#qs',[
+ {q:'How many usable addresses does an AWS /24 subnet have?',o:['256','254','251'],a:2,why:'256 minus the 5 addresses AWS reserves in every subnet.'},
+ {q:'What makes a subnet "public"?',o:['Its CIDR range','A route to an internet gateway','A security group'],a:1,why:'The route table sending 0.0.0.0/0 to an IGW is what makes it public.'},
+ {q:'Which filter is stateless?',o:['Security group','Network ACL'],a:1,why:'NACLs evaluate each direction separately, so return traffic needs its own rule.'},
+ {q:'Connecting 10 VPCs all-to-all with peering takes…',o:['10 connections','45 connections','100 connections'],a:1,why:'n(n−1)/2 = 45. Transit Gateway needs only 10 attachments.'},
+ {q:'You need static IPs and millions of TCP connections per second. Pick…',o:['Application LB','Network LB','Classic LB'],a:1,why:'NLB is the L4 option with static IPs per AZ and very high throughput.'}]);
+
+})();
+</script>
+</body>
+</html>

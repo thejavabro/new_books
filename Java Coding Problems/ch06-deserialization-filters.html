@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Java I/O: Deserialization Filters</title>
+<meta name="description" content="Deserializing untrusted bytes runs code you did not write. Filters let you inspect every class, array and depth before an object is built, and JDK 17 lets you choose a filter per context.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Java Coding Problems companion. Layout: a workbench reading column on blueprint grid paper.
+   Blue ink = structure and the JVM, orange pencil = your code, green = works, red = breaks.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code */
+:root{--codebg:#f7f9fc}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--codebg:#0e1a28}}
+:root[data-theme="dark"]{--codebg:#0e1a28}
+pre.code{font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--codebg);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:0;overflow-x:auto;white-space:pre;tab-size:4;min-width:0;max-width:100%}
+code{font-family:var(--mono);font-size:.88em;background:var(--codebg);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+pre.code .tk{color:var(--d4);font-weight:600} pre.code .ts{color:var(--d2)} pre.code .tc{color:var(--muted);font-style:italic}
+pre.code .tn{color:var(--d3)} pre.code .tt{color:var(--blue)} pre.code .ta{color:var(--d5)}
+pre.code mark,.hl{background:var(--mid-soft);color:inherit;border-radius:3px;outline:1px solid var(--mid)}
+.out{font-family:var(--mono);font-size:.82rem;background:var(--ink);color:var(--paper);border-radius:8px;padding:10px 14px;white-space:pre-wrap;overflow-wrap:anywhere;min-height:2.6em}
+.out .err{color:#ff9b8f}
+.theme-btn{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted)}
+.theme-btn:hover{border-color:var(--blue);color:var(--blue)}
+.pnum{font-family:var(--mono);font-size:.72rem;color:var(--pencil);border:1px solid var(--pencil);border-radius:4px;padding:1px 6px;white-space:nowrap}
+.cells{display:flex;flex-wrap:wrap;gap:4px}
+.cell{min-width:34px;height:34px;padding:0 6px;display:inline-grid;place-items:center;border:1px solid var(--line);border-radius:6px;background:var(--paper);font-family:var(--mono);font-size:.8rem;transition:background .3s,border-color .3s}
+.cell.on{background:var(--blue-soft);border-color:var(--blue)}
+.cell.hot{background:var(--pencil-soft);border-color:var(--pencil)}
+.cell.ok{background:var(--ok-soft);border-color:var(--ok)}
+.cell.bad{background:var(--bad-soft);border-color:var(--bad)}
+input[type=text],input[type=number]{font:inherit;font-family:var(--mono);font-size:.9rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+.sheet>.seg,.stack>.seg{align-self:flex-start}
+
+/* page */
+
+.ftest{display:flex;flex-direction:column;gap:6px}
+.frow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;border:1px solid var(--line);border-radius:8px;padding:6px 10px;background:var(--paper);font-size:.9rem}
+.frow code{background:none;border:0;padding:0}
+.st{font-family:var(--mono);font-size:.72rem;padding:2px 8px;border-radius:4px;border:1px solid}
+.st.A{color:var(--ok);border-color:var(--ok);background:var(--ok-soft)} .st.R{color:var(--bad);border-color:var(--bad);background:var(--bad-soft)} .st.U{color:var(--mid);border-color:var(--mid);background:var(--mid-soft)}
+.frow .why{grid-column:1/-1;font-size:.8rem;color:var(--muted)}
+.fmt{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+@media (max-width:640px){.fmt{grid-template-columns:1fr}}
+.fmt .out{font-size:.72rem;max-height:180px;overflow:auto}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Java Coding Problems · visual companion</a><span class="tag">Chapter 6 of 13 · Problems 131–143</span><button class="theme-btn" id="themeBtn" type="button">Dark theme</button></div>
+  <h1>Java I/O: Deserialization Filters</h1>
+  <p class="lede">Deserializing untrusted bytes runs code you did not write. Filters let you inspect every class, array and depth before an object is built, and JDK 17 lets you choose a filter per context.</p>
+  <nav class="toc" aria-label="Sections"><a href="#formats">Round trips</a><a href="#danger">The danger</a><a href="#patterns">Pattern filters</a><a href="#custom">Custom filters</a><a href="#dos">DoS & stack</a><a href="#jdk17">JDK 17 factories</a><a href="#jfr">JFR</a><a href="#check">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="formats" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Serialization round trips: bytes, text, XML</h2></div>
+  <p>The chapter warms up with three ways to persist an object (<span class="pnum">P131–P133</span>): <code>ObjectOutputStream</code> into a <code>byte[]</code>; those bytes encoded as a Base64 <code>String</code> for text channels; and <code>XMLEncoder</code>, which writes JavaBean properties as XML and does not even need <code>Serializable</code>. The same <code>Melon("Gac", 2500)</code> in each:</p>
+  <div class="fmt">
+    <div class="stack"><span class="eyebrow">byte[] (hex)</span><div class="out" id="fBytes"></div></div>
+    <div class="stack"><span class="eyebrow">Base64 String</span><div class="out" id="fB64"></div></div>
+    <div class="stack"><span class="eyebrow">XMLEncoder</span><div class="out" id="fXml"></div></div>
+  </div>
+  <p class="small">Every Java serialization stream starts with the magic <code>AC ED</code> and version <code>00 05</code>; that is the "rO0AB" you can spot at the start of Base64 payloads in logs and HTTP traffic. The bytes above are abbreviated for illustration.</p>
+</section>
+
+<section id="danger" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Why deserializing untrusted data is dangerous</h2></div>
+  <p>The bytes decide which classes get instantiated. Any <code>Serializable</code> class on your classpath can be named, and its <code>readObject</code>, <code>hashCode</code> or <code>equals</code> will run during deserialization, <i>before</i> your code ever sees the object. Attackers chain such "gadgets" together. Step through.</p>
+  <div class="sheet stepper" id="dStp"><div class="svgbox"><svg id="dSvg" viewBox="0 0 660 150" role="img" aria-label="Deserialization gadget chain"></svg></div></div>
+  <div class="callout blue"><b class="h">The fix: inspect before you build (P134)</b><span>JDK 9 (JEP 290) added <code>ObjectInputFilter</code>. The stream calls your filter for every class, array length, reference count and nesting depth it is about to process; you answer <code>ALLOWED</code>, <code>REJECTED</code> or <code>UNDECIDED</code>. Rejection throws <code>InvalidClassException</code> before any object of that class exists.</span></div>
+</section>
+
+<section id="patterns" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Pattern-based filters: a tiny language</h2></div>
+  <p>The easiest filter is a pattern string (<span class="pnum">P135</span>), set per stream with <code>ObjectInputFilter.Config.createFilter(...)</code>, or JVM-wide with <code>-Djdk.serialFilter=...</code>. Rules are separated by <code>;</code>: limits like <code>maxdepth=5</code>, class patterns tried left to right where the <b>first match wins</b>, and <code>!</code> to reject. A trailing <code>!*</code> turns an allow-list into "reject everything else". Edit the filter and watch every incoming item.</p>
+  <div class="sheet">
+    <label class="rng"><span>Filter</span><input type="text" id="flt" value="maxdepth=5;maxarray=1000;com.shop.*;java.base/*;!*"></label>
+    <div class="row"><button class="btn" data-pf="maxdepth=5;maxarray=1000;com.shop.*;java.base/*;!*">allow-list</button><button class="btn" data-pf="!org.apache.commons.collections.**;!com.sun.org.apache.xalan.**">deny-list</button><button class="btn" data-pf="com.shop.**;!*">shop and subpackages</button><button class="btn" data-pf="maxdepth=2">limits only</button></div>
+    <div class="ftest" id="ftest"></div>
+    <p class="small">Syntax: <code>pkg.*</code> one package, <code>pkg.**</code> package and subpackages, <code>Name*</code> prefix, <code>module/pattern</code> restricts to a module, <code>*</code> anything. With no match the result is <b>UNDECIDED</b>, which the stream treats as allowed unless another filter decides.</p>
+  </div>
+</section>
+
+<section id="custom" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Filters as classes, methods and lambdas</h2></div>
+  <p><code>ObjectInputFilter</code> is a functional interface with one method, <code>checkInput(FilterInfo info)</code>, so a filter can be a class, a method reference or a lambda (<span class="pnum">P136–P138</span>). <code>FilterInfo</code> tells you <code>serialClass()</code>, <code>arrayLength()</code>, <code>depth()</code>, <code>references()</code> and <code>streamBytes()</code>.</p>
+  <pre class="code">ObjectInputFilter onlyMelons = info -&gt; {
+    Class&lt;?&gt; c = info.serialClass();
+    if (c == null) return Status.UNDECIDED;               // a limits-only callback
+    return Melon.class.isAssignableFrom(c) || c.getName().startsWith("java.lang.")
+         ? Status.ALLOWED : Status.REJECTED;
+};
+try (var in = new ObjectInputStream(new ByteArrayInputStream(bytes))) {
+    in.setObjectInputFilter(onlyMelons);                  // per stream
+    Melon m = (Melon) in.readObject();
+}</pre>
+</section>
+
+<section id="dos" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Two small payloads, two big problems</h2></div>
+  <p>Filters are not only about classes. <span class="pnum">P139</span>: deeply nested objects overflow the stack while <code>readObject</code> recurses. <span class="pnum">P140</span>: a classic denial-of-service is a <code>HashSet</code> that contains two sets, each containing two sets, and so on, cleverly linked so the payload stays tiny. Rebuilding each set calls <code>hashCode()</code> on its elements, which recompute <i>their</i> elements' hash codes, so the work doubles with each level. Drag the depth.</p>
+  <div class="sheet">
+    <label class="rng"><span>Nesting depth: <b id="dpV"></b></span><input type="range" id="dp" min="1" max="100" value="20"></label>
+    <div class="bars" id="dpBars"></div>
+    <p id="dpTxt"></p>
+    <label class="small"><input type="checkbox" id="dpF"> apply <code>maxdepth=10</code></label>
+  </div>
+</section>
+
+<section id="jdk17" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>JDK 17: allow/reject filters, merging and a filter factory</h2></div>
+  <p>JDK 17 (JEP 415) made filters composable (<span class="pnum">P141</span>). <code>ObjectInputFilter.allowFilter(predicate, otherStatus)</code> and <code>rejectFilter(predicate, otherStatus)</code> build filters from a <code>Predicate&lt;Class&lt;?&gt;&gt;</code>; <code>merge(a, b)</code> combines two (REJECTED wins, then ALLOWED, else UNDECIDED); <code>rejectUndecidedClass(f)</code> closes the gaps. The big change is <b>context-specific</b> filters (<span class="pnum">P142</span>): a JVM-wide <b>filter factory</b>, a <code>BinaryOperator&lt;ObjectInputFilter&gt;</code>, is asked for the effective filter of every stream, so each part of an app, and each library, can have its own rules. Combine statuses.</p>
+  <div class="sheet">
+    <div class="two">
+      <label class="small">JVM-wide filter says <select id="mA"><option>ALLOWED</option><option selected>UNDECIDED</option><option>REJECTED</option></select></label>
+      <label class="small">Stream-specific filter says <select id="mB"><option selected>ALLOWED</option><option>UNDECIDED</option><option>REJECTED</option></select></label>
+    </div>
+    <label class="small"><input type="checkbox" id="mU"> wrap with <code>rejectUndecidedClass</code></label>
+    <div class="svgbox"><svg id="mSvg" viewBox="0 0 640 140" role="img" aria-label="Merging two filter statuses"></svg></div>
+  </div>
+  <pre class="code">// -Djdk.serialFilterFactory=com.shop.ContextFilterFactory
+public class ContextFilterFactory implements BinaryOperator&lt;ObjectInputFilter&gt; {
+    public ObjectInputFilter apply(ObjectInputFilter current, ObjectInputFilter next) {
+        // called with (jvmFilter, null) when a stream is created,
+        // and with (current, requested) when code calls setObjectInputFilter
+        return current == null ? next : ObjectInputFilter.merge(next, current);
+    }
+}
+ObjectInputFilter.Config.setSerialFilterFactory(new ContextFilterFactory()); // or in code</pre>
+</section>
+
+<section id="jfr" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Watching deserialization with Flight Recorder</h2></div>
+  <p>JDK 17 also added a JFR event, <code>jdk.Deserialization</code> (<span class="pnum">P143</span>). Turn it on and every filter callback is recorded with the class, array length, depth, references, bytes read, the filter used and its decision. It is the easiest way to discover what an application really deserializes before you write an allow-list.</p>
+  <pre class="code">java -XX:StartFlightRecording=filename=deser.jfr,settings=deser.jfc App
+jfr print --events jdk.Deserialization deser.jfr</pre>
+  <div class="cardgrid" id="jfrCards"></div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Test yourself</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b class="badc">Bytes pick classes</b><span>Deserialization runs code from classes the attacker names.</span></div>
+    <div><b class="blue">ObjectInputFilter</b><span>Checks class, array length, depth, refs, bytes before building.</span></div>
+    <div><b>Patterns</b><span>First match wins; end allow-lists with <code>!*</code>.</span></div>
+    <div><b class="pencil">Limits</b><span><code>maxdepth</code> stops stack bombs and hashCode explosions.</span></div>
+    <div><b class="okc">JDK 17 factory</b><span>A BinaryOperator chooses the filter per stream context.</span></div>
+    <div><b>JFR</b><span><code>jdk.Deserialization</code> shows what really flows through.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Java Coding Problems, Second Edition</i> by Anghel Leonard (Packt, 2024). Explanations, code snippets, diagrams and simulations are original summaries written for this companion; problem numbers refer to the book so you can look up the full solutions there.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch05-data-structures.html"><span>Previous · Chapter 5</span><b>Classic Data Structures</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch07-foreign-memory.html"><span>Next · Chapter 7</span><b>Foreign (Function) Memory API</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('jcp:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('jcp:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* tiny Java highlighter for every pre.code (write plain escaped code; use ⟦...⟧ to mark a highlight) */
+const JKW=new Set('abstract assert boolean break byte case catch char class const continue default do double else enum extends final finally float for goto if implements import instanceof int interface long native new package private protected public return short static strictfp super switch synchronized this throw throws transient try void volatile while var record sealed permits non-sealed yield when true false null'.split(' '));
+function hiJava(src){const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const re=/(\/\/[^\n]*|\/\*[\s\S]*?\*\/)|("""[\s\S]*?"""|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*')|(@[A-Za-z]\w*)|(\b\d[\d_]*(?:\.\d+)?[LlFfDd]?\b|\b0x[0-9a-fA-F_]+\b)|(\b[A-Za-z_]\w*(?:-sealed)?\b)|(⟦|⟧)/g;
+  let out='',last=0,m;while((m=re.exec(src))){out+=esc(src.slice(last,m.index));last=re.lastIndex;
+    if(m[1])out+=`<span class="tc">${esc(m[1])}</span>`;else if(m[2])out+=`<span class="ts">${esc(m[2])}</span>`;else if(m[3])out+=`<span class="ta">${m[3]}</span>`;
+    else if(m[4])out+=`<span class="tn">${m[4]}</span>`;else if(m[5]){const w=m[5];out+=JKW.has(w)?`<span class="tk">${w}</span>`:/^[A-Z]/.test(w)?`<span class="tt">${w}</span>`:w}
+    else if(m[6])out+=m[6]==='⟦'?'<mark>':'</mark>';}
+  return out+esc(src.slice(last));}
+function hiAll(root){(root||document).querySelectorAll('pre.code:not([data-hi])').forEach(p=>{p.innerHTML=hiJava(p.textContent.replace(/^\n/,''));p.dataset.hi=1})}
+function setCode(elOrSel,src){const p=typeof elOrSel==='string'?$(elOrSel):elOrSel;p.innerHTML=hiJava(src.replace(/^\n/,''));p.dataset.hi=1}
+/* theme toggle */
+(function(){const r=document.documentElement;const t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+  const b=document.getElementById('themeBtn');if(!b)return;const cur=()=>r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+  const lab=()=>{b.textContent=cur()==='dark'?'Light theme':'Dark theme'};lab();
+  b.addEventListener('click',()=>{const n=cur()==='dark'?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n);lab()});})();
+document.addEventListener('DOMContentLoaded',()=>hiAll());
+
+
+/* formats */
+$('#fBytes').textContent='AC ED 00 05 73 72 00 0F 63 6F 6D 2E 73 68 6F 70 2E 4D 65 6C 6F 6E ...\n(magic, version, TC_OBJECT, TC_CLASSDESC, "com.shop.Melon", serialVersionUID, field descriptors, then values)';
+$('#fB64').textContent='rO0ABXNyAA9jb20uc2hvcC5NZWxvbi...\n\nString s = Base64.getEncoder()\n    .encodeToString(bytes);';
+$('#fXml').textContent='<?xml version="1.0" encoding="UTF-8"?>\n<java version="21" class="java.beans.XMLDecoder">\n <object class="com.shop.Melon">\n  <void property="type">\n   <string>Gac</string>\n  </void>\n  <void property="weight">\n   <float>2500.0</float>\n  </void>\n </object>\n</java>';
+
+/* danger stepper */
+const DS=['Untrusted bytes arrive: an HTTP body, a cookie, a cache entry, a message queue.','ObjectInputStream reads the class name from the stream and loads that class. You did not choose it.','It allocates the object and calls the class\'s private readObject, or rebuilds a HashMap by calling hashCode() on the keys.','Those methods call other objects in the graph. A chain of harmless-looking library classes ends in reflection or Runtime.exec: remote code execution.','Your (Melon) cast happens last. By then the damage is done; a ClassCastException is far too late.'];
+function dDraw(i){const s=$('#dSvg');s.innerHTML='';const B=[['bytes','pencil'],['load class','blue'],['readObject / hashCode','blue'],['gadget chain','bad'],['(Melon) cast','muted']];
+  B.forEach(([t,c],k)=>{const x=8+k*130;const on=k<=i;s.appendChild(el('rect',{x,y:45,width:118,height:50,rx:8,fill:on?'var(--surface)':'var(--paper)',stroke:on?`var(--${c})`:'var(--line)','stroke-width':on?2:1,opacity:on?1:.4}));s.appendChild(el('text',{x:x+59,y:75,'text-anchor':'middle','font-size':12,'font-weight':600,fill:on?`var(--${c==='muted'?'ink':c})`:'var(--muted)'},t));
+    if(k<4){const ln=el('line',{x1:x+120,y1:70,x2:x+128,y2:70,stroke:'var(--muted)','stroke-width':2});s.appendChild(ln)}});
+  if(i>=1&&i<=3){s.appendChild(el('text',{x:8+i*130+59,y:30,'text-anchor':'middle','font-size':11,fill:'var(--ok)','font-weight':700},'a filter stops it here'))}}
+$('#dStp').insertAdjacentHTML('beforeend',stepHTML());stepper('#dStp',DS,dDraw);
+
+/* pattern filter tester */
+const ITEMS=[{c:'com.shop.Melon',m:'app',d:1},{c:'com.shop.cart.Cart',m:'app',d:2},{c:'java.lang.String',m:'java.base',d:2},{c:'java.util.HashMap',m:'java.base',d:2},{c:'int[] of length 50000',comp:'int',m:'java.base',d:3,arr:50000},{c:'org.apache.commons.collections.functors.InvokerTransformer',m:'app',d:4},{c:'com.sun.org.apache.xalan.internal.xsltc.trax.TemplatesImpl',m:'java.xml',d:5},{c:'com.shop.Melon (nested 7 deep)',real:'com.shop.Melon',m:'app',d:7}];
+function evalF(f,it){const parts=f.split(';').map(x=>x.trim()).filter(Boolean);const lim={};const pats=[];parts.forEach(p=>{const m=p.match(/^(maxdepth|maxarray|maxrefs|maxbytes)=(\d+)$/);if(m)lim[m[1]]=+m[2];else pats.push(p)});
+  if(lim.maxdepth!=null&&it.d>lim.maxdepth)return['R',`depth ${it.d} > maxdepth=${lim.maxdepth}`];
+  if(it.arr!=null&&lim.maxarray!=null&&it.arr>lim.maxarray)return['R',`array length ${it.arr} > maxarray=${lim.maxarray}`];
+  if(it.comp)return['U','primitive array within limits: class patterns do not apply to primitives'];
+  const name=it.real||it.c;
+  for(const raw of pats){let neg=raw.startsWith('!');let p=neg?raw.slice(1):raw;let mod=null;if(p.includes('/')){[mod,p]=p.split('/');if(mod!==it.m)continue}
+    let hit;if(p==='*')hit=true;else if(p.endsWith('.**'))hit=name.startsWith(p.slice(0,-2));else if(p.endsWith('.*')){const pk=p.slice(0,-1);hit=name.startsWith(pk)&&!name.slice(pk.length).includes('.')}else if(p.endsWith('*'))hit=name.startsWith(p.slice(0,-1));else hit=name===p;
+    if(hit)return[neg?'R':'A',`first match: "${raw}"`]}
+  return['U','no pattern matched']}
+function ftest(){const f=$('#flt').value;$('#ftest').innerHTML=ITEMS.map(it=>{const[st,why]=evalF(f,it);return `<div class="frow"><code>${it.c}</code><span class="st ${st}">${{A:'ALLOWED',R:'REJECTED',U:'UNDECIDED'}[st]}</span><span class="why">depth ${it.d} · ${why}</span></div>`}).join('')}
+$('#flt').addEventListener('input',ftest);$$('[data-pf]').forEach(b=>b.addEventListener('click',()=>{$('#flt').value=b.dataset.pf;ftest()}));ftest();
+
+/* dos */
+function dos(){const d=+$('#dp').value,f=$('#dpF').checked;$('#dpV').textContent=d;const calls=Math.pow(2,d);const bytes=d*40+200;
+  bars('#dpBars',[{l:'payload size',v:Math.log10(bytes),c:'blue',txt:`${bytes.toLocaleString('en')} bytes`},{l:'hashCode() calls',v:Math.log10(calls),c:'bad',txt:`2^${d} ≈ ${calls.toExponential(1)}`}],32);
+  $('#dpTxt').innerHTML=f&&d>10?`<b class="okc">Rejected at depth 11</b> with InvalidClassException, after a few microseconds of work.`:`At ~10<sup>9</sup> hashCode calls per second, this takes about <b>${(()=>{const s=calls/1e9;return s<1?'under a second':s<3600?Math.round(s)+' s':s<86400*365?(s/3600).toFixed(0)+' hours':(s/86400/365).toExponential(1)+' years'})()}</b>. The bar is logarithmic.`}
+['#dp','#dpF'].forEach(s=>$(s).addEventListener('input',dos));dos();
+
+/* merge */
+function mrg(){const a=$('#mA').value,b=$('#mB').value,u=$('#mU').checked;let r=a==='REJECTED'||b==='REJECTED'?'REJECTED':a==='ALLOWED'||b==='ALLOWED'?'ALLOWED':'UNDECIDED';const pre=r;if(u&&r==='UNDECIDED')r='REJECTED';
+  const s=$('#mSvg');s.innerHTML='';const col=x=>x==='ALLOWED'?'ok':x==='REJECTED'?'bad':'mid';
+  const box=(x,y,t,st)=>{s.appendChild(el('rect',{x,y,width:170,height:44,rx:8,fill:`var(--${col(st)}-soft)`,stroke:`var(--${col(st)})`,'stroke-width':2}));s.appendChild(el('text',{x:x+85,y:y+19,'text-anchor':'middle','font-size':11,class:'s-muted'},t));s.appendChild(el('text',{x:x+85,y:y+36,'text-anchor':'middle','font-size':13,'font-weight':700,fill:`var(--${col(st)})`},st))};
+  box(10,10,'JVM-wide',a);box(10,84,'stream-specific',b);s.appendChild(el('rect',{x:250,y:47,width:120,height:44,rx:22,fill:'var(--surface)',stroke:'var(--blue)','stroke-width':2}));s.appendChild(el('text',{x:310,y:74,'text-anchor':'middle','font-size':13,'font-weight':600,fill:'var(--blue)'},u?'merge + reject-U':'merge(b, a)'));
+  [[180,32],[180,106]].forEach(([x,y])=>s.appendChild(el('line',{x1:x,y1:y,x2:248,y2:69,stroke:'var(--muted)','stroke-width':2})));s.appendChild(el('line',{x1:372,y1:69,x2:450,y2:69,stroke:'var(--muted)','stroke-width':2}));
+  box(455,47,u&&pre!==r?'undecided → rejected':'effective',r)}
+['#mA','#mB','#mU'].forEach(s=>$(s).addEventListener('input',mrg));mrg();
+
+cards('#jfrCards',[{t:'What gets recorded',d:'filterConfigured, filterStatus, type, arrayLength, objectReferences, depth, bytesRead, exceptionType and message.'},{t:'Why it helps',d:'Run the app with the event on, collect the classes that appear, and you have a draft allow-list grounded in real traffic.',c:'ok'}]);
+
+quiz('#qQuiz','#qScore',[
+ {q:'With <code>com.shop.*;!*</code>, is <code>com.shop.cart.Cart</code> allowed?',o:['Allowed','Rejected'],a:1,why:'.* matches one package only; the subpackage falls through to !*. Use com.shop.** for subpackages.'},
+ {q:'Pattern rules are evaluated…',o:['all, most specific wins','left to right, first match wins'],a:1,why:'Order matters, so put rejections before broad allows.'},
+ {q:'<code>merge(f1, f2)</code> where f1 says ALLOWED and f2 says REJECTED',o:['ALLOWED','REJECTED'],a:1,why:'REJECTED always wins in a merge.'},
+ {q:'What stops the nested HashSet bomb?',o:['maxarray','maxdepth'],a:1,why:'The graph is deep, not wide.'},
+ {q:'A JDK 17 filter factory is a…',o:['BinaryOperator<ObjectInputFilter>','Predicate<Class<?>>'],a:0,why:'It takes the current and requested filters and returns the one to use.'}]);
+
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Architectural Designs and Patterns</title>
+<meta name="description" content="The building blocks come together into architectures. This chapter tours how services coordinate, how events flow, and the patterns that keep distributed systems standing.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the System Design on AWS companion. Layout: a drafting-table reading column on blueprint grid paper.
+   Blue ink = structure and data paths, orange pencil = clients and requests, green = healthy, red = failure.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:minmax(14rem,1fr) minmax(0,auto);gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* additions */
+button.tag.theme{cursor:pointer;margin-left:auto}
+button.tag.theme:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;max-width:100%;white-space:pre}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:5em;max-height:14em;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.pill{display:inline-block;font-family:var(--mono);font-size:.75rem;padding:2px 8px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.pill.ok{border-color:var(--ok);color:var(--ok);background:var(--ok-soft)} .pill.bad{border-color:var(--bad);color:var(--bad);background:var(--bad-soft)}
+input[type=number],input[type=text]{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+.sheet>.seg,.stack>.seg{align-self:flex-start}
+
+/* page */
+
+.evs{display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:.8rem}
+.evs div{padding:5px 9px;border:1px solid var(--line);border-radius:5px;background:var(--paper);transition:opacity .25s}
+.evs div.off{opacity:.25}
+.cbst{display:flex;gap:10px;flex-wrap:wrap}
+.cbst span{padding:8px 14px;border-radius:999px;border:2px solid var(--line);font-weight:600;font-size:.9rem}
+.cbst span.on.closed{border-color:var(--ok);background:var(--ok-soft);color:var(--ok)}
+.cbst span.on.open{border-color:var(--bad);background:var(--bad-soft);color:var(--bad)}
+.cbst span.on.half{border-color:var(--mid);background:var(--mid-soft);color:var(--mid)}
+.dn{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.dn>div{border:1px solid var(--line);border-radius:8px;padding:8px;min-height:96px;background:var(--paper);display:flex;flex-direction:column;gap:4px}
+.dn>div.dead{background:var(--bad-soft);border-color:var(--bad)}
+.dn b{font-family:var(--mono);font-size:.72rem}
+.dn .bl{display:flex;flex-wrap:wrap;gap:3px}
+.dn .bl i{font-style:normal;font-family:var(--mono);font-size:.68rem;padding:1px 4px;border-radius:3px;color:var(--surface)}
+@media (max-width:560px){.dn{grid-template-columns:repeat(3,minmax(0,1fr))}}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">System Design on AWS · visual companion</a><span class="tag">Part I · Chapter 8 of 21</span><button class="tag theme" type="button" id="themeBtn" aria-label="Toggle light or dark theme">Theme</button></div>
+  <h1>Architectural Designs and Patterns</h1>
+  <p class="lede">The building blocks come together into architectures. This chapter tours how services coordinate, how events flow, and the patterns that keep distributed systems standing.</p>
+  <nav class="toc" aria-label="Sections"><a href="#cdc">CDC</a><a href="#messaging">Queues & pub/sub</a><a href="#coord">Choreography vs orchestration</a><a href="#bigdata">Lambda & kappa</a><a href="#styles">Monolith to EDA</a><a href="#eventsourcing">Event sourcing</a><a href="#saga">CQRS & saga</a><a href="#resilience">Circuit breaker & co</a><a href="#hdfs">HDFS</a><a href="#kafka">Kafka</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="cdc" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Change data capture</h2></div>
+  <p>CDC streams every insert, update and delete from a source database to other systems (search indexes, caches, warehouses, other services) as it happens, instead of copying whole tables in nightly batches. Only the changes move, so it is cheaper and fresher. How the changes are detected matters.</p>
+  <div class="sheet">
+    <div class="seg" id="cdcSeg" role="group" aria-label="Method"></div>
+    <div class="svgbox"><svg id="cdcSvg" viewBox="0 0 640 170" role="img" aria-label="CDC pipeline"></svg></div>
+    <div class="detail" id="cdcTxt" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="messaging" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Brokers, queues and topics</h2></div>
+  <p>A <b>message broker</b> sits between producers and consumers so neither needs to know about the other, or even be online at the same time. Two delivery shapes: a <b>queue</b> hands each message to exactly one of the competing consumers (work distribution); a <b>topic</b> in publish/subscribe delivers a copy to every subscriber (fan-out). Protocols such as AMQP standardise this. Publish a few messages.</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Shape"><button data-mq="q" aria-pressed="true">Queue</button><button data-mq="t" aria-pressed="false">Topic (pub/sub)</button></div><button class="btn primary" id="mqPub">Publish message</button></div>
+    <div class="svgbox"><svg id="mqSvg" viewBox="0 0 640 200" role="img" aria-label="Broker delivering messages"></svg></div>
+    <p class="small" id="mqTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="coord" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Choreography or orchestration</h2></div>
+  <p>An order must reserve stock, take payment and book a courier. In <b>choreography</b> each service reacts to events and emits its own; nobody is in charge. Loosely coupled and resilient, but the overall flow is implicit and hard to trace. In <b>orchestration</b> a central coordinator (a workflow engine such as AWS Step Functions, Conductor or Temporal) calls each step and tracks state. Clear and observable, but the orchestrator is a dependency and a coupling point.</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Style"><button data-co="ch" aria-pressed="true">Choreography</button><button data-co="or" aria-pressed="false">Orchestration</button></div><button class="btn primary" id="coPlay">Place order</button></div>
+    <div class="svgbox"><svg id="coSvg" viewBox="0 0 640 260" role="img" aria-label="Services coordinating an order"></svg></div>
+  </div>
+  <div class="cardgrid" id="coCards"></div>
+</section>
+
+<section id="bigdata" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Big data: lambda, kappa and the data lake</h2></div>
+  <p>Big data means the five Vs: volume, velocity, variety, veracity and value. Three common shapes for processing it:</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Architecture"><button data-bd="lambda" aria-pressed="true">Lambda</button><button data-bd="kappa" aria-pressed="false">Kappa</button><button data-bd="lake" aria-pressed="false">Data lake</button></div>
+    <div class="svgbox"><svg id="bdSvg" viewBox="0 0 640 220" role="img" aria-label="Data architecture"></svg></div>
+    <p id="bdTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="styles" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>From monolith to microservices to events</h2></div>
+  <p>Solution architecture has moved toward smaller, more independent pieces. Slide through the stages.</p>
+  <div class="sheet">
+    <input type="range" id="arch" min="0" max="3" value="0" aria-label="Architecture stage">
+    <div class="svgbox"><svg id="aSvg" viewBox="0 0 640 230" role="img" aria-label="Architecture style"></svg></div>
+    <div class="detail" id="aTxt" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="eventsourcing" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>State-oriented versus event sourcing</h2></div>
+  <p>A state-oriented system stores only the current balance. <b>Event sourcing</b> stores every change as an immutable event and derives the state by replaying them. You get a full audit trail, can rebuild any past state, and can project the same events into new read models later. The costs: replays need snapshots to stay fast, schemas of old events must stay readable, and reads are usually eventually consistent. Drag through time.</p>
+  <div class="sheet">
+    <label class="rng"><span>Replay up to event: <b id="esV"></b></span><input type="range" id="es" min="0" max="6" value="6"></label>
+    <div class="two"><div class="evs" id="evs"></div><div class="stack" style="gap:8px"><div class="stat"><span>Derived balance</span><b class="big blue" id="esBal"></b></div><p class="small">A CDC stream is different: it reports row changes after the fact. Event sourcing makes the events themselves the source of truth.</p></div></div>
+  </div>
+</section>
+
+<section id="saga" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>CQRS and the saga pattern</h2></div>
+  <p><b>CQRS</b> (command query responsibility segregation) splits writes and reads into separate models, often separate stores: a normalized write model and denormalized read views updated by events. Each side scales and is optimized on its own. A <b>saga</b> replaces a distributed transaction with a chain of local transactions, each with a <b>compensating</b> action that undoes it if a later step fails. Make a step fail.</p>
+  <div class="sheet">
+    <div class="row"><label class="small">Failing step <select id="sgFail"><option value="-1">none</option><option value="1">Charge payment</option><option value="2" selected>Book courier</option></select></label><button class="btn primary" id="sgRun">Run saga</button></div>
+    <div class="svgbox"><svg id="sgSvg" viewBox="0 0 640 170" role="img" aria-label="Saga steps and compensations"></svg></div>
+    <p id="sgTxt" class="small" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="resilience" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Failure-tolerant patterns</h2></div>
+  <p>Three patterns keep one sick dependency from taking down everything. A <b>circuit breaker</b> counts failures; past a threshold it <i>opens</i> and fails fast without calling, after a cool-down it goes <i>half-open</i> and lets a trial request through. Click to send calls while the dependency is healthy or failing.</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Dependency"><button data-dep="ok" aria-pressed="true">Dependency healthy</button><button data-dep="bad" aria-pressed="false">Dependency failing</button></div><button class="btn primary" id="cbCall">Send call</button></div>
+    <div class="cbst" id="cbSt"><span class="closed">Closed</span><span class="open">Open</span><span class="half">Half-open</span></div>
+    <div class="log" id="cbLog"></div>
+  </div>
+  <p><b>Retry with exponential backoff</b> waits 1, 2, 4, 8… units between attempts, plus random <b>jitter</b> so thousands of clients do not retry in lockstep. A <b>rate limiter</b> (here a token bucket) protects a service from too many requests.</p>
+  <div class="two">
+    <div class="sheet"><h3>Retries over time</h3><label class="small"><input type="checkbox" id="jit" checked> add jitter</label><div class="svgbox fit"><svg id="boSvg" viewBox="0 0 320 170" role="img" aria-label="Retry timing for many clients"></svg></div></div>
+    <div class="sheet"><h3>Token bucket</h3><label class="rng"><span>Refill: <b id="tbV"></b></span><input type="range" id="tb" min="1" max="10" value="3"></label><div class="row"><button class="btn" id="tbReq">Request</button><button class="btn" id="tbBurst">Burst of 8</button></div><div class="svgbox fit"><svg id="tbSvg" viewBox="0 0 320 90" role="img" aria-label="Bucket of tokens"></svg></div><p class="small" id="tbTxt" aria-live="polite"></p></div>
+  </div>
+  <div class="cardgrid" id="moreCards"></div>
+</section>
+
+<section id="hdfs" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>HDFS: big files on cheap machines</h2></div>
+  <p>HDFS splits files into large blocks (128 MB by default) and stores each block on several DataNodes (replication factor 3). A <b>NameNode</b> holds only metadata: the namespace and which nodes hold which blocks. DataNodes send heartbeats; when one goes silent, the NameNode re-replicates its blocks elsewhere. The secondary NameNode merges edit logs into checkpoints; it is not a hot standby. Store a 640 MB file, then lose a node.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn primary" id="hPut">Write 640 MB file</button><button class="btn" id="hKill">Kill a DataNode</button><button class="btn" id="hReset">Reset</button></div>
+    <div class="dn" id="dn"></div>
+    <p class="small" id="hTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="kafka" class="stack">
+  <div class="sec-head"><span class="num">10</span><h2>Kafka: a distributed commit log</h2></div>
+  <p>Kafka stores streams of records in <b>topics</b>, split into <b>partitions</b> spread across brokers and replicated. Each partition is an append-only log, ordered, with consumers tracking their own offset, so data can be re-read. Records with the same <b>key</b> go to the same partition, which preserves per-key order. Within a <b>consumer group</b>, each partition is read by exactly one consumer, so partitions cap parallelism.</p>
+  <div class="sheet">
+    <div class="three"><label class="rng"><span>Partitions: <b id="kpV"></b></span><input type="range" id="kp" min="1" max="6" value="3"></label><label class="rng"><span>Consumers in group: <b id="kcV"></b></span><input type="range" id="kc" min="1" max="6" value="2"></label><div class="row"><button class="btn primary" id="kSend">Send 6 records</button></div></div>
+    <div class="svgbox"><svg id="kSvg" viewBox="0 0 640 250" role="img" aria-label="Topic partitions and consumers"></svg></div>
+    <p class="small" id="kTxt" aria-live="polite"></p>
+  </div>
+  <div class="cardgrid" id="kCards"></div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">11</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qs"></span></div><div class="quiz" id="qq"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>System Design on AWS: Building and Scaling Enterprise Solutions</i> by Jayanth Kumar and Mandeep Singh (O'Reilly, 2025). Explanations, examples, code snippets and drawings are original summaries, not copied from the book. AWS limits and prices change; check current AWS documentation before relying on a number.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch07-containers.html"><span>Previous · Chapter 7</span><b>Containerization, Orchestration and Deployment</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch09-aws-network.html"><span>Next · Chapter 9</span><b>AWS Network Services</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('sda:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('sda:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle */
+(function(){const b=document.getElementById('themeBtn');if(!b)return;const r=document.documentElement;
+ const cur=store.get('theme',null);if(cur)r.setAttribute('data-theme',cur);
+ b.addEventListener('click',()=>{const dark=r.getAttribute('data-theme')?r.getAttribute('data-theme')==='dark':matchMedia('(prefers-color-scheme: dark)').matches;const n=dark?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n)});})();
+/* code blocks */
+
+
+const B=(s,x,y,w,h,t,c,f)=>{s.appendChild(el('rect',{x,y,width:w,height:h,rx:6,fill:f||'var(--surface)',stroke:`var(--${c})`,'stroke-width':1.5}));String(t).split('\n').forEach((l,i,a)=>s.appendChild(el('text',{x:x+w/2,y:y+h/2+4+(i-(a.length-1)/2)*14,'text-anchor':'middle','font-size':12,class:'s-ink'},l)))};
+const A=(s,x1,y1,x2,y2,c,f)=>{const dx=x2-x1,dy=y2-y1,L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;s.appendChild(el('line',{x1,y1,x2:x2-ux*7,y2:y2-uy*7,stroke:`var(--${c||'muted'})`,'stroke-width':1.8,class:f?'flow':''}));s.appendChild(el('polygon',{points:`${x2},${y2} ${x2-ux*9-uy*4.5},${y2-uy*9+ux*4.5} ${x2-ux*9+uy*4.5},${y2-uy*9-ux*4.5}`,fill:`var(--${c||'muted'})`}))};
+
+/* CDC */
+const CDC=[['ts','Timestamps','Query rows whose <code>updated_at</code> is newer than the last run. Simple, but misses hard deletes and adds load from polling.'],['trig','Triggers','Database triggers write every change to a shadow table. Catches everything, but slows every write on the source.'],['log','Log-based','Read the database\'s own transaction log (MySQL binlog, PostgreSQL WAL). No extra load on queries, captures deletes and exact order. The preferred approach; stream-based CDC (Debezium into Kafka, or DMS into Kinesis) publishes it as a stream.'],['delta','Table deltas','Diff periodic snapshots of a table. Easy to understand, but heavy for big tables and only as fresh as the snapshot interval.']];
+$('#cdcSeg').innerHTML=CDC.map((c,i)=>`<button data-c="${i}" aria-pressed="${i===2}">${c[1]}</button>`).join('');
+function drawCdc(i){const s=$('#cdcSvg');s.innerHTML='';B(s,10,60,110,50,'App writes','pencil');B(s,160,60,120,50,'Source DB','blue');
+ const mid={ts:'poll\nupdated_at',trig:'trigger →\nshadow table',log:'transaction\nlog reader',delta:'snapshot\ndiff'}[CDC[i][0]];B(s,320,60,120,50,mid,'d3');A(s,120,85,160,85,'pencil',1);A(s,280,85,320,85,'d3',1);
+ ['Search index','Cache','Warehouse'].forEach((t,k)=>{B(s,500,10+k*55,130,40,t,'ok');A(s,440,85,500,30+k*55,'ok',1)});
+ $('#cdcTxt').innerHTML=`<h3 class="blue">${CDC[i][1]}</h3><p>${CDC[i][2]}</p>`}
+seg('#cdcSeg button',b=>drawCdc(+b.dataset.c));drawCdc(2);
+
+/* queue vs topic */
+let mq='q',mqN=0,mqGot=[0,0,0];
+function drawMq(last){const s=$('#mqSvg');s.innerHTML='';B(s,10,75,110,50,'Producer','pencil');B(s,230,65,150,70,mq==='q'?'Queue':'Topic','blue','var(--blue-soft)');A(s,120,100,230,100,'pencil');
+ const names=mq==='q'?['Worker 1','Worker 2','Worker 3']:['Email svc','Analytics','Search'];names.forEach((n,i)=>{const y=15+i*65;const hit=last!=null&&(mq==='t'||last===i);B(s,480,y,140,48,n+'\n'+mqGot[i]+' received','ok',hit?'var(--ok-soft)':undefined);A(s,380,100,480,y+24,hit?'ok':'line',hit)});
+ $('#mqTxt').textContent=mq==='q'?'Each message goes to one worker (here round robin). Add workers to process faster. If a worker dies before acknowledging, the message becomes visible again for another.':'Every subscriber gets its own copy. Adding a new subscriber needs no change to the producer.'}
+seg('[data-mq]',b=>{mq=b.dataset.mq;mqN=0;mqGot=[0,0,0];drawMq()});$('#mqPub').addEventListener('click',()=>{const i=mqN++%3;if(mq==='q')mqGot[i]++;else mqGot=mqGot.map(x=>x+1);drawMq(i)});drawMq();
+
+/* choreography/orchestration */
+let co='ch',coT=[];
+function drawCo(n){const s=$('#coSvg');s.innerHTML='';const P={o:[80,130],inv:[320,40],pay:[560,130],del:[320,220]},nm={o:'Order',inv:'Inventory',pay:'Payment',del:'Delivery'};
+ if(co==='or'){B(s,250,105,140,50,'Orchestrator','d5','var(--blue-soft)')}else{s.appendChild(el('rect',{x:220,y:112,width:200,height:36,rx:18,fill:'var(--paper)',stroke:'var(--line)','stroke-dasharray':'5 4'}));s.appendChild(el('text',{x:320,y:135,'text-anchor':'middle','font-size':12,class:'s-muted'},'event bus'))}
+ Object.entries(P).forEach(([k,[x,y]])=>B(s,x-60,y-20,120,40,nm[k],'blue'));
+ const steps=co==='ch'?[['o','bus','OrderPlaced'],['bus','inv','→ Inventory reacts'],['inv','bus','StockReserved'],['bus','pay','→ Payment reacts'],['pay','bus','PaymentTaken'],['bus','del','→ Delivery reacts']]:[['orc','inv','reserve()'],['inv','orc','ok'],['orc','pay','charge()'],['pay','orc','ok'],['orc','del','book()'],['del','orc','ok']];
+ const C={bus:[320,130],orc:[320,130]};steps.slice(0,n).forEach(([a,b,l],i)=>{const pa=P[a]||C[a],pb=P[b]||C[b];const dx=pb[0]-pa[0],dy=pb[1]-pa[1],L=Math.hypot(dx,dy);const off=(i%2?8:-8);A(s,pa[0]+dx/L*55+off,pa[1]+dy/L*25,pb[0]-dx/L*60+off,pb[1]-dy/L*28,i===n-1?'pencil':'muted',i===n-1);if(i===n-1)s.appendChild(el('text',{x:(pa[0]+pb[0])/2+10,y:(pa[1]+pb[1])/2-6,'font-size':12,'font-weight':600,fill:'var(--pencil)'},l))})}
+function playCo(){coT.forEach(clearTimeout);coT=[];drawCo(0);for(let i=1;i<=6;i++)coT.push(setTimeout(()=>drawCo(i),i*650))}
+seg('[data-co]',b=>{co=b.dataset.co;playCo()});$('#coPlay').addEventListener('click',playCo);drawCo(6);
+cards('#coCards',[{t:'Orchestrated, sync, sequential',d:'Call A, wait, call B, wait. Simple and ordered; latency adds up and one slow service blocks the chain.'},{t:'Orchestrated, sync, parallel',d:'Independent steps fan out at once and the orchestrator joins the results. Faster, but needs careful error handling for partial failure.'},{t:'Orchestrated, async, sequential',d:'The orchestrator sends work via queues and waits for completion events. Resilient to slow services; more moving parts.'},{t:'Hybrid',d:'Orchestrate inside a business domain, choreograph between domains with events. Draw the boundaries clearly.'},{t:'When to choose which',d:'Few steps, independent teams, simple flow: choreography. Long, conditional workflows needing visibility, retries and compensation: orchestration.'}]);
+
+/* big data */
+const BD={lambda:'Two paths. The <b>batch layer</b> periodically recomputes accurate views over all historical data; the <b>speed layer</b> processes the live stream for low-latency, approximate results; a <b>serving layer</b> merges both for queries. Accurate and fresh, but you maintain the same logic twice.',kappa:'Everything is a stream. One processing path handles live data; to reprocess history you replay the retained log (for example a Kafka topic) through a new version of the job. One codebase, simpler operations, but needs a log that keeps enough history.',lake:'Land raw data of every type cheaply in object storage (S3), catalog it, then let many engines (SQL, Spark, ML) read it in place. Zones such as raw, cleansed and curated keep it from turning into a swamp. Schema is applied on read.'};
+function drawBd(k){const s=$('#bdSvg');s.innerHTML='';
+ if(k==='lambda'){B(s,10,90,100,44,'Data\nsources','pencil');B(s,170,20,140,44,'Batch layer','blue');B(s,170,160,140,44,'Speed layer','d3');B(s,360,20,120,44,'Batch views','blue');B(s,360,160,120,44,'Real-time views','d3');B(s,520,90,110,44,'Serving /\nqueries','ok');A(s,110,105,170,45);A(s,110,120,170,180);A(s,310,42,360,42);A(s,310,182,360,182);A(s,480,42,520,100);A(s,480,182,520,125)}
+ if(k==='kappa'){B(s,10,90,100,44,'Data\nsources','pencil');B(s,150,90,140,44,'Immutable log\n(retained)','blue','var(--blue-soft)');B(s,340,90,130,44,'Stream\nprocessor','d3');B(s,520,90,110,44,'Serving','ok');A(s,110,112,150,112,'pencil',1);A(s,290,112,340,112,'blue',1);A(s,470,112,520,112,'ok',1);s.appendChild(el('path',{d:'M 220 140 C 220 200, 400 200, 405 140',fill:'none',stroke:'var(--muted)','stroke-dasharray':'5 4','stroke-width':1.5}));s.appendChild(el('text',{x:312,y:205,'text-anchor':'middle','font-size':11,class:'s-muted'},'replay history through v2 of the job'))}
+ if(k==='lake'){['Apps','IoT','Logs'].forEach((t,i)=>{B(s,10,20+i*65,80,40,t,'pencil');A(s,90,40+i*65,140,110)});['Raw','Cleansed','Curated'].forEach((t,i)=>B(s,140+i*95,85,90,50,t,'blue','var(--blue-soft)'));s.appendChild(el('text',{x:282,y:160,'text-anchor':'middle','font-size':11,class:'s-muted'},'object storage + catalog'));['SQL (Athena)','Spark (EMR)','ML (SageMaker)'].forEach((t,i)=>{B(s,500,20+i*65,130,40,t,'ok');A(s,425,110,500,40+i*65)})}
+ $('#bdTxt').innerHTML=BD[k]}
+seg('[data-bd]',b=>drawBd(b.dataset.bd));drawBd('lambda');
+
+/* styles */
+const AR=[['Monolith','All features in one codebase and one deployable. Easy to build, test and deploy at first; scaled by running copies. As it grows, every change risks everything, builds slow down, and you cannot scale or upgrade one part alone.'],['N-tier','Split by technical layer: presentation, business logic, data, each deployable and scalable separately. Clear separation of concerns, but a feature change still cuts through every tier.'],['Microservices','Split by business capability. Each service owns its data, deploys independently and can use its own tech stack. Team autonomy and targeted scaling, paid for with network calls, distributed data, harder testing and heavy operational tooling.'],['Event-driven','Services communicate by emitting and reacting to events through a broker instead of calling each other. Producers do not know consumers; new behaviour plugs in by subscribing. Highly decoupled and scalable, but flows become eventually consistent and harder to trace.']];
+function drawA(){const i=+$('#arch').value;const s=$('#aSvg');s.innerHTML='';
+ if(i===0){B(s,170,30,300,170,'','blue','var(--blue-soft)');['UI','Orders','Payments','Catalog','Users'].forEach((t,k)=>B(s,190+(k%3)*95,50+Math.floor(k/3)*60,85,44,t,'blue'));B(s,230,160,180,32,'One database','d3')}
+ if(i===1){['Presentation','Business logic','Data'].forEach((t,k)=>{B(s,180,15+k*72,280,52,t,['pencil','blue','d3'][k]);if(k<2)A(s,320,67+k*72,320,87+k*72)})}
+ if(i===2){[['Orders',60],['Payments',230],['Catalog',400]].forEach(([t,x],k)=>{B(s,x,30,140,44,t,'blue');B(s,x+30,140,80,40,'DB','d3');A(s,x+70,74,x+70,140)});A(s,200,52,230,52,'pencil');A(s,370,52,400,52,'pencil');B(s,500,100,120,40,'API gateway','d5')}
+ if(i===3){B(s,170,95,300,40,'Event broker','d5','var(--blue-soft)');[['Orders',40,15],['Payments',250,15],['Shipping',460,15],['Email',40,170],['Analytics',250,170],['Loyalty',460,170]].forEach(([t,x,y])=>{B(s,x,y,140,40,t,'blue');A(s,x+70,y<100?y+40:y,x+70<320?Math.max(x+70,190):Math.min(x+70,450),y<100?95:135,'muted',1)})}
+ $('#aTxt').innerHTML=`<span class="eyebrow">Stage ${i+1} of 4</span><h3 class="blue">${AR[i][0]}</h3><p>${AR[i][1]}</p>`}
+$('#arch').addEventListener('input',drawA);drawA();
+
+/* event sourcing */
+const EVS=[['AccountOpened',0],['Deposited 100',100],['Deposited 50',50],['Withdrew 30',-30],['Deposited 200',200],['Withdrew 120',-120]];
+function drawEs(){const n=+$('#es').value;$('#esV').textContent=n;$('#evs').innerHTML=EVS.map((e,i)=>`<div class="${i<n?'':'off'}">#${i+1} ${e[0]}</div>`).join('');$('#esBal').textContent='$'+EVS.slice(0,n).reduce((a,e)=>a+e[1],0)}
+$('#es').addEventListener('input',drawEs);drawEs();
+
+/* saga */
+const SG=[['Reserve stock','Release stock'],['Charge payment','Refund payment'],['Book courier','Cancel booking'],['Confirm order','']];
+function drawSg(n,fail,comp){const s=$('#sgSvg');s.innerHTML='';SG.forEach(([t,c],i)=>{const x=10+i*158;const st=i<n?(i===fail?'bad':'ok'):'line';B(s,x,20,140,44,t,st==='line'?'muted':st,i<n?(i===fail?'var(--bad-soft)':'var(--ok-soft)'):undefined);if(i<3)A(s,x+140,42,x+158,42);if(c&&comp&&i<fail&&i>=fail-comp){B(s,x,110,140,40,c,'pencil','var(--pencil-soft)');A(s,x+70,64,x+70,110,'pencil')}})}
+let sgT=[];$('#sgRun').addEventListener('click',()=>{sgT.forEach(clearTimeout);sgT=[];const f=+$('#sgFail').value;const last=f<0?4:f+1;for(let i=1;i<=last;i++)sgT.push(setTimeout(()=>{drawSg(i,f,0);$('#sgTxt').textContent=i===f+1?`"${SG[f][0]}" failed.`:'Local transaction committed, event published.'},i*600));
+ if(f>=0)for(let k=1;k<=f;k++)sgT.push(setTimeout(()=>{drawSg(last,f,k);$('#sgTxt').textContent=`Compensating in reverse order: ${SG[f-k][1]}. The system ends consistent, without a global lock.`},(last+k)*600));else sgT.push(setTimeout(()=>$('#sgTxt').textContent='All steps succeeded: order confirmed.',(last+1)*600))});drawSg(0,-1,0);
+
+/* circuit breaker */
+let dep='ok',cb='closed',fails=0,openAt=0,calls=0;
+function cbl(m){$('#cbLog').textContent+=m+'\n';$('#cbLog').scrollTop=1e6}
+function cbDraw(){$$('#cbSt span').forEach(x=>x.classList.toggle('on',x.classList.contains(cb)))}
+$('#cbCall').addEventListener('click',()=>{calls++;
+ if(cb==='open'){if(calls-openAt>=3){cb='half';cbl(`#${calls} cool-down over → half-open, letting one trial through`)}else{cbl(`#${calls} fail fast (circuit open), no call made`);cbDraw();return}}
+ const ok=dep==='ok';if(ok){cbl(`#${calls} success`);if(cb==='half')cbl('   trial succeeded → closed');cb='closed';fails=0}
+ else{fails++;cbl(`#${calls} failure (${fails}/3)`);if(cb==='half'||fails>=3){cb='open';openAt=calls;cbl('   threshold hit → OPEN for 3 calls')}}cbDraw()});
+seg('[data-dep]',b=>{dep=b.dataset.dep});cbDraw();cbl('closed: calls pass through and failures are counted');
+function drawBo(){const s=$('#boSvg');s.innerHTML='';const jit=$('#jit').checked;let seed=7;const rnd=()=>{seed=(seed*9301+49297)%233280;return seed/233280};
+ for(let c=0;c<12;c++){let t=0;for(let k=0;k<5;k++){const d=Math.pow(2,k);t+=jit?d*rnd()*1.0+d*.5:d;const x=20+t*9;if(x<310)s.appendChild(el('circle',{cx:x,cy:15+c*12,r:3.5,fill:'var(--blue)'}))}}
+ s.appendChild(el('text',{x:20,y:166,'font-size':10,class:'s-muted'},jit?'jitter spreads retries out':'without jitter every client retries at the same instant'))}
+$('#jit').addEventListener('change',drawBo);drawBo();
+let tok=5,tbOk=0,tbNo=0;
+function drawTb(){const s=$('#tbSvg');s.innerHTML='';for(let i=0;i<10;i++)s.appendChild(el('rect',{x:10+i*30,y:20,width:24,height:40,rx:4,fill:i<tok?'var(--ok)':'var(--paper)',stroke:'var(--line)'}));s.appendChild(el('text',{x:10,y:80,'font-size':11,class:'s-muted'},`${Math.floor(tok)} tokens · allowed ${tbOk} · rejected (429) ${tbNo}`));$('#tbV').textContent=$('#tb').value+' tokens/s'}
+function take(){if(tok>=1){tok--;tbOk++}else tbNo++;drawTb()}
+$('#tbReq').addEventListener('click',take);$('#tbBurst').addEventListener('click',()=>{for(let i=0;i<8;i++)take()});$('#tb').addEventListener('input',drawTb);
+setInterval(()=>{tok=Math.min(10,tok+ +$('#tb').value/5);drawTb()},200);drawTb();
+$('#tbTxt').textContent='Each request spends a token; tokens refill at a steady rate up to the bucket size, so short bursts pass but sustained overload is rejected.';
+cards('#moreCards',[{t:'Domain-driven design',d:'Model software around the business domain, with a shared language and bounded contexts that become natural service boundaries.'},{t:'Decompose by subdomain',d:'Split into core, supporting and generic subdomains; invest most in the core, buy or reuse the rest.'},{t:'API routing',d:'Route by path, header, version or user segment at a gateway, enabling canaries, A/B tests and gradual migrations (the strangler fig pattern).'},{t:'Service mesh',d:'Sidecar proxies beside each service handle retries, timeouts, mTLS and telemetry, configured centrally instead of coded into every service.'},{t:'Transactional outbox',d:'Write the business change and an outbox row in one local transaction; a relay publishes outbox rows as events. No lost or phantom events.'},{t:'Bulkhead and sidecar',d:'Isolate resources per dependency so one flood cannot drain all threads; attach cross-cutting helpers as sidecars.'}]);
+
+/* HDFS */
+let dns,files=0;const BC=['d1','d2','d3','d4','d5'];
+function hReset(){dns=Array.from({length:5},(_,i)=>({id:i+1,dead:false,b:[]}));files=0;drawH();$('#hTxt').textContent='Five DataNodes, empty.'}
+function drawH(){$('#dn').innerHTML=dns.map(d=>`<div class="${d.dead?'dead':''}"><b>DataNode ${d.id}${d.dead?' ✕':''}</b><div class="bl">${d.b.map(x=>`<i style="background:var(--${BC[x%5]})">b${x}</i>`).join('')}</div></div>`).join('')}
+$('#hPut').addEventListener('click',()=>{if(files)return;files=1;for(let b=0;b<5;b++){const live=dns.filter(d=>!d.dead).sort((a,c)=>a.b.length-c.b.length||Math.random()-.5).slice(0,3);live.forEach(d=>d.b.push(b))}drawH();$('#hTxt').textContent='640 MB → five 128 MB blocks, each on 3 different DataNodes (15 replicas). The NameNode records the block map.'});
+$('#hKill').addEventListener('click',()=>{const d=dns.find(d=>!d.dead&&d.b.length);if(!d){return}d.dead=true;const lost=d.b.slice();drawH();$('#hTxt').textContent=`DataNode ${d.id} stopped sending heartbeats. Blocks ${lost.map(x=>'b'+x).join(', ')} are under-replicated…`;
+ setTimeout(()=>{lost.forEach(x=>{const t=dns.filter(n=>!n.dead&&!n.b.includes(x)).sort((a,c)=>a.b.length-c.b.length)[0];if(t)t.b.push(x)});d.b=[];drawH();$('#hTxt').textContent='The NameNode copied each affected block from a surviving replica to another node. Back to 3 copies; no data lost.'},1300)});
+$('#hReset').addEventListener('click',hReset);hReset();
+
+/* Kafka */
+let kRec=[];const KEYS=['user-7','user-2','user-9','user-4'];
+function kh(s){let h=0;for(const c of s)h=(h*31+c.charCodeAt(0))>>>0;return h}
+function drawK(){const P=+$('#kp').value,C=+$('#kc').value;$('#kpV').textContent=P;$('#kcV').textContent=C;const s=$('#kSvg');s.innerHTML='';const ph=Math.min(36,200/P);
+ B(s,10,100,90,44,'Producer','pencil');
+ for(let p=0;p<P;p++){const y=20+p*(ph+6);s.appendChild(el('rect',{x:150,y,width:300,height:ph,rx:4,fill:'var(--paper)',stroke:'var(--line)'}));s.appendChild(el('text',{x:146,y:y+ph/2+4,'text-anchor':'end','font-size':10,class:'s-muted'},'P'+p));
+  kRec.filter(r=>kh(r)%P===p).forEach((r,i)=>{if(i<9){s.appendChild(el('rect',{x:154+i*32,y:y+3,width:28,height:ph-6,rx:3,fill:`var(--${['d1','d2','d3','d4'][KEYS.indexOf(r)]})`}));if(ph>24)s.appendChild(el('text',{x:168+i*32,y:y+ph/2+4,'text-anchor':'middle','font-size':9,fill:'var(--surface)'},i))}});
+  const c=p%C;const cy=20+c*(Math.min(36,200/C)+6)+Math.min(36,200/C)/2;A(s,450,y+ph/2,520,cy,'muted')}
+ for(let c=0;c<C;c++){const ch=Math.min(36,200/C);const y=20+c*(ch+6);const idle=c>=P;B(s,520,y,110,ch,'consumer '+(c+1)+(idle?' (idle)':''),idle?'muted':'ok',idle?'var(--paper)':undefined)}
+ $('#kTxt').innerHTML=`Colours are keys: every record for <code>user-7</code> lands in the same partition, so its order is kept. Numbers are offsets. ${C>P?`<b class="badc">${C-P} consumer(s) idle</b>: a group can never use more consumers than partitions.`:C<P?'Some consumers read several partitions.':'One partition per consumer.'}`}
+['kp','kc'].forEach(i=>$('#'+i).addEventListener('input',drawK));$('#kSend').addEventListener('click',()=>{for(let i=0;i<6;i++)kRec.push(KEYS[Math.floor(Math.random()*4)]);if(kRec.length>40)kRec=kRec.slice(-40);drawK()});kRec=['user-7','user-2','user-7','user-9','user-4','user-2'];drawK();
+cards('#kCards',[{t:'At most once',d:'Commit the offset before processing. Nothing is processed twice, but a crash can skip messages.'},{t:'At least once',d:'Process, then commit. Nothing is lost, but a crash can replay messages, so make consumers idempotent.'},{t:'Exactly once',d:'Idempotent producers plus transactions that write outputs and offsets atomically. Stronger guarantee, more overhead.'},{t:'Replication',d:'Each partition has a leader and followers on other brokers; producers using acks=all wait for the in-sync replicas.'},{t:'HDFS vs Kafka',d:'HDFS stores huge files for batch reads. Kafka moves streams of small records with low latency. They complement each other.'},{t:'On AWS',d:'Amazon MSK runs Kafka for you; Kinesis offers a similar shards-and-streams model natively; EMR runs Hadoop and Spark.'}]);
+
+quiz('#qq','#qs',[
+ {q:'Which CDC method reads the database\'s own transaction log?',o:['Timestamps','Triggers','Log-based'],a:2,why:'Log-based CDC tails the binlog or WAL, capturing every change without extra query load.'},
+ {q:'A message should be processed by exactly one of many workers. Use a…',o:['Queue','Topic','Data lake'],a:0,why:'Queues distribute each message to one competing consumer.'},
+ {q:'A saga handles a failure in step 3 by…',o:['Rolling back a global transaction','Running compensating actions for steps 2 and 1','Retrying forever'],a:1,why:'Each completed local transaction is undone by its compensation, in reverse.'},
+ {q:'A circuit breaker in the open state…',o:['Fails fast without calling','Retries more','Queues calls'],a:0,why:'It protects both caller and dependency until a trial call succeeds.'},
+ {q:'A topic has 4 partitions and a group has 6 consumers. How many are idle?',o:['0','2','4'],a:1,why:'Each partition goes to one consumer in a group; extras sit idle.'}]);
+
+})();
+</script>
+</body>
+</html>

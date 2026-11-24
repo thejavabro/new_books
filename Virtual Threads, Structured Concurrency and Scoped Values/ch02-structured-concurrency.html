@@ -1,0 +1,643 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Structured Concurrency</title>
+<meta name="description" content="Forking threads used to mean losing track of them. Structured concurrency ties every subtask to a code block: they start inside it, and by the time the block ends they have all finished or been cancelled.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Virtual Threads companion. Blue ink = threads and structure, orange pencil = data and context, green = good outcome, red = bad outcome, amber = "changed since the book".
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code listings */
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;tab-size:4;max-width:100%}
+pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)} pre.code .c{color:var(--muted);font-style:italic} pre.code .a{color:var(--pencil)}
+pre.code .hl{background:var(--mid-soft);display:inline-block;min-width:100%;border-radius:3px}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+/* "changed since the book" note */
+.callout.now{border-color:var(--mid);background:var(--mid-soft)}
+.callout.now b.h::before{content:"JDK update · ";font-family:var(--mono);font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mid)}
+.callout.bad{border-color:var(--bad);background:var(--bad-soft)}
+.tabs{display:flex;flex-direction:column;gap:10px}
+.cons{font-family:var(--mono);font-size:.8rem;background:var(--ink);color:var(--paper);border-radius:8px;padding:10px 12px;min-height:3em;white-space:pre-wrap;overflow-wrap:anywhere}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:.85rem;color:var(--muted)}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.stats4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+@media (max-width:640px){.stats4{grid-template-columns:1fr 1fr}}
+.stat .big{font-size:clamp(1.5rem,5vw,2.1rem)}
+
+/* page */
+
+.lanes{display:flex;flex-direction:column;gap:8px}
+.lane{display:grid;grid-template-columns:6.5em minmax(0,1fr) 7.5em;gap:10px;align-items:center;font-size:.9rem}
+.lane .tr{height:22px;border:1px solid var(--line);background:var(--paper);border-radius:5px;position:relative;overflow:hidden}
+.lane .tr i{position:absolute;left:0;top:0;bottom:0;background:var(--blue);width:0}
+.lane .tr i.fail{background:var(--bad)} .lane .tr i.ok{background:var(--ok)} .lane .tr i.cx{background:var(--muted);opacity:.5} .lane .tr i.waste{background:repeating-linear-gradient(45deg,var(--pencil),var(--pencil) 4px,var(--pencil-soft) 4px,var(--pencil-soft) 8px)}
+.lane .tr b.dl{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--ink)}
+.lane .st{font-family:var(--mono);font-size:.78rem;text-align:right}
+@media (max-width:520px){.lane{grid-template-columns:1fr auto}.lane .tr{grid-column:1/-1;grid-row:2}}
+.owner{font-family:var(--mono);font-size:.85rem;padding:10px 12px;border-radius:8px;border:1px solid var(--line);background:var(--paper)}
+.owner.good{border-color:var(--ok);background:var(--ok-soft)} .owner.badx{border-color:var(--bad);background:var(--bad-soft)}
+.states{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+@media (max-width:560px){.states{grid-template-columns:1fr}}
+.states button{border:1.5px solid var(--line);background:var(--surface);border-radius:10px;padding:12px;text-align:left;display:flex;flex-direction:column;gap:4px}
+.states button b{font-family:var(--mono);font-size:.95rem}
+.states button span{font-size:.85rem;color:var(--muted)}
+.states button[aria-pressed="true"]{border-color:var(--blue);background:var(--blue-soft)}
+.city{display:flex;flex-wrap:wrap;gap:8px}
+.city label{display:flex;gap:6px;align-items:center;border:1px solid var(--line);border-radius:999px;padding:4px 10px;background:var(--paper);font-size:.9rem;cursor:pointer}
+.city input{accent-color:var(--blue)}
+.res{display:flex;flex-direction:column;gap:6px}
+.res div{display:grid;grid-template-columns:7em 1fr;gap:10px;font-size:.92rem;padding:6px 10px;border-radius:6px;background:var(--paper);border:1px solid var(--line)}
+.res .snow{border-color:var(--blue);background:var(--blue-soft);font-weight:600}
+.res .err{color:var(--bad)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Java Loom · visual companion</a><span class="tag">Chapter 2 of 4</span></div>
+  <h1>Structured Concurrency</h1>
+  <p class="lede">Forking threads used to mean losing track of them. Structured concurrency ties every subtask to a code block: they start inside it, and by the time the block ends they have all finished or been cancelled.</p>
+  <nav class="toc" aria-label="Sections"><a href="#what">Why structure</a><a href="#flow">The flow</a><a href="#subtask">Subtasks</a><a href="#timeout">Timeouts</a><a href="#policies">Policies</a><a href="#custom">Custom policy</a><a href="#alts">Alternatives</a><a href="#check">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="what" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Unstructured vs structured</h2></div>
+  <p>Structured programming gave us blocks: a variable declared inside an <code>if</code> can't escape it. Structured concurrency applies the same rule to threads. Work is split into subtasks at a clear point, joined at a clear point, and <b>no subtask outlives the block</b> that started it. The result is a tree of tasks whose shape matches the shape of the code.</p>
+  <p>Compare that with submitting three requests to an <code>ExecutorService</code> and calling <code>get()</code> on each future. The futures know nothing about each other. If one fails, the others keep running, and if the caller gives up, nothing cancels them. Make a subtask fail and watch both styles.</p>
+  <div class="sheet">
+    <div class="row">
+      <div class="seg" role="group" aria-label="Style" id="usMode"><button data-m="u" aria-pressed="true">ExecutorService futures</button><button data-m="s" aria-pressed="false">StructuredTaskScope</button></div>
+      <div class="seg" role="group" aria-label="Failure" id="usFail"><button data-f="none" aria-pressed="false">All succeed</button><button data-f="forecast" aria-pressed="true">Forecast fails</button></div>
+    </div>
+    <div class="lanes" id="usLanes"></div>
+    <div class="owner" id="usOwner">Press Run.</div>
+    <div class="row"><button class="btn primary" id="usGo">Run</button></div>
+    <div class="legend"><span><i style="background:var(--blue)"></i>running</span><span><i style="background:var(--ok)"></i>result used</span><span><i style="background:var(--bad)"></i>failed</span><span><i style="background:var(--muted);opacity:.5"></i>cancelled</span><span><i style="background:var(--pencil)"></i>work nobody will use</span></div>
+  </div>
+</section>
+
+<section id="flow" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>The shape of every scope</h2></div>
+  <p>Whatever the API version, a structured scope follows the same six beats. Step through them. The code shown is the book's Java 21 form; the amber box below shows the same thing in today's API.</p>
+  <div class="sheet stepper" id="fStep">
+    <div class="two">
+      <pre class="code" id="fCode"></pre>
+      <div class="svgbox fit"><svg id="fSvg" viewBox="0 0 300 220" role="img" aria-label="Task tree: the owner thread at the root and three subtasks under it, all inside the scope boundary"></svg></div>
+    </div>
+    <div id="fCtl"></div>
+  </div>
+  <div class="callout now"><b class="h">The API was redesigned in JDK 25</b><span>Structured concurrency is still a preview feature (JEP 505 in JDK 25, JEP 525 in JDK 26; compile with <code>--enable-preview</code>). The constructors and subclasses are gone. You open a scope with a static factory, pass a <b>Joiner</b> that decides when the scope is done, and <code>join()</code> returns the outcome or throws <code>FailedException</code>.</span></div>
+  <div class="tabs sheet">
+    <div class="seg" role="group" aria-label="API version"><button data-t="b" aria-pressed="true">Book (JDK 21 to 24)</button><button data-t="n" aria-pressed="false">JDK 25+</button></div>
+    <pre class="code" data-p="b">try (var scope = new StructuredTaskScope.ShutdownOnFailure()) {
+    Supplier&lt;Current&gt;  now  = scope.fork(this::current);
+    Supplier&lt;Forecast&gt; next = scope.fork(this::forecast);
+    scope.join();            // wait for both, or the first failure
+    scope.throwIfFailed();   // rethrow it as ExecutionException
+    return new Weather(now.get(), next.get());
+}</pre>
+    <pre class="code" data-p="n" hidden>try (var scope = StructuredTaskScope.open()) {   // default: all must succeed
+    Subtask&lt;Current&gt;  now  = scope.fork(this::current);
+    Subtask&lt;Forecast&gt; next = scope.fork(this::forecast);
+    scope.join();            // throws FailedException on the first failure
+    return new Weather(now.get(), next.get());
+}</pre>
+  </div>
+</section>
+
+<section id="subtask" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>A Subtask is a handle with a state</h2></div>
+  <p><code>fork()</code> hands back a <code>Subtask</code>. It is a sealed interface with a single private implementation, which keeps the door open for more implementations later without breaking anyone. It extends <code>Supplier</code>, so you can read the result with <code>get()</code>. Internally the implementation wraps your <code>Callable</code> in a <code>Runnable</code> that records either the result or the exception. Each subtask is in one of three states. Pick one to see what the accessors do.</p>
+  <div class="sheet">
+    <div class="states" id="stBtns" role="group" aria-label="Subtask state"></div>
+    <div class="tbl"><table class="t"><thead><tr><th>Call</th><th>Outcome</th></tr></thead><tbody id="stBody"></tbody></table></div>
+  </div>
+  <p>Subtasks run on <b>virtual threads by default</b>. The Java 21 API took a <code>ThreadFactory</code> in a constructor if you really wanted platform threads; in JDK 25 you pass it through the configuration, as in <code>open(joiner, cf -&gt; cf.withThreadFactory(factory))</code>. The authors advise sticking with the default unless you have a compelling reason.</p>
+</section>
+
+<section id="timeout" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Putting a deadline on the whole scope</h2></div>
+  <p>Plain <code>join()</code> waits as long as it takes. Usually you would rather fail fast. In the book's API you call <code>joinUntil(Instant deadline)</code>, which throws <code>TimeoutException</code> if the deadline passes first. Drag the deadline across the three subtasks.</p>
+  <div class="sheet">
+    <label class="rng"><span>Deadline: <b id="dlV"></b> ms after the scope opens</span><input type="range" id="dl" min="100" max="1000" step="10" value="550"></label>
+    <div class="lanes" id="toLanes"></div>
+    <div class="owner" id="toOwner"></div>
+  </div>
+  <div class="tabs sheet">
+    <div class="seg" role="group" aria-label="API version"><button data-t="b" aria-pressed="true">Book (JDK 21 to 24)</button><button data-t="n" aria-pressed="false">JDK 25+</button></div>
+    <pre class="code" data-p="b">scope.joinUntil(Instant.now().plusMillis(550));   // TimeoutException</pre>
+    <pre class="code" data-p="n" hidden>try (var scope = StructuredTaskScope.open(
+        Joiner.awaitAllSuccessfulOrThrow(),
+        cf -> cf.withTimeout(Duration.ofMillis(550)))) {
+    // ... fork ...
+    scope.join();   // cancels the scope and throws TimeoutException
+}</pre>
+  </div>
+</section>
+
+<section id="policies" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Invoke all, invoke any</h2></div>
+  <p>The two built-in policies are old patterns with clearer rules. <b>Invoke all</b> (<code>ShutdownOnFailure</code>) needs every result: the first failure shuts the scope down and cancels the rest. Use it for screens assembled from several related sources, such as a customer page with address, orders and balance. <b>Invoke any</b> (<code>ShutdownOnSuccess</code>) is a race: the first successful result wins and the rest are cancelled, as when asking two map providers for a route and taking whichever answers first. A failing racer is simply ignored while others can still win; only if all fail does <code>result()</code> throw.</p>
+  <div class="sheet">
+    <div class="row">
+      <div class="seg" role="group" aria-label="Policy" id="pMode"><button data-p="all" aria-pressed="true">Invoke all</button><button data-p="any" aria-pressed="false">Invoke any</button></div>
+      <label class="row small" style="gap:6px"><input type="checkbox" id="pFail" style="accent-color:var(--blue)"> one source fails</label>
+    </div>
+    <div class="lanes" id="pLanes"></div>
+    <div class="owner" id="pOwner">Press Race.</div>
+    <div class="row"><button class="btn primary" id="pGo">Race</button><span class="small">Latencies are random each run.</span></div>
+  </div>
+  <div class="tabs sheet">
+    <div class="seg" role="group" aria-label="API version"><button data-t="b" aria-pressed="true">Book (JDK 21 to 24)</button><button data-t="n" aria-pressed="false">JDK 25+</button></div>
+    <pre class="code" data-p="b">try (var scope = new StructuredTaskScope.ShutdownOnSuccess&lt;Route&gt;()) {
+    scope.fork(() -> mapsA.route(from, to));
+    scope.fork(() -> mapsB.route(from, to));
+    scope.join();
+    return scope.result();     // first success; ExecutionException if none
+}</pre>
+    <pre class="code" data-p="n" hidden>try (var scope = StructuredTaskScope.open(
+        Joiner.&lt;Route&gt;anySuccessfulResultOrThrow())) {
+    scope.fork(() -> mapsA.route(from, to));
+    scope.fork(() -> mapsB.route(from, to));
+    return scope.join();       // first success; FailedException if none
+}</pre>
+  </div>
+  <p class="small">Under the hood, both Java 21 policies are subclasses that override the protected <code>handleComplete(Subtask)</code> hook: on-failure records the first exception and calls <code>shutdown()</code>, on-success records the first result and calls <code>shutdown()</code>. Shutdown interrupts the subtasks still running and lets <code>join()</code> return.</p>
+  <div class="callout now"><b class="h">Joiners replace the policy subclasses</b><span><code>ShutdownOnFailure</code> became <code>Joiner.awaitAllSuccessfulOrThrow()</code> (the default) or <code>allSuccessfulOrThrow()</code>, which also returns the results; <code>ShutdownOnSuccess</code> became <code>anySuccessfulResultOrThrow()</code>. There are also <code>awaitAll()</code> and <code>allUntil(predicate)</code>. JDK 26 is refining names and adding a timeout hook, so check the javadoc of the JDK you run.</span></div>
+</section>
+
+<section id="custom" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Your own policy: the ski-trip scope</h2></div>
+  <p>When neither pattern fits, write your own. The book's example plans a ski trip: ask a weather API about several towns at once, keep only the answers that came back successfully, and pick the ones reporting snow. A failed lookup for one town shouldn't sink the whole query, so this policy never shuts down early; it just collects successes. Choose towns and run the query.</p>
+  <div class="sheet">
+    <div class="city" id="cities"></div>
+    <div class="row"><button class="btn primary" id="cGo">Run the scope</button><span class="small">Weather and failures are random.</span></div>
+    <div class="res" id="cRes"></div>
+  </div>
+  <div class="tabs sheet">
+    <div class="seg" role="group" aria-label="API version"><button data-t="b" aria-pressed="true">Book: subclass</button><button data-t="n" aria-pressed="false">JDK 25+: Joiner</button></div>
+    <pre class="code" data-p="b">class SuccessesOnly&lt;T&gt; extends StructuredTaskScope&lt;T&gt; {
+    private final Queue&lt;T&gt; ok = new ConcurrentLinkedQueue&lt;&gt;();
+    @Override
+    protected void handleComplete(Subtask&lt;? extends T&gt; s) {
+        if (s.state() == Subtask.State.SUCCESS) ok.add(s.get());
+    }
+    List&lt;T&gt; results() { ensureOwnerAndJoined(); return List.copyOf(ok); }
+}</pre>
+    <pre class="code" data-p="n" hidden>class SuccessesOnly&lt;T&gt; implements Joiner&lt;T, List&lt;T&gt;&gt; {
+    private final Queue&lt;T&gt; ok = new ConcurrentLinkedQueue&lt;&gt;();
+    @Override
+    public boolean onComplete(Subtask&lt;? extends T&gt; s) {
+        if (s.state() == Subtask.State.SUCCESS) ok.add(s.get());
+        return false;                  // never cancel the scope early
+    }
+    @Override
+    public List&lt;T&gt; result() { return List.copyOf(ok); }
+}
+// List&lt;Report&gt; all = scope.join();  with open(new SuccessesOnly&lt;&gt;())</pre>
+  </div>
+  <p class="small">The book's own listing builds the request URL with a string template (<code>STR."..."</code>). String templates were a preview in JDK 21 and 22 and were withdrawn in JDK 23, so use ordinary concatenation or <code>formatted()</code> instead.</p>
+</section>
+
+<section id="alts" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Alternatives: futures and reactive streams</h2></div>
+  <p>Structured concurrency doesn't try to replace <code>java.util.concurrent</code>. The two common alternatives each have a place. Tap a card.</p>
+  <div class="cardgrid" id="altCards"></div>
+  <div class="tabs sheet">
+    <div class="seg" role="group" aria-label="Style"><button data-t="cf" aria-pressed="true">CompletableFuture</button><button data-t="rx" aria-pressed="false">Reactor</button><button data-t="sc" aria-pressed="false">Structured</button></div>
+    <pre class="code" data-p="cf">var a = CompletableFuture.supplyAsync(this::current);
+var b = CompletableFuture.supplyAsync(this::forecast);
+Weather w = a.thenCombine(b, Weather::new).join();
+// if a fails, b still runs to the end</pre>
+    <pre class="code" data-p="rx" hidden>Mono.zip(Mono.fromCallable(this::current).subscribeOn(boundedElastic()),
+         Mono.fromCallable(this::forecast).subscribeOn(boundedElastic()))
+    .map(t -> new Weather(t.getT1(), t.getT2()))
+    .subscribe(this::show);   // a different mental model: nothing runs until subscribed</pre>
+    <pre class="code" data-p="sc" hidden>try (var scope = StructuredTaskScope.open()) {
+    var a = scope.fork(this::current);
+    var b = scope.fork(this::forecast);
+    scope.join();                       // a failure cancels the other
+    return new Weather(a.get(), b.get());
+}</pre>
+  </div>
+  <p>Early drafts of the API returned a <code>Future</code> from <code>fork()</code>. It was changed to <code>Subtask</code> because a future is most useful while it is still pending and can be chained, whereas a subtask is only read after <code>join()</code>, when its value is already final.</p>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="quiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b>Subtasks can't escape</b><span>When the scope's block ends, every subtask has completed or been cancelled.</span></div>
+    <div><b>Unstructured leaks</b><span>Independent futures don't cancel each other, and nothing cancels them when the caller gives up.</span></div>
+    <div><b class="blue">Fork, join, read, close</b><span>The owner thread forks, waits in join, handles errors and closes the scope with try-with-resources.</span></div>
+    <div><b>Three subtask states</b><span>UNAVAILABLE, SUCCESS and FAILED decide whether get() or exception() is legal.</span></div>
+    <div><b class="okc">All or any</b><span>Fail fast when every part is needed; race when any answer will do.</span></div>
+    <div><b class="pencil">Custom policies</b><span>Override handleComplete (JDK 21) or implement a Joiner (JDK 25+).</span></div>
+    <div><b class="midc">Still a preview</b><span>Redesigned in JDK 25 and refined in JDK 26. Expect small API changes.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Virtual Threads, Structured Concurrency, and Scoped Values: Explore Java's New Threading Model</i> by Ron Veen and David Vlijmincx (Apress Pocket Guides, 2024). Explanations, code snippets, simulations and drawings are original; nothing is copied from the book. Notes marked "JDK update" describe changes in JDK 22 to 26 that came after the book was written.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch01-virtual-threads.html"><span>Previous · Chapter 1</span><b>Virtual Threads</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch03-scoped-values.html"><span>Next · Chapter 3</span><b>Scoped Values</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('vtsc:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('vtsc:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* tiny Java highlighter for <pre class="code"> blocks; a line starting with "!!" is highlighted */
+const KW='abstract|boolean|break|case|catch|class|default|do|else|extends|final|finally|for|if|implements|import|instanceof|int|interface|long|new|null|package|permits|private|protected|public|record|return|sealed|static|super|synchronized|this|throw|throws|true|false|try|var|void|while';
+function hl(){$$('pre.code').forEach(p=>{if(p.dataset.done)return;p.dataset.done=1;
+  const src=p.textContent.replace(/^\n/,'').replace(/\s+$/,'');
+  const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const re=new RegExp('(\\/\\/.*$)|("(?:[^"\\\\]|\\\\.)*")|(@\\w+)|\\b('+KW+')\\b','gm');
+  p.innerHTML=src.split('\n').map(line=>{let mark=false;if(line.startsWith('!!')){mark=true;line=line.slice(2)}
+    let out='',last=0;line.replace(re,(m,c,s,a,k,i)=>{out+=esc(line.slice(last,i));out+=c?`<span class="c">${esc(c)}</span>`:s?`<span class="s">${esc(s)}</span>`:a?`<span class="a">${esc(a)}</span>`:`<span class="k">${k}</span>`;last=i+m.length;return m});
+    out+=esc(line.slice(last));return mark?`<span class="hl">${out||' '}</span>`:out}).join('\n')})}
+/* code tabs: container .tabs with a .seg of buttons[data-t] and panels [data-p] */
+function tabs(sel){$$(sel).forEach(t=>{const bs=t.querySelectorAll(':scope > .seg button');bs.forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);t.querySelectorAll(':scope > [data-p]').forEach(p=>p.hidden=p.dataset.p!==b.dataset.t)}));if(bs[0]){press(bs[0].parentNode,bs[0]);t.querySelectorAll(':scope > [data-p]').forEach(p=>p.hidden=p.dataset.p!==bs[0].dataset.t)}})}
+const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+document.addEventListener('DOMContentLoaded',()=>{hl();tabs('.tabs')});
+
+
+const sleepF=ms=>new Promise(r=>setTimeout(r,reduced?ms/4:ms));
+function lanes(sel,rows){$(sel).innerHTML=rows.map((r,i)=>`<div class="lane"><span>${r}</span><div class="tr"><i></i></div><span class="st">waiting</span></div>`).join('')}
+function laneSet(sel,i,pct,cls,txt,left){const l=$(sel).querySelectorAll('.lane')[i];const b=l.querySelector('i');b.className=cls||'';b.style.left=(left||0)+'%';b.style.width=Math.max(0,pct-(left||0))+'%';if(txt!=null)l.querySelector('.st').textContent=txt}
+function addSeg(sel,i,from,to,cls){const tr=$(sel).querySelectorAll('.lane')[i].querySelector('.tr');const x=document.createElement('i');x.className=cls;x.style.left=from+'%';x.style.width=(to-from)+'%';tr.appendChild(x)}
+
+/* 1. unstructured vs structured */
+const U={dur:[60,45,90],names:['current','forecast','history'],failAt:30};
+let usMode='u',usFail='forecast',usRun=false;
+function usReset(){lanes('#usLanes',U.names);$('#usOwner').className='owner';$('#usOwner').textContent='Press Run.'}
+seg('#usMode button',b=>{usMode=b.dataset.m;usReset()});seg('#usFail button',b=>{usFail=b.dataset.f;usReset()});
+$('#usGo').addEventListener('click',async()=>{if(usRun)return;usRun=true;usReset();
+  const fail=usFail==='forecast';const end=U.dur.slice();if(fail)end[1]=U.failAt;
+  let cancelAt=null,ownerDone=null,msg='';
+  if(usMode==='s'){ if(fail){cancelAt=U.failAt;ownerDone=U.failAt+3;msg='join() returned at t=33: forecast failed, current and history were cancelled. The exception reaches the caller and no thread is left running.'}
+    else{ownerDone=Math.max(...U.dur);msg='join() returned when the slowest subtask finished. All three results are used.'}}
+  else{ if(fail){ownerDone=U.dur[0];msg='The owner was blocked in current.get() until t=60, only then discovered the failure in forecast.get() and threw. history is still running with nobody waiting for it: a leaked thread doing wasted work.'}
+    else{ownerDone=Math.max(...U.dur);msg='All futures completed and the results are used. Unstructured code works fine on the happy path.'}}
+  const T=100;const own=$('#usOwner');own.textContent='owner: waiting...';
+  for(let t=0;t<=T;t++){
+    for(let i=0;i<3;i++){
+      const stopAt=cancelAt!=null&&i!==1?Math.min(end[i],cancelAt):end[i];
+      if(t<=stopAt){laneSet('#usLanes',i,t,'',t===stopAt?null:'running')}
+      if(t===stopAt){
+        if(i===1&&fail){laneSet('#usLanes',i,t,'fail','FAILED')}
+        else if(cancelAt!=null&&stopAt===cancelAt&&end[i]>cancelAt){laneSet('#usLanes',i,t,'cx','cancelled')}
+        else if(ownerDone!=null&&usMode==='u'&&fail&&end[i]>ownerDone){laneSet('#usLanes',i,ownerDone,'',null);addSeg('#usLanes',i,ownerDone,end[i],'waste');$('#usLanes').querySelectorAll('.lane')[i].querySelector('.st').textContent='leaked'}
+        else laneSet('#usLanes',i,t,'ok','done')}
+    }
+    if(t===ownerDone){own.className='owner '+(fail?'badx':'good');own.textContent=msg}
+    await sleepF(28)}
+  usRun=false});
+usReset();
+
+/* 2. flow stepper */
+$('#fCtl').innerHTML=stepHTML();
+const fLines=['try (var scope = new StructuredTaskScope.ShutdownOnFailure()) {','    var a = scope.fork(this::current);','    var b = scope.fork(this::forecast);','    var c = scope.fork(this::history);','    scope.join();','    scope.throwIfFailed();','    return new Result(a.get(), b.get(), c.get());','}   // close(): nothing outlives this line'];
+const fHL=[[0],[1,2,3],[4],[4],[5],[7]];
+function fDraw(i){const p=$('#fCode');p.textContent=fLines.map((l,k)=>(fHL[i].includes(k)?'!!':'')+l).join('\n');delete p.dataset.done;hl();
+  const s=$('#fSvg');s.innerHTML='';
+  s.appendChild(el('rect',{x:8,y:8,width:284,height:204,rx:12,fill:'none',class:'st-blue','stroke-width':i===5?1:2,'stroke-dasharray':i===5?'4 4':''}));
+  s.appendChild(el('text',{x:18,y:26,'font-size':11,class:'s-muted t-mono'},i===5?'scope closed':'scope'));
+  s.appendChild(el('rect',{x:100,y:40,width:100,height:34,rx:8,class:'s-bluesoft st-blue','stroke-width':1.5}));
+  s.appendChild(el('text',{x:150,y:62,'text-anchor':'middle','font-size':12,class:'s-ink'},i===3?'owner (blocked)':'owner'));
+  const names=['current','forecast','history'];
+  if(i>=1)names.forEach((n,k)=>{const x=20+k*92;
+    s.appendChild(el('line',{x1:150,y1:74,x2:x+38,y2:130,class:'st-line','stroke-width':1.5}));
+    let fill='s-surface',stroke='var(--blue)';if(i>=3){fill='s-oksoft';stroke='var(--ok)'}if(i===5){fill='s-paper';stroke='var(--line)'}
+    s.appendChild(el('rect',{x:x,y:130,width:76,height:34,rx:8,class:fill,stroke:stroke,'stroke-width':1.5}));
+    s.appendChild(el('text',{x:x+38,y:151,'text-anchor':'middle','font-size':11.5,class:'s-ink'},n));
+    if(i===2){const c=el('circle',{cx:x+38,cy:182,r:5,class:'s-blue pulse'});s.appendChild(c)}
+    if(i>=3&&i<5)s.appendChild(el('text',{x:x+38,y:186,'text-anchor':'middle','font-size':11,fill:'var(--ok)',class:'t-mono'},'SUCCESS'))});
+  if(i===4){s.appendChild(el('text',{x:150,y:204,'text-anchor':'middle','font-size':11,class:'s-ink t-mono'},'no failure: safe to get()'))}}
+stepper('#fStep',['Open the scope in try-with-resources. The current thread becomes its owner, the root of the task tree.',
+ 'Fork any number of subtasks. Each starts at once on its own new virtual thread.',
+ 'The owner joins: it blocks until every subtask has completed or the policy shuts the scope down.',
+ 'All three subtasks finished. Joining covers all of them implicitly; no futures to juggle.',
+ 'The owner handles errors. With ShutdownOnFailure, throwIfFailed() rethrows the first failure; afterwards get() is safe.',
+ 'Leaving the block closes the scope automatically. Whatever happened, no subtask thread is still alive.'],fDraw);
+
+/* 3. subtask states */
+const ST=[['UNAVAILABLE','Not finished yet, or finished after the scope was shut down',['IllegalStateException','IllegalStateException']],
+ ['SUCCESS','Completed with a result',['returns the result','IllegalStateException']],
+ ['FAILED','Completed by throwing',['IllegalStateException','returns the Throwable']]];
+$('#stBtns').innerHTML=ST.map((s,i)=>`<button data-i="${i}" aria-pressed="${i===0}"><b>${s[0]}</b><span>${s[1]}</span></button>`).join('');
+function stShow(i){const s=ST[i];$('#stBody').innerHTML=`<tr><td><code>subtask.get()</code></td><td class="${i===1?'okc':'badc'}">${s[2][0]}</td></tr><tr><td><code>subtask.exception()</code></td><td class="${i===2?'okc':'badc'}">${s[2][1]}</td></tr><tr><td><code>subtask.state()</code></td><td>${s[0]}</td></tr>`}
+seg('#stBtns button',b=>stShow(+b.dataset.i));stShow(0);
+
+/* 4. timeout */
+const TO=[['current',300],['forecast',480],['history',820]];
+lanes('#toLanes',TO.map(t=>t[0]));
+function toDraw(){const d=+$('#dl').value;$('#dlV').textContent=d;
+  TO.forEach((t,i)=>{const done=t[1]<=d;laneSet('#toLanes',i,Math.min(t[1],d)/10,done?'ok':'cx',done?'done '+t[1]+'ms':'cancelled');
+    const tr=$('#toLanes').querySelectorAll('.tr')[i];let m=tr.querySelector('b.dl');if(!m){m=document.createElement('b');m.className='dl';tr.appendChild(m)}m.style.left=(d/10)+'%'});
+  const late=TO.filter(t=>t[1]>d);const o=$('#toOwner');
+  if(late.length){o.className='owner badx';o.textContent=`TimeoutException at ${d} ms. ${late.map(t=>t[0]).join(' and ')} did not make it. When the owner leaves the block, close() shuts the scope down, so ${late.length>1?'they are':'it is'} interrupted rather than left running.`}
+  else{o.className='owner good';o.textContent=`All three finished by 820 ms, inside the ${d} ms deadline. join returns normally.`}}
+$('#dl').addEventListener('input',toDraw);toDraw();
+
+/* 5. policies race */
+let pMode='all',pRun=false;const PN=['source A','source B','source C'];
+function pReset(){lanes('#pLanes',PN);$('#pOwner').className='owner';$('#pOwner').textContent='Press Race.'}
+seg('#pMode button',b=>{pMode=b.dataset.p;pReset()});$('#pFail').addEventListener('change',pReset);
+$('#pGo').addEventListener('click',async()=>{if(pRun)return;pRun=true;pReset();
+  const lat=PN.map(()=>25+Math.floor(Math.random()*70));const failIdx=$('#pFail').checked?Math.floor(Math.random()*3):-1;
+  let stopAt=null,outcome='',good=true;
+  const order=lat.map((l,i)=>[l,i]).sort((a,b)=>a[0]-b[0]);
+  if(pMode==='all'){if(failIdx>=0){stopAt=lat[failIdx];good=false;outcome=`${PN[failIdx]} failed at t=${lat[failIdx]}: the scope shut down, the slower sources were cancelled and the owner got the exception.`}
+    else{stopAt=Math.max(...lat);outcome=`All three succeeded; join returned at t=${stopAt} with every result available.`}}
+  else{const win=order.find(([l,i])=>i!==failIdx);stopAt=win[0];outcome=`${PN[win[1]]} answered first at t=${win[0]} and won; the others were cancelled.`+(failIdx>=0&&lat[failIdx]<win[0]?` ${PN[failIdx]} failed earlier, but in a race a failure is ignored while others can still win.`:'')}
+  for(let t=0;t<=100;t++){
+    for(let i=0;i<3;i++){const end=Math.min(lat[i],stopAt);if(t<=end){
+      if(t<end)laneSet('#pLanes',i,t,'','running');
+      else if(i===failIdx&&lat[i]<=stopAt)laneSet('#pLanes',i,t,'fail','FAILED');
+      else if(lat[i]>stopAt)laneSet('#pLanes',i,t,'cx','cancelled');
+      else laneSet('#pLanes',i,t,'ok',pMode==='any'&&lat[i]===stopAt?'winner':'done')}}
+    if(t===stopAt){$('#pOwner').className='owner '+(good?'good':'badx');$('#pOwner').textContent=outcome;break}
+    await sleepF(28)}
+  pRun=false});
+pReset();
+
+/* 6. custom snow scope */
+const towns=['Zermatt','Chamonix','Innsbruck','Val Thorens','Cortina','St. Anton','Livigno'];
+$('#cities').innerHTML=towns.map((t,i)=>`<label><input type="checkbox" value="${t}" ${i<5?'checked':''}> ${t}</label>`).join('');
+$('#cGo').addEventListener('click',()=>{const pick=$$('#cities input:checked').map(c=>c.value);
+  if(!pick.length){$('#cRes').innerHTML='<div><span>Nothing</span><span>Pick at least one town.</span></div>';return}
+  const w=['light snow','heavy snow','sunny','rain','overcast'];
+  const rows=pick.map(t=>{const r=Math.random();if(r<.2)return{t,err:true};return{t,c:w[Math.floor(Math.random()*w.length)]}});
+  const snow=rows.filter(r=>!r.err&&/snow/.test(r.c));
+  $('#cRes').innerHTML=rows.map(r=>r.err?`<div class="err"><span>${r.t}</span><span>FAILED: lookup timed out (dropped by the policy, scope carries on)</span></div>`:`<div class="${/snow/.test(r.c)?'snow':''}"><span>${r.t}</span><span>SUCCESS: ${r.c}</span></div>`).join('')+
+   `<div style="background:var(--surface)"><b>Go to</b><span>${snow.length?snow.map(r=>r.t).join(', '):'nowhere with snow today'}</span></div>`});
+
+/* 7. alternatives */
+cards('#altCards',[
+ {t:'CompletableFuture (Java 8)',d:'Chains asynchronous stages with thenApply, thenCombine and friends. Great for composing pipelines of pending work. No parent-child relationship: a failing stage doesn\'t cancel its siblings, and cancellation doesn\'t propagate to running tasks.',c:'blue'},
+ {t:'Reactive streams',d:'Libraries such as Project Reactor, RxJava and Akka model producers, consumers and processors over non-blocking streams. Powerful backpressure and composition, but a steep learning curve, flows that are hard to follow, and notoriously hard debugging.',c:'pencil'},
+ {t:'Structured concurrency',d:'Plain blocking code, one virtual thread per subtask, lifetimes tied to a block. Stack traces and debuggers work as usual. Not meant to replace the others, but it removes many reasons for reaching for reactive code.',c:'ok'}]);
+
+quiz('#quiz','#qScore',[
+ {q:'What does structured concurrency guarantee when a scope\'s block ends?',o:['All subtasks completed or cancelled','All subtasks succeeded','Subtasks continue in the background'],a:0,why:'No subtask outlives the scope; success is up to the policy.'},
+ {q:'In an invoke-all scope, subtask B fails while A and C are running. What happens to A and C?',o:['They are cancelled','They finish normally','They are retried'],a:0,why:'The first failure shuts the scope down, which interrupts the remaining subtasks.'},
+ {q:'Calling get() on a subtask in state FAILED...',o:['returns null','throws IllegalStateException','returns the exception'],a:1,why:'Use exception() for a failed subtask; get() is only legal on SUCCESS.'},
+ {q:'In JDK 25, which object decides when a scope is done and what join() returns?',o:['A Joiner','A ShutdownOnFailure subclass','The ThreadFactory'],a:0,why:'JEP 505 replaced policy subclasses with Joiner implementations passed to StructuredTaskScope.open().'},
+ {q:'What thread kind do subtasks use by default?',o:['Platform threads','Virtual threads','Carrier threads'],a:1,why:'Every fork starts a new virtual thread unless you configure another ThreadFactory.'}]);
+
+})();
+</script>
+</body>
+</html>

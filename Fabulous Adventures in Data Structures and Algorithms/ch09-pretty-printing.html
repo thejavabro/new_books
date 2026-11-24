@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Greedy Iterative Pretty Printing</title>
+<meta name="description" content="How does an editor decide where to break your long line of code? A doc tree of text, line breaks and groups, plus a greedy &quot;does it fit?&quot; rule, produces tidy layouts in linear time.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Fabulous Adventures companion: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:4px;flex-wrap:wrap;flex:1 1 80px;min-width:0}
+.dots i{width:clamp(6px,3vw,22px);height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code + data-structure helpers */
+pre.code{margin:0;font-family:var(--mono);font-size:.84rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .k{color:var(--blue);font-weight:600} pre.code .c{color:var(--muted);font-style:italic} pre.code .s{color:var(--d2)}
+code{font-family:var(--mono);font-size:.88em;background:var(--blue-soft);padding:1px 5px;border-radius:4px}
+.cells{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.cell{font-family:var(--mono);font-size:.9rem;min-width:2.2em;padding:4px 8px;border:1.5px solid var(--blue);border-radius:6px;background:var(--surface);text-align:center;transition:all .3s}
+.cell.hl{background:var(--blue);color:var(--surface)} .cell.pc{border-color:var(--pencil);background:var(--pencil-soft)} .cell.ok{border-color:var(--ok);background:var(--ok-soft)} .cell.bad{border-color:var(--bad);background:var(--bad-soft)} .cell.dim{opacity:.35}
+.log{font-family:var(--mono);font-size:.82rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+input[type=text],input[type=number]{font:inherit;font-size:.92rem;padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+canvas{max-width:100%;display:block}
+
+/* page */
+
+.out{font-family:var(--mono);font-size:.86rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 0;overflow-x:auto;white-space:pre;position:relative}
+.out .ln{display:block;padding:0 12px;position:relative}
+.out .ln.over{background:var(--bad-soft)}
+.ruler{font-family:var(--mono);font-size:.86rem;white-space:pre;color:var(--muted);padding:0 12px;overflow:hidden}
+.coins{display:flex;gap:6px;flex-wrap:wrap;min-height:40px;align-items:center}
+.coin{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-family:var(--mono);font-size:.75rem;font-weight:700;border:2px solid var(--mid);background:var(--mid-soft);color:var(--ink)}
+.coin.q{width:40px;height:40px} .coin.p{border-color:var(--pencil);background:var(--pencil-soft);width:28px;height:28px}
+.tree{font-family:var(--mono);font-size:.8rem;line-height:1.35;white-space:pre;overflow-x:auto;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;max-height:340px}
+.stk{display:flex;flex-direction:column-reverse;gap:3px;min-height:120px;justify-content:flex-start}
+.stk span{font-family:var(--mono);font-size:.78rem;border:1px solid var(--blue);border-radius:4px;padding:2px 6px;background:var(--surface)}
+.stk span:last-child{background:var(--blue);color:var(--surface)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Fabulous Adventures in DS&A · visual companion</a><span class="tag">Part 2 · Chapter 9 of 16</span></div>
+  <h1>Greedy Iterative Pretty Printing</h1>
+  <p class="lede">How does an editor decide where to break your long line of code? A doc tree of text, line breaks and groups, plus a greedy "does it fit?" rule, produces tidy layouts in linear time.</p>
+  <nav class="toc" aria-label="Sections"><a href="#problem">The problem</a><a href="#greedy">Greedy algorithms</a><a href="#doc">The doc</a><a href="#depth">How deep?</a><a href="#fits">Fits()</a><a href="#pretty">Pretty()</a><a href="#visitor">Visitor pattern</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="problem" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Turning a parse tree back into pretty text</h2></div>
+  <p>C-family languages don't care about whitespace, so teams agree on one automatic formatter and never reformat files for any other reason. How do those <b>pretty printers</b> decide where to break lines? After a lexer and parser produce a parse tree, the printer must turn the tree back into text, balancing three goals, usually in this order:</p>
+  <div class="three">
+    <div class="stat"><b>1. Stay within the width</b><span>No line beyond 80 or 100 characters unless unavoidable.</span></div>
+    <div class="stat"><b>2. Show structure</b><span>Indentation helps the reader see what belongs to what.</span></div>
+    <div class="stat"><b>3. Save vertical space</b><span>Use as few line breaks as possible.</span></div>
+  </div>
+  <p>Real languages add misery: end-of-line comments in the middle of an expression, or which token a <code>/* comment */</code> sticks to when a line splits (a real problem on the C# compiler and IDE). The chapter simplifies: no comments, spaces and line breaks only, indentation fixed at four spaces, and no required line breaks, so it formats <b>expressions</b>.</p>
+</section>
+
+<section id="greedy" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Greedy: locally best, usually good enough</h2></div>
+  <p>A <b>greedy</b> algorithm makes the best choice for each small piece and never reconsiders. Making change is the classic case: hand back the biggest coin that fits, repeat. With US coins it is always optimal… until the till runs out of nickels. Compare with the true optimum (found here by dynamic programming; chapter 8's backtracking would also do).</p>
+  <div class="sheet">
+    <label class="rng"><span>Change to give: <b id="amtV">41</b>¢</span><input type="range" id="amt" min="1" max="99" value="41"></label>
+    <label class="row small"><input type="checkbox" id="noNick" checked> the till has no nickels</label>
+    <div class="two"><div><span class="eyebrow">Greedy</span><div class="coins" id="gC"></div></div><div><span class="eyebrow">Optimal</span><div class="coins" id="oC"></div></div></div>
+    <p id="chTxt" aria-live="polite"></p>
+  </div>
+  <p>A pretty printer runs as you type in an IDE, so a fast, greedy "fit as much on this line as you can" beats a slow optimal layout that wouldn't look noticeably better. The algorithm here is a simplified form of Christian Lindig's <i>Strictly Pretty</i> (2000), from Philip Wadler's <i>A Prettier Printer</i> (1998), going back to Derek Oppen (1980); Wadler was also inspired by John Hughes, of Hughes-list fame.</p>
+</section>
+
+<section id="doc" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Phase 1's output: a doc</h2></div>
+  <p>Phase 1 turns the parse tree into a <b>doc</b>: an immutable graph that states formatting wishes. Phase 2 turns the doc into text. Five node kinds are enough:</p>
+  <div class="cardgrid" id="docCards"></div>
+  <pre class="code"><span class="c">// Foo.Bar(xx + yy * zz) with these rules: may break before ".", after "(";
+// operators keep company with their left operand; never break before ")"</span>
+BinOp(l, op, r) = Group(Indent(Group(l + Space + op) + Space + r))
+member  = Group(Foo + Indent(Group(OptBreak + "." + Bar)))
+args    = Group(Indent("(" + OptBreak + BinOp(xx, "+", BinOp(yy, "*", zz)) + ")"))
+call    = Group(member + args)</pre>
+  <div class="callout blue"><b class="h">The design lesson</b><span>"The most important thing I know about software design": build a small library whose programs read like the concepts of the domain. A handful of factory methods and an overloaded <code>+</code> make formatting rules short, readable and easy to experiment with.</span></div>
+</section>
+
+<section id="depth" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Docs are deep, so avoid recursion</h2></div>
+  <p>Groups and indents have one child each, so docs grow <b>deep, not wide</b>: the 21-character example above is 17 levels deep. Format a big file recursively and you risk a stack overflow on a fixed-size call stack. So both phase-2 methods use an explicit <code>Stack</code> of work items instead. Here is the example doc, with depth on the left:</p>
+  <div class="tree" id="docTree"></div>
+</section>
+
+<section id="fits" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Fits(width) with a work stack</h2></div>
+  <p>"Would this doc fit in <i>width</i> characters if none of its breaks became newlines?" Pop a doc: text and optional breaks add their length; groups and indents push their child; a concat pushes right then left (so left is processed first). Stop as soon as the count exceeds the width, or the stack empties. The stack can never hold more items than there are concats. Step through <code>Fits(13)</code> on the argument group.</p>
+  <div class="sheet stepper" id="fStep">
+    <div class="two"><div><span class="eyebrow">Work stack (top highlighted)</span><div class="stk" id="fStk"></div></div><div class="stack"><span class="eyebrow">Characters used</span><div class="big blue" id="fUsed">0</div><span class="small" id="fNote"></span></div></div>
+  </div>
+</section>
+
+<section id="pretty" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Pretty(width): try it live</h2></div>
+  <p>Pretty keeps a stack of <b>(fits?, indent, doc)</b> triples. A group asks <code>Fits(width − used)</code> of its contents and passes the answer down; every optional break directly governed by a group that didn't fit becomes a newline plus the current indentation; indent nodes add four spaces for their descendants. Wrap the whole doc in a group first so every break has one. Type an expression (identifiers, <code>.</code>, calls, parentheses, <code>+</code> and <code>*</code>) and drag the width.</p>
+  <div class="sheet">
+    <div class="row"><input type="text" id="exIn" value="Frobozz.Frobulator.Frobulate((Blob.Width + Cob.Width) * Glob.Length, Qbert.Quux.Qix)" aria-label="Expression" style="flex:1 1 280px"></div>
+    <div class="row"><button class="btn" id="exFoo">Foo.Bar(xx + yy * zz)</button><button class="btn" id="exFrob">The Frobozz example</button></div>
+    <label class="rng"><span>Page width: <b id="wV">40</b> characters</span><input type="range" id="w" min="8" max="100" value="40"></label>
+    <div class="out" id="out"></div>
+    <p class="small" id="outTxt"></p>
+  </div>
+  <div class="callout"><b class="h">Why the last line can overflow</b><span>With <code>Foo.Bar(xx + yy * zz)</code> at width 15, the last line comes out 16 wide. Not a bug: "yy * zz" fit in the space left, the greedy printer took it, and the rule "never break before )" left the parenthesis nowhere else to go. Good enough is good enough. The whole pass is about O(n) in the size of the doc.</span></div>
+</section>
+
+<section id="visitor" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Phase 1: the visitor pattern</h2></div>
+  <p>Where should "parse tree → doc" code live? A virtual <code>ToDoc()</code> on every node class means the editor team edits the compiler team's code (Conway's law), every new style (Alice's, Bob's) adds yet more methods, and so does every other analysis: coloring, linting, type checking, code generation. The <b>visitor pattern</b> puts each concern in its own class. Each node gets one boilerplate method, <code>Accept(visitor) =&gt; visitor.Visit(this)</code>, and that's the only change ever made to the tree.</p>
+  <div class="sheet stepper" id="vStep">
+    <div class="svgbox fit"><svg id="vSvg" viewBox="0 0 640 200" role="img" aria-label="Double dispatch call sequence"></svg></div>
+  </div>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Visitor"><button data-vv="pretty" aria-pressed="true">PrettyVisitor</button><button data-vv="count" aria-pressed="false">NodeCounter</button><button data-vv="lisp" aria-pressed="false">LispPrinter</button></div>
+    <pre class="code" id="vOut"></pre>
+    <p class="small">Three unrelated visitor classes over the same parse tree of the expression above, with no change to the tree classes.</p>
+  </div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="score"></span></div><div class="quiz" id="quizBox"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Fabulous Adventures in Data Structures and Algorithms</i> by Eric Lippert (Manning, 2026). Explanations, code snippets, simulations and drawings are original summaries written for study; they are not taken from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch08-graph-coloring.html"><span>Previous · Chapter 8</span><b>Coloring Graphs with Backtracking</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch10-unification.html"><span>Next · Chapter 10</span><b>Unification and Anti-unification</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('fadsa:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('fadsa:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+
+/* change making */
+function change(){const a=+$('#amt').value;$('#amtV').textContent=a;const coins=$('#noNick').checked?[25,10,1]:[25,10,5,1];let r=a;const g=[];coins.forEach(c=>{while(r>=c){g.push(c);r-=c}});
+ const best=[0],from=[0];for(let x=1;x<=a;x++){best[x]=1e9;coins.forEach(c=>{if(c<=x&&best[x-c]+1<best[x]){best[x]=best[x-c]+1;from[x]=c}})}const o=[];for(let x=a;x>0;x-=from[x])o.push(from[x]);o.sort((p,q)=>q-p);
+ const draw=l=>l.map(c=>`<span class="coin ${c===25?'q':c===1?'p':''}">${c}</span>`).join('');$('#gC').innerHTML=draw(g);$('#oC').innerHTML=draw(o);
+ $('#chTxt').innerHTML=g.length===o.length?`<b class="okc">Greedy is optimal here</b>: ${g.length} coins.`:`<b class="badc">Greedy uses ${g.length} coins; the optimum is ${o.length}.</b> Each greedy choice was locally best, the total wasn't.`}
+['#amt','#noNick'].forEach(i=>$(i).addEventListener('input',change));change();
+
+cards('#docCards',[{t:'Text',d:'Literal text, never containing a newline.',c:'blue'},{t:'OptBreak',d:'Its text (a space, or nothing) or a line break. Two shared instances: Space and OptBreak.',c:'pencil'},
+ {t:'Group',d:'All the optional breaks directly inside (not inside nested groups) become newlines together, or none do. Comma lists break after every comma or none.',c:'d2'},
+ {t:'Indent',d:'Line breaks inside are followed by four more spaces of indentation.',c:'d5'},{t:'Concat',d:'Left then right. Written a + b.',c:'d3'}]);
+
+/* doc engine */
+const T=s=>({k:'t',s}),SP={k:'b',s:' '},OB={k:'b',s:''},G=d=>({k:'g',d}),I=d=>({k:'i',d}),C=(...xs)=>xs.reduce((a,b)=>({k:'c',l:a,r:b}));
+function fits(doc,width,trace){const st=[doc];let used=0;while(true){if(trace)trace.push({st:st.slice(),used});if(used>width)return false;if(!st.length)return true;const d=st.pop();
+ if(d.k==='t'||d.k==='b')used+=d.s.length;else if(d.k==='g'||d.k==='i')st.push(d.d);else{st.push(d.r);st.push(d.l)}}}
+function pretty(doc,width){let used=0,out='';const st=[[true,0,G(doc)]];while(st.length){const[f,ind,d]=st.pop();
+ if(d.k==='t'){out+=d.s;used+=d.s.length}else if(d.k==='g')st.push([fits(d.d,width-used),ind,d.d]);else if(d.k==='i')st.push([f,ind+4,d.d]);
+ else if(d.k==='b'){if(f){out+=d.s;used+=d.s.length}else{out+='\n'+' '.repeat(ind);used=ind}}else{st.push([f,ind,d.r]);st.push([f,ind,d.l])}}return out}
+/* parser */
+function parse(src){const toks=src.match(/[A-Za-z_]\w*|[().,+*]/g)||[];let i=0;const peek=()=>toks[i],eat=t=>{if(toks[i]!==t)throw new Error('expected '+t);i++};
+ function prim(){let e;if(peek()==='('){eat('(');e={t:'paren',e:sum()};eat(')')}else if(/^[A-Za-z_]/.test(peek()||'')){e={t:'id',n:toks[i++]}}else throw new Error('unexpected '+(peek()||'end'));
+  while(peek()==='.'||peek()==='('){if(peek()==='.'){eat('.');const n=toks[i++];if(!/^[A-Za-z_]/.test(n||''))throw new Error('name expected');e={t:'mem',o:e,n}}else{eat('(');const a=[];if(peek()!==')'){a.push(sum());while(peek()===','){eat(',');a.push(sum())}}eat(')');e={t:'call',f:e,a}}}return e}
+ function prod(){let e=prim();while(peek()==='*'){eat('*');e={t:'bin',op:'*',l:e,r:prim()}}return e}
+ function sum(){let e=prod();while(peek()==='+'){eat('+');e={t:'bin',op:'+',l:e,r:prod()}}return e}
+ const e=sum();if(i<toks.length)throw new Error('unexpected '+toks[i]);return e}
+/* visitors: Accept dispatches on node type */
+const accept=(e,v)=>v['visit_'+e.t](e);
+const PrettyV={visit_id:e=>T(e.n),visit_paren:e=>G(I(C(T('('),OB,accept(e.e,PrettyV),T(')')))),
+ visit_bin(e){return G(I(C(G(C(accept(e.l,PrettyV),SP,T(e.op))),SP,accept(e.r,PrettyV))))},
+ visit_mem:e=>G(C(accept(e.o,PrettyV),I(G(C(OB,T('.'),T(e.n)))))),
+ visit_call(e){const f=accept(e.f,PrettyV);if(!e.a.length)return G(C(f,T('()')));let list=accept(e.a[0],PrettyV);e.a.slice(1).forEach(x=>list=C(list,T(','),SP,accept(x,PrettyV)));return G(C(f,G(I(C(T('('),OB,list,T(')'))))))}};
+const CountV={visit_id:()=>1,visit_paren:e=>1+accept(e.e,CountV),visit_bin:e=>1+accept(e.l,CountV)+accept(e.r,CountV),visit_mem:e=>1+accept(e.o,CountV),visit_call:e=>1+accept(e.f,CountV)+e.a.reduce((s,x)=>s+accept(x,CountV),0)};
+const LispV={visit_id:e=>e.n,visit_paren:e=>accept(e.e,LispV),visit_bin:e=>`(${e.op} ${accept(e.l,LispV)} ${accept(e.r,LispV)})`,visit_mem:e=>`(. ${accept(e.o,LispV)} ${e.n})`,visit_call:e=>`(call ${accept(e.f,LispV)}${e.a.map(x=>' '+accept(x,LispV)).join('')})`};
+let tree=null,vv='pretty';
+function run(){const w=+$('#w').value;$('#wV').textContent=w;try{tree=parse($('#exIn').value)}catch(err){$('#out').innerHTML=`<span class="ln badc">Parse error: ${err.message}</span>`;return}
+ const doc=accept(tree,PrettyV);const txt=pretty(doc,w);const lines=txt.split('\n');let ruler='';for(let c=1;c<=Math.max(w,...lines.map(l=>l.length));c++)ruler+=c===w?'|':c%10===0?String(c/10%10):'·';
+ $('#out').innerHTML=`<div class="ruler">${ruler}</div>`+lines.map(l=>`<span class="ln ${l.length>w?'over':''}">${l.replace(/&/g,'&amp;').replace(/</g,'&lt;')||' '}</span>`).join('');
+ const flat=pretty(doc,1e9).length;$('#outTxt').innerHTML=`One line would need ${flat} characters. Output: ${lines.length} line${lines.length>1?'s':''}, widest ${Math.max(...lines.map(l=>l.length))}.`+(lines.some(l=>l.length>w)?' <span class="badc">A red line overflows: no legal break was left.</span>':'');vis()}
+['#exIn','#w'].forEach(i=>$(i).addEventListener('input',run));
+$('#exFoo').addEventListener('click',()=>{$('#exIn').value='Foo.Bar(xx + yy * zz)';$('#w').value=15;run()});
+$('#exFrob').addEventListener('click',()=>{$('#exIn').value='Frobozz.Frobulator.Frobulate((Blob.Width + Cob.Width) * Glob.Length, Qbert.Quux.Qix)';$('#w').value=40;run()});
+function vis(){if(!tree)return;$('#vOut').textContent=vv==='pretty'?pretty(accept(tree,PrettyV),+$('#w').value):vv==='count'?`${accept(tree,CountV)} parse-tree nodes`:accept(tree,LispV)}
+seg('[data-vv]',b=>{vv=b.dataset.vv;vis()});run();
+
+/* doc tree for Foo.Bar */
+const fooDoc=accept(parse('Foo.Bar(xx + yy * zz)'),PrettyV);
+(function(){const lines=[];let maxD=0;function w(d,depth){maxD=Math.max(maxD,depth);const pad=String(depth).padStart(2)+' '+'  '.repeat(depth);
+ if(d.k==='t')lines.push(pad+JSON.stringify(d.s));else if(d.k==='b')lines.push(pad+(d.s?'Space':'OptBreak'));else if(d.k==='g'){lines.push(pad+'Grp');w(d.d,depth+1)}else if(d.k==='i'){lines.push(pad+'Ind');w(d.d,depth+1)}else{lines.push(pad+'+');w(d.l,depth+1);w(d.r,depth+1)}}
+ w(fooDoc,1);$('#docTree').textContent=lines.join('\n')+`\n\n${maxD} levels deep for 21 characters of source.`})();
+
+/* Fits stepper on the args group */
+const argsGroup=fooDoc.d.r;const tr=[];const res=fits(argsGroup.d,13,tr);
+const nm=d=>d.k==='t'?JSON.stringify(d.s):d.k==='b'?(d.s?'Space':'OptBreak'):d.k==='g'?'Grp':d.k==='i'?'Ind':'+';
+$('#fStep').insertAdjacentHTML('beforeend',stepHTML());
+stepper('#fStep',tr.map((t,i)=>i===tr.length-1?(res?'Stack empty: it fits.':`${t.used} > 13: stop early. It does not fit, so the breaks in this group become newlines.`):i===0?'Push the doc to test.':`Popped the previous top; ${t.used} characters used so far.`),i=>{const t=tr[i];$('#fStk').innerHTML=t.st.map(d=>`<span>${nm(d)}</span>`).join('');$('#fUsed').textContent=t.used;$('#fNote').textContent=`stack depth ${t.st.length}`});
+
+/* visitor stepper */
+const VS=['Caller has Expr e (really an Id) and a visitor v. It calls e.Accept(v).','Accept is virtual on Expr, so the runtime dispatches on the type of e: Id.Accept runs.','Inside Id.Accept, "this" has static type Id, so the compiler chose the overload IExprVisitor<T>.Visit(Id).','Interface dispatch on the type of v: PrettyVisitor.Visit(Id) runs and returns a Text doc. Two dispatches: hence "double dispatch", a better name than "visitor".'];
+$('#vStep').insertAdjacentHTML('beforeend',stepHTML());
+stepper('#vStep',VS,i=>{const s=$('#vSvg');s.innerHTML='';const box=[[20,'caller'],[180,'Expr.Accept\n(virtual)'],[340,'Id.Accept\nv.Visit(this)'],[500,'PrettyVisitor\n.Visit(Id)']];
+ box.forEach(([x,t],k)=>{const on=k===i;s.appendChild(el('rect',{x,y:60,width:120,height:64,rx:10,fill:on?'var(--pencil-soft)':'var(--surface)',stroke:on?'var(--pencil)':'var(--blue)','stroke-width':on?2.5:1.5}));t.split('\n').forEach((l,j)=>s.appendChild(el('text',{x:x+60,y:88+j*16,'text-anchor':'middle','font-size':12,fill:'var(--ink)',class:'t-mono'},l)));
+  if(k<3){s.appendChild(el('line',{x1:x+122,y1:92,x2:x+176,y2:92,stroke:k<i?'var(--pencil)':'var(--line)','stroke-width':2,class:k===i-1?'flow':''}))}});
+ s.appendChild(el('text',{x:320,y:30,'text-anchor':'middle','font-size':13,fill:'var(--muted)'},['e.Accept(v)','dispatch #1: on the expression','overload chosen at compile time','dispatch #2: on the visitor'][i]));
+ s.appendChild(el('text',{x:320,y:170,'text-anchor':'middle','font-size':12,fill:'var(--muted)'},'each node class: public override T Accept<T>(IExprVisitor<T> v) => v.Visit(this);'))});
+
+quiz('#quizBox','#score',[
+ {q:'Greedy change for 41¢ with no nickels uses…',o:['5 coins','8 coins','6 coins'],a:1,why:'25 + 10 + six pennies; four dimes and a penny would be 5.'},
+ {q:'In a Group, optional breaks…',o:['break independently','all break or none do','never break'],a:1,why:'That is what makes comma lists break after every comma.'},
+ {q:'Why use an explicit Stack in Fits and Pretty?',o:['Speed','Docs are deep; recursion risks stack overflow','Immutability'],a:1,why:'Group and Indent nodes make docs very deep.'},
+ {q:'Max size of the Fits work stack?',o:['Number of concats (roughly)','Number of characters','Unbounded'],a:0,why:'Only concats increase the stack size.'},
+ {q:'The visitor pattern is really…',o:['single dispatch','double dispatch','no dispatch'],a:1,why:'The method chosen depends on the runtime types of both the node and the visitor.'}]);
+
+})();
+</script>
+</body>
+</html>

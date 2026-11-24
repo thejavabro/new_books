@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Arrays, the Vector API</title>
+<meta name="description" content="Chapter 5 starts close to the hardware: the Vector API turns a loop into a handful of SIMD instructions. Then it moves up to collection factories, HashMap sizing and JDK 21&#x27;s sequenced collections.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Java Coding Problems companion. Layout: a workbench reading column on blueprint grid paper.
+   Blue ink = structure and the JVM, orange pencil = your code, green = works, red = breaks.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code */
+:root{--codebg:#f7f9fc}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--codebg:#0e1a28}}
+:root[data-theme="dark"]{--codebg:#0e1a28}
+pre.code{font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--codebg);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:0;overflow-x:auto;white-space:pre;tab-size:4;min-width:0;max-width:100%}
+code{font-family:var(--mono);font-size:.88em;background:var(--codebg);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+pre.code .tk{color:var(--d4);font-weight:600} pre.code .ts{color:var(--d2)} pre.code .tc{color:var(--muted);font-style:italic}
+pre.code .tn{color:var(--d3)} pre.code .tt{color:var(--blue)} pre.code .ta{color:var(--d5)}
+pre.code mark,.hl{background:var(--mid-soft);color:inherit;border-radius:3px;outline:1px solid var(--mid)}
+.out{font-family:var(--mono);font-size:.82rem;background:var(--ink);color:var(--paper);border-radius:8px;padding:10px 14px;white-space:pre-wrap;overflow-wrap:anywhere;min-height:2.6em}
+.out .err{color:#ff9b8f}
+.theme-btn{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted)}
+.theme-btn:hover{border-color:var(--blue);color:var(--blue)}
+.pnum{font-family:var(--mono);font-size:.72rem;color:var(--pencil);border:1px solid var(--pencil);border-radius:4px;padding:1px 6px;white-space:nowrap}
+.cells{display:flex;flex-wrap:wrap;gap:4px}
+.cell{min-width:34px;height:34px;padding:0 6px;display:inline-grid;place-items:center;border:1px solid var(--line);border-radius:6px;background:var(--paper);font-family:var(--mono);font-size:.8rem;transition:background .3s,border-color .3s}
+.cell.on{background:var(--blue-soft);border-color:var(--blue)}
+.cell.hot{background:var(--pencil-soft);border-color:var(--pencil)}
+.cell.ok{background:var(--ok-soft);border-color:var(--ok)}
+.cell.bad{background:var(--bad-soft);border-color:var(--bad)}
+input[type=text],input[type=number]{font:inherit;font-family:var(--mono);font-size:.9rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+.sheet>.seg,.stack>.seg{align-self:flex-start}
+
+/* page */
+
+.lanes{display:flex;flex-direction:column;gap:6px}
+.lanes .lr{display:grid;grid-template-columns:2.2rem minmax(0,1fr);gap:8px;align-items:center}
+.lanes .lr span{font-family:var(--mono);font-size:.8rem;color:var(--muted)}
+.cells .cell{min-width:0;flex:1 0 26px;height:28px;font-size:.72rem;padding:0 2px}
+.cell.c0{background:var(--blue-soft);border-color:var(--blue)} .cell.c1{background:var(--pencil-soft);border-color:var(--pencil)}
+.cell.tail{background:var(--mid-soft);border-color:var(--mid)}
+.spec{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.spec div{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--paper)}
+.spec b{font-family:var(--mono);display:block}
+.mtx td{text-align:center}
+.mtx td.r{font-weight:700}
+.mtx td.ok{color:var(--ok);font-weight:700} .mtx td.bad{color:var(--bad);font-weight:700}
+canvas{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);display:block}
+.seqv{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:44px}
+.seqv .cell.first{outline:2px solid var(--ok)} .seqv .cell.last{outline:2px solid var(--pencil)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Java Coding Problems · visual companion</a><span class="tag">Chapter 5 of 13 · Problems 107–118</span><button class="theme-btn" id="themeBtn" type="button">Dark theme</button></div>
+  <h1>Arrays, the Vector API and Collections</h1>
+  <p class="lede">Chapter 5 starts close to the hardware: the Vector API turns a loop into a handful of SIMD instructions. Then it moves up to collection factories, HashMap sizing and JDK 21's sequenced collections.</p>
+  <nav class="toc" aria-label="Sections"><a href="#simd">SIMD</a><a href="#terms">Species & lanes</a><a href="#loop">loopBound & tail</a><a href="#fma">FMA & matrices</a><a href="#factories">Collection factories</a><a href="#capacity">Map capacity</a><a href="#sequenced">Sequenced collections</a><a href="#check">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="simd" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>One instruction, many numbers</h2></div>
+  <p>A classic loop adds one pair of numbers per instruction: Single Instruction, Single Data (SISD). Modern CPUs have wide registers (SSE 128-bit, AVX2 256-bit, AVX-512 512-bit) that add a whole chunk at once: SIMD (<span class="pnum">P107</span>). The incubating <b>Vector API</b> (<code>jdk.incubator.vector</code>, since JDK 16) lets you write that in portable Java, and the JIT maps it to the best instructions the CPU has. Race them.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn primary" id="race">Run both</button><span class="small" id="raceTxt"></span></div>
+    <div class="lanes"><div class="lr"><span>SISD</span><div class="cells" id="rS"></div></div><div class="lr"><span>SIMD</span><div class="cells" id="rV"></div></div></div>
+  </div>
+</section>
+
+<section id="terms" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Shape, element type, species, lanes</h2></div>
+  <p>A <b>vector</b> is a fixed-size sequence of <b>lanes</b>. Its <b>shape</b> is the size in bits; its <b>element type</b> is the Java primitive in each lane; the pair is the <b>species</b>, e.g. <code>IntVector.SPECIES_256</code> (<span class="pnum">P108</span>). Lanes = shape ÷ element size. <code>SPECIES_PREFERRED</code> picks the best shape for the running CPU.</p>
+  <div class="sheet">
+    <div class="row"><span class="small">Shape</span><div class="seg" role="group" aria-label="Shape" id="shSeg"><button data-s="64" aria-pressed="false">64</button><button data-s="128" aria-pressed="false">128</button><button data-s="256" aria-pressed="true">256</button><button data-s="512" aria-pressed="false">512</button></div>
+      <span class="small">Element</span><div class="seg" role="group" aria-label="Element" id="etSeg"><button data-e="8" aria-pressed="false">byte</button><button data-e="16" aria-pressed="false">short</button><button data-e="32" aria-pressed="true">int</button><button data-e="64" aria-pressed="false">long/double</button></div></div>
+    <div class="svgbox"><svg id="laneSvg" viewBox="0 0 640 90" role="img" aria-label="Lanes in a vector register"></svg></div>
+    <p id="laneTxt" class="small"></p>
+  </div>
+</section>
+
+<section id="loop" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Chunking an array: loopBound and the tail</h2></div>
+  <p>To add two arrays (<span class="pnum">P109</span>), step through them one vector at a time. <code>species.loopBound(length)</code> returns the largest multiple of the lane count that fits, so the vector loop never reads past the end. The leftover <b>tail</b> needs separate handling: a <code>VectorMask</code> that switches off lanes past the end, or a plain scalar loop. Masks in hot loops are expensive, so the scalar tail is usually preferred. Unrolling, processing several vectors per iteration, can help further (<span class="pnum">P110</span>).</p>
+  <div class="sheet">
+    <div class="two"><label class="rng"><span>Array length: <b id="lenV"></b></span><input type="range" id="lenR" min="8" max="60" value="34"></label><label class="rng"><span>Lanes (int, 256-bit = 8): <b id="lnV"></b></span><input type="range" id="lnR" min="2" max="16" step="2" value="8"></label></div>
+    <div class="cells" id="chunks"></div>
+    <p id="chTxt" class="small"></p>
+  </div>
+  <pre class="code">static final VectorSpecies&lt;Integer&gt; S = IntVector.SPECIES_PREFERRED;
+static void sum(int[] x, int[] y, int[] z) {
+    int i = 0, bound = S.loopBound(x.length);
+    for (; i &lt; bound; i += S.length())
+        IntVector.fromArray(S, x, i).add(IntVector.fromArray(S, y, i)).intoArray(z, i);
+    for (; i &lt; x.length; i++) z[i] = x[i] + y[i];          // scalar tail
+}</pre>
+  <div class="callout"><b class="h">Benchmarks need care (P111)</b><span>The book measures with JMH. Vector code only wins once the JIT has compiled it to real SIMD instructions; in the interpreter, or on a CPU without wide registers, it can be slower than the scalar loop. Run it with <code>--add-modules jdk.incubator.vector</code>.</span></div>
+</section>
+
+<section id="fma" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Fused multiply-add, matrices and images</h2></div>
+  <p>FMA computes <code>a·b + c</code> in one step with one rounding (<span class="pnum">P112</span>). A dot product is a running FMA: <code>sum = x.fma(y, sum)</code> lane by lane, then <code>reduceLanes(ADD)</code> folds the lanes into one number. A matrix product is a dot product per output cell (<span class="pnum">P113</span>). Step through a dot product with 4 lanes.</p>
+  <div class="sheet stepper" id="fStp"><div class="svgbox"><svg id="fSvg" viewBox="0 0 640 190" role="img" aria-label="Lanes accumulating a dot product"></svg></div></div>
+  <div class="sheet">
+    <h3>Image negative, one vector of pixels at a time (<span class="pnum">P114</span>)</h3>
+    <p class="small">Each pixel channel becomes 255 − value. On the vector path, a whole register of channel bytes is processed per instruction; here each highlighted band stands for one vector chunk.</p>
+    <canvas id="img" width="320" height="160" aria-label="Generated picture to invert"></canvas>
+    <div class="row"><button class="btn primary" id="negGo">Apply negative</button><button class="btn" id="negRst">Reset</button></div>
+  </div>
+</section>
+
+<section id="factories" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>List.of, Arrays.asList, unmodifiable views: not the same thing</h2></div>
+  <p>Three ways to get a "fixed" list behave very differently (<span class="pnum">P115</span>). Pick an operation to see what each does.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Operation" id="opSeg"><button data-o="0" aria-pressed="true">add(x)</button><button data-o="1" aria-pressed="false">set(0, x)</button><button data-o="2" aria-pressed="false">contains null element</button><button data-o="3" aria-pressed="false">change the source</button></div>
+    <div class="tbl"><table class="t mtx" id="fT"></table></div>
+    <p id="fTxt" class="small"></p>
+  </div>
+  <div class="cardgrid" id="tlCards"></div>
+</section>
+
+<section id="capacity" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Sizing a HashMap for n entries</h2></div>
+  <p><code>new HashMap&lt;&gt;(n)</code> sets the number of <i>buckets</i>, not entries. The map resizes once size exceeds capacity × 0.75, rehashing everything (<span class="pnum">P117</span>). To hold n entries without resizing you need about n / 0.75 buckets, which is what JDK 19's <code>HashMap.newHashMap(n)</code> computes for you. Internally the table size is also rounded up to a power of two. Try values.</p>
+  <div class="sheet">
+    <div class="two"><label class="rng"><span>Entries to insert: <b id="cnV"></b></span><input type="range" id="cn" min="10" max="2000" step="10" value="260"></label><label class="rng"><span>Constructor argument: <b id="caV"></b></span><input type="range" id="ca" min="1" max="2000" value="16"></label></div>
+    <div class="row"><button class="btn" id="useN">new HashMap&lt;&gt;(n)</button><button class="btn" id="useNH">HashMap.newHashMap(n)</button><button class="btn" id="useD">new HashMap&lt;&gt;()</button></div>
+    <div class="svgbox"><svg id="capSvg" viewBox="0 0 640 120" role="img" aria-label="Table size growth"></svg></div>
+    <p id="capTxt"></p>
+  </div>
+</section>
+
+<section id="sequenced" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Sequenced collections (JDK 21)</h2></div>
+  <p>Before JDK 21, "get the last element" was <code>list.get(list.size() - 1)</code>, <code>deque.getLast()</code>, <code>sortedSet.last()</code> or a loop for <code>LinkedHashSet</code>. JEP 431 added <code>SequencedCollection</code>, <code>SequencedSet</code> and <code>SequencedMap</code> with one vocabulary: <code>addFirst/addLast</code>, <code>getFirst/getLast</code>, <code>removeFirst/removeLast</code> and <code>reversed()</code> (<span class="pnum">P118</span>). The implementations still differ in the details. Try them.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Implementation" id="impSeg"><button data-k="list" aria-pressed="true">ArrayList</button><button data-k="lhs" aria-pressed="false">LinkedHashSet</button><button data-k="tree" aria-pressed="false">TreeSet</button><button data-k="imm" aria-pressed="false">List.of(...)</button></div>
+    <div class="seqv" id="seqV"></div>
+    <div class="row"><button class="btn" data-op="addFirst">addFirst("C")</button><button class="btn" data-op="addLast">addLast("A")</button><button class="btn" data-op="getFirst">getFirst()</button><button class="btn" data-op="getLast">getLast()</button><button class="btn" data-op="removeFirst">removeFirst()</button><button class="btn" data-op="reversed">reversed()</button></div>
+    <div class="out" id="seqOut"></div>
+  </div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Test yourself</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b class="blue">Vector API</b><span>Species = shape + element type; lanes = bits ÷ element size.</span></div>
+    <div><b>loopBound + tail</b><span>Vector loop to the bound, scalar loop for the rest.</span></div>
+    <div><b class="pencil">FMA</b><span><code>sum = x.fma(y, sum)</code>, then <code>reduceLanes</code>.</span></div>
+    <div><b class="badc">List.of</b><span>Immutable, rejects nulls. <code>Arrays.asList</code> is fixed-size and writes through.</span></div>
+    <div><b>newHashMap(n)</b><span>Sizes for n entries, not n buckets.</span></div>
+    <div><b class="okc">Sequenced</b><span>First, last and reversed() on lists, deques, linked and sorted sets and maps.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Java Coding Problems, Second Edition</i> by Anghel Leonard (Packt, 2024). Explanations, code snippets, diagrams and simulations are original summaries written for this companion; problem numbers refer to the book so you can look up the full solutions there.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch04-records.html"><span>Previous · Chapter 4</span><b>Records and Record Patterns</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch05-data-structures.html"><span>Next · Chapter 5</span><b>Classic Data Structures</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('jcp:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('jcp:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* tiny Java highlighter for every pre.code (write plain escaped code; use ⟦...⟧ to mark a highlight) */
+const JKW=new Set('abstract assert boolean break byte case catch char class const continue default do double else enum extends final finally float for goto if implements import instanceof int interface long native new package private protected public return short static strictfp super switch synchronized this throw throws transient try void volatile while var record sealed permits non-sealed yield when true false null'.split(' '));
+function hiJava(src){const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const re=/(\/\/[^\n]*|\/\*[\s\S]*?\*\/)|("""[\s\S]*?"""|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*')|(@[A-Za-z]\w*)|(\b\d[\d_]*(?:\.\d+)?[LlFfDd]?\b|\b0x[0-9a-fA-F_]+\b)|(\b[A-Za-z_]\w*(?:-sealed)?\b)|(⟦|⟧)/g;
+  let out='',last=0,m;while((m=re.exec(src))){out+=esc(src.slice(last,m.index));last=re.lastIndex;
+    if(m[1])out+=`<span class="tc">${esc(m[1])}</span>`;else if(m[2])out+=`<span class="ts">${esc(m[2])}</span>`;else if(m[3])out+=`<span class="ta">${m[3]}</span>`;
+    else if(m[4])out+=`<span class="tn">${m[4]}</span>`;else if(m[5]){const w=m[5];out+=JKW.has(w)?`<span class="tk">${w}</span>`:/^[A-Z]/.test(w)?`<span class="tt">${w}</span>`:w}
+    else if(m[6])out+=m[6]==='⟦'?'<mark>':'</mark>';}
+  return out+esc(src.slice(last));}
+function hiAll(root){(root||document).querySelectorAll('pre.code:not([data-hi])').forEach(p=>{p.innerHTML=hiJava(p.textContent.replace(/^\n/,''));p.dataset.hi=1})}
+function setCode(elOrSel,src){const p=typeof elOrSel==='string'?$(elOrSel):elOrSel;p.innerHTML=hiJava(src.replace(/^\n/,''));p.dataset.hi=1}
+/* theme toggle */
+(function(){const r=document.documentElement;const t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+  const b=document.getElementById('themeBtn');if(!b)return;const cur=()=>r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+  const lab=()=>{b.textContent=cur()==='dark'?'Light theme':'Dark theme'};lab();
+  b.addEventListener('click',()=>{const n=cur()==='dark'?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n);lab()});})();
+document.addEventListener('DOMContentLoaded',()=>hiAll());
+
+
+/* race */
+const N=32;function initRace(){$('#rS').innerHTML=Array.from({length:N},()=>'<span class="cell"></span>').join('');$('#rV').innerHTML=$('#rS').innerHTML}
+initRace();let racing=false;
+$('#race').addEventListener('click',()=>{if(racing)return;racing=true;initRace();let t=0;const S=$$('#rS .cell'),V=$$('#rV .cell');
+  const iv=setInterval(()=>{if(t<N)S[t].classList.add('on');if(t*8<N)for(let k=0;k<8;k++)V[t*8+k].classList.add(t%2?'hot':'ok');t++;$('#raceTxt').textContent=`cycle ${t}: SISD ${Math.min(t,N)}/${N}, SIMD ${Math.min(t*8,N)}/${N}`;
+    if(t>=N){clearInterval(iv);racing=false;$('#raceTxt').textContent=`SISD needed ${N} adds; SIMD with 8 lanes needed ${N/8}. Real speed-ups are smaller: memory bandwidth and loads/stores cost too.`}},110)});
+
+/* lanes */
+let shape=256,ebits=32;
+function lanes(){const n=shape/ebits;const s=$('#laneSvg');s.innerHTML='';const w=600/n;
+  for(let k=0;k<n;k++){s.appendChild(el('rect',{x:20+k*w,y:20,width:w-2,height:40,rx:Math.min(5,w/4),fill:k%2?'var(--blue)':'var(--pencil)',opacity:.7}));if(w>22)s.appendChild(el('text',{x:20+k*w+w/2-1,y:45,'text-anchor':'middle','font-size':11,fill:'var(--surface)','font-weight':700},k))}
+  s.appendChild(el('text',{x:20,y:80,'font-size':12,class:'s-muted'},`${shape}-bit register`));s.appendChild(el('text',{x:620,y:80,'text-anchor':'end','font-size':12,class:'s-muted'},`${n} lanes × ${ebits} bits`));
+  const T={8:'ByteVector',16:'ShortVector',32:'IntVector / FloatVector',64:'LongVector / DoubleVector'}[ebits];$('#laneTxt').innerHTML=`<code>${T.split(' / ')[0]}.SPECIES_${shape}</code> → <code>length()</code> = ${n}. ${shape===512?'Only on CPUs with AVX-512.':shape===64?'Mostly useful for small types.':''}`}
+seg('#shSeg button',b=>{shape=+b.dataset.s;lanes()});seg('#etSeg button',b=>{ebits=+b.dataset.e;lanes()});lanes();
+
+/* chunks */
+function chunks(){const L=+$('#lenR').value,n=+$('#lnR').value;$('#lenV').textContent=L;$('#lnV').textContent=n;const b=Math.floor(L/n)*n;
+  $('#chunks').innerHTML=Array.from({length:L},(_,i)=>`<span class="cell ${i<b?'c'+(Math.floor(i/n)%2):'tail'}">${i}</span>`).join('');
+  $('#chTxt').innerHTML=`loopBound(${L}) = <b>${b}</b>: ${b/n} vector iteration${b/n===1?'':'s'} (blue/orange), then <b>${L-b}</b> tail element${L-b===1?'':'s'} (yellow) for the mask or scalar loop.`}
+['#lenR','#lnR'].forEach(s=>$(s).addEventListener('input',chunks));chunks();
+
+/* fma stepper */
+const X=[1,2,3,4,5,6,7,8],Y=[3,7,5,4,2,1,3,2];
+const FS=['Two arrays of 8 floats; the species has 4 lanes. The accumulator vector sum starts at zero.','Iteration 1: load x[0..3] and y[0..3]; sum = x.fma(y, sum) multiplies lane by lane and adds into sum.','Iteration 2: load x[4..7] and y[4..7] and fma again into the same accumulator.','reduceLanes(VectorOperators.ADD) adds the 4 lanes together: that is the dot product.'];
+function fdraw(s){const g=$('#fSvg');g.innerHTML='';const acc=[0,0,0,0];for(let it=0;it<Math.min(s,2);it++)for(let k=0;k<4;k++)acc[k]+=X[it*4+k]*Y[it*4+k];
+  const row=(y,lab,vals,hi)=>{g.appendChild(el('text',{x:10,y:y+18,'font-size':12,class:'s-muted t-mono'},lab));vals.forEach((v,i)=>{const on=hi&&hi(i);g.appendChild(el('rect',{x:70+i*68,y,width:60,height:26,rx:5,fill:on?'var(--blue-soft)':'var(--paper)',stroke:on?'var(--blue)':'var(--line)'}));g.appendChild(el('text',{x:100+i*68,y:y+18,'text-anchor':'middle','font-size':13,class:'t-mono s-ink'},v))})};
+  const hi=i=>s>=1&&s<=2&&Math.floor(i/4)===s-1;row(10,'x',X,hi);row(44,'y',Y,hi);
+  g.appendChild(el('text',{x:10,y:110,'font-size':12,class:'s-muted t-mono'},'sum'));acc.forEach((v,i)=>{g.appendChild(el('rect',{x:70+i*68,y:92,width:60,height:28,rx:5,fill:'var(--pencil-soft)',stroke:'var(--pencil)'}));g.appendChild(el('text',{x:100+i*68,y:111,'text-anchor':'middle','font-size':13,'font-weight':700,class:'t-mono s-ink'},v))});
+  if(s>=1&&s<=2){const k0=(s-1)*4;g.appendChild(el('text',{x:70,y:145,'font-size':12,fill:'var(--blue)'},`lane 0: ${X[k0]}·${Y[k0]} + ${acc[0]-X[k0]*Y[k0]} = ${acc[0]}`))}
+  if(s===3){const tot=acc.reduce((a,b)=>a+b,0);g.appendChild(el('text',{x:70,y:150,'font-size':15,'font-weight':700,fill:'var(--ok)'},`reduceLanes(ADD) = ${acc.join(' + ')} = ${tot}`))}}
+$('#fStp').insertAdjacentHTML('beforeend',stepHTML());stepper('#fStp',FS,fdraw);
+
+/* image negative */
+const cv=$('#img'),cx=cv.getContext('2d');
+function paint(){const g=cx.createLinearGradient(0,0,320,160);g.addColorStop(0,'#1d5ea8');g.addColorStop(.5,'#f1b458');g.addColorStop(1,'#b8216b');cx.fillStyle=g;cx.fillRect(0,0,320,160);
+  cx.fillStyle='#ffffff';cx.beginPath();cx.arc(90,80,40,0,7);cx.fill();cx.fillStyle='#12243a';cx.fillRect(170,40,110,80);cx.fillStyle='#76cf91';cx.font='bold 28px sans-serif';cx.fillText('Java',185,92)}
+paint();let negBusy=false;
+$('#negGo').addEventListener('click',()=>{if(negBusy)return;negBusy=true;let y=0;const band=10;const iv=setInterval(()=>{const d=cx.getImageData(0,y,320,band);for(let i=0;i<d.data.length;i+=4){d.data[i]=255-d.data[i];d.data[i+1]=255-d.data[i+1];d.data[i+2]=255-d.data[i+2]}cx.putImageData(d,0,y);y+=band;if(y>=160){clearInterval(iv);negBusy=false}},60)});
+$('#negRst').addEventListener('click',()=>{if(!negBusy)paint()});
+
+/* factories */
+const OPS=[
+ ['add(x)',['<td class="bad">UnsupportedOperationException</td>','<td class="bad">UnsupportedOperationException</td>','<td class="bad">UnsupportedOperationException</td>','<td class="ok">works</td>'],'None of the three can grow. Arrays.asList is backed by a fixed array.'],
+ ['set(0, x)',['<td class="bad">UnsupportedOperationException</td>','<td class="ok">works, writes into the array</td>','<td class="bad">UnsupportedOperationException</td>','<td class="ok">works</td>'],'Arrays.asList is fixed-size, not read-only.'],
+ ['null element',['<td class="bad">NullPointerException at creation</td>','<td class="ok">allowed</td>','<td>allowed if the source has it</td>','<td class="ok">allowed</td>'],'List.of, Set.of and Map.of reject nulls outright, and even contains(null) throws NPE on them.'],
+ ['change the source',['<td>no source: a true snapshot</td>','<td class="r">list sees the array change</td>','<td class="r">view sees the list change</td>','<td>independent copy</td>'],'unmodifiableList is a read-only window onto a list that may still change. List.copyOf gives a real immutable snapshot.']];
+function fac(i){$('#fT').innerHTML=`<tr><th>${OPS[i][0]}</th><th>List.of(a, b)</th><th>Arrays.asList(arr)</th><th>Collections.unmodifiableList(l)</th><th>new ArrayList&lt;&gt;(…)</th></tr><tr><td class="mono">result</td>${OPS[i][1].join('')}</tr>`;$('#fTxt').textContent=OPS[i][2]}
+seg('#opSeg button',b=>fac(+b.dataset.o));fac(0);
+cards('#tlCards',[{t:'Stream.toList() (P116)',d:'JDK 16. Returns an unmodifiable list and, unlike List.of, accepts null elements.'},{t:'collect(Collectors.toList())',d:'Returns an ArrayList in practice, but the type and mutability are not guaranteed by the spec.',c:'pencil'},{t:'Collectors.toUnmodifiableList()',d:'JDK 10. Unmodifiable and throws NPE on null elements, like List.of.',c:'d5'}]);
+
+/* capacity */
+const p2=c=>{let n=1;while(n<c)n*=2;return Math.max(n,1)};
+function cap(){const n=+$('#cn').value,a=+$('#ca').value;$('#cnV').textContent=n;$('#caV').textContent=a;let t=p2(a);const sizes=[t];let rs=0;while(n>t*0.75){t*=2;sizes.push(t);rs++}
+  const s=$('#capSvg');s.innerHTML='';s.setAttribute('viewBox',`0 0 640 ${sizes.length*24+12}`);const mx=Math.log2(4096);sizes.forEach((z,i)=>{const w=Math.max(8,Math.log2(z)/mx*340);const y=6+i*24;s.appendChild(el('rect',{x:20,y,width:w,height:18,rx:3,fill:i===0?'var(--blue)':'var(--bad)',opacity:.75}));s.appendChild(el('text',{x:28+w,y:y+14,'font-size':14,class:'t-mono s-ink'},`${z} buckets, resize above ${Math.floor(z*.75)}`))});
+  $('#capTxt').innerHTML=`Argument ${a} → table of <b>${p2(a)}</b> buckets. Inserting ${n} entries causes <b class="${rs?'badc':'okc'}">${rs} resize${rs===1?'':'s'}</b>${rs?', each rehashing every entry':''}. <code>HashMap.newHashMap(${n})</code> would pass ${Math.ceil(n/0.75)}.`}
+['#cn','#ca'].forEach(s=>$(s).addEventListener('input',cap));
+$('#useN').addEventListener('click',()=>{$('#ca').value=$('#cn').value;cap()});$('#useNH').addEventListener('click',()=>{$('#ca').value=Math.min(2000,Math.ceil(+$('#cn').value/0.75));cap()});$('#useD').addEventListener('click',()=>{$('#ca').value=16;cap()});cap();
+
+/* sequenced */
+let kind='list',data=['B','A','D'],rev=false;
+function base(){return kind==='tree'?[...new Set(data)].sort():data}
+function drawSeq(msg){const v=base();const shown=rev?[...v].reverse():v;$('#seqV').innerHTML=(rev?'<span class="small">reversed() view:</span>':'')+shown.map((x,i)=>`<span class="cell ${i===0?'first':''} ${i===shown.length-1?'last':''}">${x}</span>`).join('');if(msg!=null)$('#seqOut').innerHTML=msg}
+function reset(){data=kind==='lhs'||kind==='tree'?['B','A','D']:['B','A','D'];rev=false;drawSeq(`${({list:'new ArrayList<>(List.of("B","A","D"))',lhs:'new LinkedHashSet<>(List.of("B","A","D"))',tree:'new TreeSet<>(List.of("B","A","D"))  // sorted',imm:'List.of("B","A","D")'})[kind].replace(/</g,'&lt;')}`)}
+seg('#impSeg button',b=>{kind=b.dataset.k;reset()});
+$$('[data-op]').forEach(b=>b.addEventListener('click',()=>{const op=b.dataset.op;const v=base();let msg;const ue='<span class="err">UnsupportedOperationException</span>';
+  const R=x=>rev?[...x].reverse():x;
+  if(op==='getFirst')msg=`getFirst() → "${R(v)[0]}"`;else if(op==='getLast')msg=`getLast() → "${R(v)[v.length-1]}"`;
+  else if(op==='reversed'){rev=!rev;msg=rev?'reversed() returns a <b>view</b> in reverse order, not a copy: changes flow both ways.':'back to the original order'}
+  else if(kind==='imm')msg=ue+' — List.of is immutable';
+  else if(kind==='tree'&&(op==='addFirst'||op==='addLast'))msg=ue+' — a sorted set decides positions itself';
+  else{const front=(op==='addFirst')!==rev;
+    if(op==='removeFirst'){if(!v.length)msg='<span class="err">NoSuchElementException</span>';else{const x=R(v)[0];data=data.filter((y,i)=>!(y===x&&i===data.indexOf(x)));msg=`removeFirst() → "${x}"`}}
+    else{const x=op==='addFirst'?'C':'A';if(kind==='lhs'){const had=data.includes(x);data=data.filter(y=>y!==x);msg=had?`"${x}" already present: LinkedHashSet <b>moves</b> it to the ${op==='addFirst'?'front':'end'}.`:`${op}("${x}")`}else msg=`${op}("${x}")`;front?data.unshift(x):data.push(x)}}
+  drawSeq(msg)}));reset();
+
+quiz('#qQuiz','#qScore',[
+ {q:'How many lanes does <code>FloatVector.SPECIES_512</code> have?',o:['8','16','32'],a:1,why:'512 bits ÷ 32-bit floats = 16 lanes.'},
+ {q:'<code>loopBound(34)</code> for 8 lanes is…',o:['32','34','40'],a:0,why:'The largest multiple of 8 not above 34.'},
+ {q:'<code>Arrays.asList(arr).set(0, x)</code>…',o:['throws','changes arr[0]'],a:1,why:'It is a fixed-size view that writes through to the array.'},
+ {q:'<code>List.of("a", null)</code>…',o:['works','throws NPE'],a:1,why:'The immutable factories reject nulls.'},
+ {q:'<code>linkedHashSet.addFirst(x)</code> when x is already in the set…',o:['ignored','moves x to the front'],a:1,why:'SequencedSet repositions an existing element.'}]);
+
+})();
+</script>
+</body>
+</html>

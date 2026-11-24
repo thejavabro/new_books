@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AWS Messaging, Orchestration and Monitoring</title>
+<meta name="description" content="The glue of cloud systems: streams and queues that decouple services, workflows that coordinate them, and the monitoring and access control that keep them honest.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the System Design on AWS companion. Layout: a drafting-table reading column on blueprint grid paper.
+   Blue ink = structure and data paths, orange pencil = clients and requests, green = healthy, red = failure.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:minmax(14rem,1fr) minmax(0,auto);gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* additions */
+button.tag.theme{cursor:pointer;margin-left:auto}
+button.tag.theme:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;max-width:100%;white-space:pre}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:5em;max-height:14em;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.pill{display:inline-block;font-family:var(--mono);font-size:.75rem;padding:2px 8px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.pill.ok{border-color:var(--ok);color:var(--ok);background:var(--ok-soft)} .pill.bad{border-color:var(--bad);color:var(--bad);background:var(--bad-soft)}
+input[type=number],input[type=text]{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+.sheet>.seg,.stack>.seg{align-self:flex-start}
+
+/* page */
+
+.msgs{display:flex;gap:5px;flex-wrap:wrap;min-height:38px;align-items:center}
+.msgs i{font-style:normal;font-family:var(--mono);font-size:.78rem;width:34px;height:30px;display:grid;place-items:center;border-radius:5px;border:1.5px solid var(--blue);background:var(--blue-soft)}
+.msgs i.dup{border-color:var(--bad);background:var(--bad-soft)}
+.msgs i.ooo{border-color:var(--mid);background:var(--mid-soft)}
+.subs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.subs>div{border:1px solid var(--line);border-radius:8px;padding:10px;font-size:.85rem;display:flex;flex-direction:column;gap:4px;transition:background .3s}
+.subs>div.got{background:var(--ok-soft);border-color:var(--ok)}
+.subs code{font-size:.72rem;word-break:break-word}
+@media (max-width:640px){.subs{grid-template-columns:1fr 1fr}}
+.pol{font-family:var(--mono);font-size:.8rem}
+.pol label{display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-bottom:1px solid var(--line)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">System Design on AWS · visual companion</a><span class="tag">Part II · Chapter 12 of 21</span><button class="tag theme" type="button" id="themeBtn" aria-label="Toggle light or dark theme">Theme</button></div>
+  <h1>AWS Messaging, Orchestration and Monitoring</h1>
+  <p class="lede">The glue of cloud systems: streams and queues that decouple services, workflows that coordinate them, and the monitoring and access control that keep them honest.</p>
+  <nav class="toc" aria-label="Sections"><a href="#streams">MSK & Kinesis</a><a href="#sqs">SQS</a><a href="#sns">SNS fan-out</a><a href="#stepfn">Step Functions</a><a href="#cloudwatch">CloudWatch</a><a href="#iam">IAM</a><a href="#cognito">Cognito & AppSync</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="streams" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Streaming: Amazon MSK and Kinesis Data Streams</h2></div>
+  <p>Both carry ordered, replayable streams of events. <b>Amazon MSK</b> is managed Apache Kafka (provisioned brokers or serverless): pick it when you already speak Kafka, need exactly-once semantics, long retention or the Kafka ecosystem. <b>Kinesis Data Streams</b> is AWS-native: capacity is counted in <b>shards</b> (or on-demand mode), each taking up to 1 MB/s or 1,000 records/s in and giving 2 MB/s out, shared by all consumers unless they use <b>enhanced fan-out</b> (a dedicated 2 MB/s each, push delivery around 70 ms). Size a stream.</p>
+  <div class="sheet">
+    <div class="three"><label class="rng"><span>Events per second: <b id="epsV"></b></span><input type="range" id="eps" min="100" max="20000" step="100" value="3000"></label><label class="rng"><span>Average event size: <b id="esV"></b></span><input type="range" id="es" min="1" max="50" value="2"></label><label class="rng"><span>Consumer apps: <b id="ccV"></b></span><input type="range" id="cc" min="1" max="8" value="3"></label></div>
+    <label class="small"><input type="checkbox" id="efo"> enhanced fan-out for every consumer</label>
+    <div class="kpis" id="shK"></div>
+    <p class="small" id="shTxt" aria-live="polite"></p>
+  </div>
+  <div class="cardgrid" id="kinCards"></div>
+</section>
+
+<section id="sqs" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>SQS: standard and FIFO queues</h2></div>
+  <p>SQS decouples producers from consumers. A consumer receives a message, which then becomes invisible for the <b>visibility timeout</b>; it must delete it after processing, or the message reappears for someone else. After too many failed receives, a redrive policy moves it to a <b>dead-letter queue</b>. Messages are kept up to 14 days and can be up to 256 KB (store bigger payloads in S3 and send a pointer). Send 1 to 8 and see what consumers get.</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Queue type"><button data-qt="std" aria-pressed="true">Standard</button><button data-qt="fifo" aria-pressed="false">FIFO</button></div><button class="btn primary" id="qSend">Send 1–8</button></div>
+    <div><span class="eyebrow">Consumer received</span><div class="msgs" id="qGot"></div></div>
+    <p class="small" id="qTxt" aria-live="polite"></p>
+  </div>
+  <div class="tbl"><table class="t"><tr><th></th><th>Standard</th><th>FIFO</th></tr>
+    <tr><td><b>Ordering</b></td><td>Best effort</td><td>Strict, per message group ID</td></tr>
+    <tr><td><b>Delivery</b></td><td>At least once (rare duplicates)</td><td>Exactly once processing (5-minute deduplication window)</td></tr>
+    <tr><td><b>Throughput</b></td><td>Nearly unlimited</td><td>300 messages/s, 3,000 with batches of 10 (high-throughput mode goes much higher)</td></tr>
+    <tr><td><b>Cost</b></td><td>Lower</td><td>About 25% more</td></tr></table></div>
+  <div class="sheet">
+    <h3>Visibility timeout vs a slow consumer</h3>
+    <div class="two"><label class="rng"><span>Visibility timeout: <b id="vtV"></b></span><input type="range" id="vt" min="5" max="120" value="30"></label><label class="rng"><span>Processing time: <b id="ptV"></b></span><input type="range" id="pt" min="5" max="120" value="45"></label></div>
+    <p id="vtTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="sns" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>SNS: push to many, with filters</h2></div>
+  <p>SNS is pub/sub: publish once to a <b>topic</b> and it pushes copies to every subscriber (SQS queues, Lambda, HTTP endpoints, email, SMS, mobile push). <b>Filter policies</b> on each subscription let a subscriber receive only messages whose attributes match, so filtering logic leaves your code. The classic pattern is SNS to several SQS queues: fan-out plus buffering. Publish an offer.</p>
+  <div class="sheet">
+    <div class="row"><label class="small">country <select id="snC"><option>IN</option><option>SG</option><option>US</option></select></label><label class="small">type <select id="snT"><option>offer</option><option>order</option></select></label><button class="btn primary" id="snPub">Publish</button></div>
+    <div class="subs" id="subs"></div>
+  </div>
+</section>
+
+<section id="stepfn" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Step Functions: workflows as state machines</h2></div>
+  <p>Step Functions runs workflows written in the Amazon States Language: <b>Task</b> (call Lambda or one of hundreds of AWS APIs directly), <b>Choice</b>, <b>Parallel</b> (fixed branches), <b>Map</b> (the same steps over each item of a list, inline or distributed over millions of S3 objects), <b>Wait</b>, <b>Pass</b>, <b>Succeed</b> and <b>Fail</b>. Each state can declare <b>Retry</b> with backoff and <b>Catch</b> to route errors. Step through a food order.</p>
+  <div class="sheet stepper" id="sfStep"><div class="svgbox"><svg id="sfSvg" viewBox="0 0 660 330" role="img" aria-label="Food order state machine"></svg></div></div>
+  <div class="two">
+    <pre class="code">{
+  "StartAt": "ValidateOrder",
+  "States": {
+    "ValidateOrder": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Retry": [{ "ErrorEquals": ["States.Timeout"],
+                  "MaxAttempts": 3, "BackoffRate": 2 }],
+      "Catch": [{ "ErrorEquals": ["States.ALL"],
+                  "Next": "NotifyFailure" }],
+      "Next": "InStock?"
+    },
+    "InStock?": { "Type": "Choice", … }
+  }
+}</pre>
+    <div class="tbl"><table class="t"><tr><th></th><th>Standard</th><th>Express</th></tr><tr><td>Duration</td><td>Up to 1 year</td><td>Up to 5 minutes</td></tr><tr><td>Semantics</td><td>Exactly once</td><td>At least once (async), at most once (sync)</td></tr><tr><td>Rate</td><td>Thousands/s of starts</td><td>100,000+/s</td></tr><tr><td>History</td><td>Full, in console</td><td>CloudWatch Logs</td></tr><tr><td>Priced per</td><td>State transition</td><td>Requests and duration</td></tr></table></div>
+  </div>
+  <div class="callout blue"><b class="h">Or Airflow</b><span>Amazon Managed Workflows for Apache Airflow (MWAA) runs Airflow's scheduler, workers and web UI for you. Choose it for Python-defined data pipelines (DAGs) and when your team already uses Airflow's operators; choose Step Functions for serverless, event-driven application workflows.</span></div>
+</section>
+
+<section id="cloudwatch" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>CloudWatch: logs, metrics and alarms</h2></div>
+  <p>CloudWatch collects <b>logs</b> into log groups and streams (search them with Logs Insights, set retention, export to S3), <b>metrics</b> (time-ordered data points in namespaces with dimensions, summarized by statistics such as average, p99 and max) and <b>alarms</b>. An alarm watches one metric or a math expression and changes state when <i>M out of N</i> datapoints breach a threshold, then acts: notify via SNS, scale an Auto Scaling group, reboot an instance. Tune this latency alarm.</p>
+  <div class="sheet">
+    <div class="three"><label class="rng"><span>Threshold: <b id="thV"></b></span><input type="range" id="th" min="100" max="600" step="10" value="300"></label><label class="rng"><span>Datapoints to alarm (M): <b id="amV"></b></span><input type="range" id="am" min="1" max="5" value="3"></label><label class="rng"><span>Evaluation periods (N): <b id="anV"></b></span><input type="range" id="an" min="1" max="5" value="5"></label></div>
+    <div class="svgbox"><svg id="cwSvg" viewBox="0 0 640 200" role="img" aria-label="Latency metric with alarm threshold"></svg></div>
+    <p id="cwTxt" class="small" aria-live="polite"></p>
+  </div>
+  <p class="small"><b>CloudWatch Events</b>, now <b>Amazon EventBridge</b>, routes state changes ("instance stopped", "object created", your own app events) through rules with event-pattern filters to targets such as Lambda, SQS or Step Functions, and can also run schedules. Composite alarms combine alarms to cut noise.</p>
+</section>
+
+<section id="iam" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>IAM: who can do what</h2></div>
+  <p>IAM has <b>users</b> (long-term credentials, increasingly replaced by federated sign-in), <b>groups</b> of users, and <b>roles</b> that people, services and other accounts assume for short-lived credentials. Permissions are JSON <b>policies</b>: Effect, Action, Resource, optional Condition. Evaluation is simple: anything not allowed is denied, an explicit <b>Deny</b> beats any Allow. Lock the root user away with MFA. Toggle policy statements and test a request.</p>
+  <div class="sheet">
+    <div class="pol" id="pol"></div>
+    <div class="row"><label class="small">Request <select id="iReq"><option value="get">s3:GetObject on menus/today.json</option><option value="put">s3:PutObject on menus/today.json</option><option value="del">s3:DeleteObject on menus/today.json</option><option value="getf">s3:GetObject on finance/q3.xlsx</option></select></label></div>
+    <div class="detail" id="iOut" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="cognito" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Cognito and AppSync</h2></div>
+  <p><b>Authentication</b> (AuthN) proves who you are; <b>authorization</b> (AuthZ) decides what you may do. Cognito handles both for app users. A <b>user pool</b> is a user directory with sign-up, sign-in (hosted UI, social and SAML identity providers, MFA) that issues JWTs. An <b>identity pool</b> swaps a token for temporary AWS credentials tied to an IAM role, for example to upload a photo directly to S3. Lambda triggers customise each step.</p>
+  <div class="sheet stepper" id="cgStep"><div class="svgbox"><svg id="cgSvg" viewBox="0 0 660 200" role="img" aria-label="Cognito flow"></svg></div></div>
+  <div class="callout"><b class="h">AWS AppSync</b><span>Managed GraphQL (and real-time pub/sub) APIs. <b>Resolvers</b> connect each field of the schema to a data source (DynamoDB, Aurora, Lambda, HTTP, OpenSearch), so one query can gather restaurant details and menu items from different stores. Merged APIs combine several teams' schemas behind one endpoint; subscriptions push updates over WebSockets; Cognito, IAM and WAF secure it.</span></div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qs"></span></div><div class="quiz" id="qq"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>System Design on AWS: Building and Scaling Enterprise Solutions</i> by Jayanth Kumar and Mandeep Singh (O'Reilly, 2025). Explanations, examples, code snippets and drawings are original summaries, not copied from the book. AWS limits and prices change; check current AWS documentation before relying on a number.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch11-aws-compute.html"><span>Previous · Chapter 11</span><b>AWS Compute Services</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch13-aws-analytics.html"><span>Next · Chapter 13</span><b>Big Data, Analytics and Machine Learning Services</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('sda:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('sda:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle */
+(function(){const b=document.getElementById('themeBtn');if(!b)return;const r=document.documentElement;
+ const cur=store.get('theme',null);if(cur)r.setAttribute('data-theme',cur);
+ b.addEventListener('click',()=>{const dark=r.getAttribute('data-theme')?r.getAttribute('data-theme')==='dark':matchMedia('(prefers-color-scheme: dark)').matches;const n=dark?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n)});})();
+/* code blocks */
+
+
+/* shards */
+function drawSh(){const eps=+$('#eps').value,kb=+$('#es').value,cc=+$('#cc').value,efo=$('#efo').checked;$('#epsV').textContent=eps.toLocaleString();$('#esV').textContent=kb+' KB';$('#ccV').textContent=cc;
+ const inMB=eps*kb/1024;const byIn=Math.ceil(inMB/1),byRec=Math.ceil(eps/1000),byOut=efo?0:Math.ceil(inMB*cc/2);const sh=Math.max(1,byIn,byRec,byOut);
+ const lim=[['ingest MB/s',byIn],['records/s',byRec],['shared read MB/s',byOut]].reduce((a,b)=>b[1]>a[1]?b:a);
+ $('#shK').innerHTML=`<div class="stat"><span class="big blue" style="font-size:1.6rem">${inMB.toFixed(1)} MB/s</span><span>incoming</span></div><div class="stat"><span class="big pencil" style="font-size:1.6rem">${sh}</span><span>shards needed</span></div><div class="stat"><span class="big" style="font-size:1.6rem">${efo?'~70 ms':'~200 ms'}</span><span>typical read latency</span></div>`;
+ $('#shTxt').textContent=`Bottleneck: ${lim[0]}. `+(efo?'With enhanced fan-out each consumer gets its own 2 MB/s per shard, so consumers no longer multiply the shard count (at extra cost).':cc>2?'Several consumers share 2 MB/s per shard and poll at most 5 times a second; enhanced fan-out removes that limit.':'Records with the same partition key stay ordered within their shard.')}
+['eps','es','cc'].forEach(i=>$('#'+i).addEventListener('input',drawSh));$('#efo').addEventListener('change',drawSh);drawSh();
+cards('#kinCards',[{t:'Kinesis Data Streams',d:'Durable, ordered, replayable stream (24 hours by default, up to 365 days). You write the consumers: Lambda, KCL apps, Flink.',c:'d1'},{t:'Managed Service for Apache Flink',d:'Formerly Kinesis Data Analytics. Run Flink jobs (SQL, Java, Python, notebooks) for windowed aggregations and real-time ETL on streams.',c:'d2'},{t:'Data Firehose',d:'Zero-code delivery of streams to S3, Redshift, OpenSearch, Splunk and HTTP endpoints, with buffering, compression, format conversion and dynamic partitioning.',c:'d3'},{t:'Kinesis Video Streams',d:'Ingest and store video from cameras and devices for playback, WebRTC and computer vision (for example Rekognition).',c:'d4'},{t:'MSK vs Kinesis',d:'MSK: Kafka APIs, partitions, exactly-once, broker sizing (or serverless). Kinesis: shards or on-demand, deep AWS integration, no brokers to think about.',c:'d5'}]);
+
+/* SQS */
+let qt='std';
+function qSend(){let got=[];if(qt==='std'){got=[1,2,3,4,5,6,7,8];for(let k=0;k<2;k++){const i=Math.floor(Math.random()*7);[got[i],got[i+1]]=[got[i+1],got[i]]}const d=got[Math.floor(Math.random()*8)];got.splice(Math.floor(Math.random()*8),0,d)}else got=[1,2,3,4,5,6,7,8];
+ const seen={};$('#qGot').innerHTML=got.map((m,i)=>{const dup=seen[m];seen[m]=1;const ooo=!dup&&i>0&&m<Math.max(...got.slice(0,i).filter(x=>x!==m));return `<i class="${dup?'dup':ooo?'ooo':''}">${m}</i>`}).join('');
+ $('#qTxt').innerHTML=qt==='std'?'Mostly in order, but <span class="midc">some swapped</span> and <span class="badc">one delivered twice</span>. Make processing idempotent (for example, record processed message IDs).':'Strict order and no duplicates, within one message group. Use different group IDs (say, one per customer) to process groups in parallel.'}
+seg('[data-qt]',b=>{qt=b.dataset.qt;qSend()});$('#qSend').addEventListener('click',qSend);qSend();
+function drawVt(){const v=+$('#vt').value,p=+$('#pt').value;$('#vtV').textContent=v+' s';$('#ptV').textContent=p+' s';$('#vtTxt').innerHTML=p<=v?`<b class="okc">Fine.</b> The consumer deletes the message ${v-p} s before it would reappear.`:`<b class="badc">Duplicate work.</b> After ${v} s the message becomes visible again and a second consumer starts on it while the first is still busy. Raise the timeout (around 6× the processing time is a common rule for Lambda), or extend it from the consumer with ChangeMessageVisibility.`}
+['vt','pt'].forEach(i=>$('#'+i).addEventListener('input',drawVt));drawVt();
+
+/* SNS */
+const SUB=[['SQS: india-offers','{"country":["IN"],"type":["offer"]}',m=>m.c==='IN'&&m.t==='offer'],['SQS: asia-all','{"country":["IN","SG"]}',m=>m.c!=='US'],['Lambda: analytics','(no filter: everything)',m=>true],['SMS: order alerts','{"type":["order"]}',m=>m.t==='order']];
+function drawSubs(m){$('#subs').innerHTML=SUB.map(s=>`<div class="${m&&s[2](m)?'got':''}"><b>${s[0]}</b><code>${s[1]}</code><span class="small">${m?(s[2](m)?'delivered ✓':'filtered out'):''}</span></div>`).join('')}
+$('#snPub').addEventListener('click',()=>drawSubs({c:$('#snC').value,t:$('#snT').value}));drawSubs();
+
+/* Step Functions */
+const sS=$('#sfSvg');const SN={};const node=(id,x,y,t,type,w)=>{w=w||130;const g=el('g');const c={Task:'blue',Choice:'d3',Parallel:'d5',Map:'d2',Succeed:'ok',Fail:'bad',Wait:'muted'}[type];g.appendChild(el('rect',{x:x-w/2,y:y-17,width:w,height:34,rx:type==='Choice'?17:6,fill:'var(--surface)',stroke:`var(--${c})`,'stroke-width':1.6}));g.appendChild(el('text',{x,y:y+4,'text-anchor':'middle','font-size':11.5,class:'s-ink'},t));g.appendChild(el('text',{x:x+w/2-4,y:y-20,'text-anchor':'end','font-size':9,fill:`var(--${c})`},type));sS.appendChild(g);SN[id]=g};
+const ln=(a,b,c,d)=>sS.appendChild(el('line',{x1:a,y1:b,x2:c,y2:d,stroke:'var(--line)','stroke-width':1.5}));
+ln(330,40,330,85);ln(330,85,180,130);ln(330,85,500,130);ln(180,148,180,175);ln(130,195,130,230);ln(230,195,230,230);ln(180,250,180,290);ln(500,148,500,290);ln(180,250,500,290);
+node('val',330,30,'Validate order','Task');node('ch',330,95,'In stock?','Choice',110);node('par',180,140,'Prepare in parallel','Parallel',160);node('pay',130,195,'Charge card','Task',110);node('kit',230,195,'Notify kitchen','Task',110);node('map',180,250,'Notify each item\'s chef','Map',170);node('ok',180,305,'Order placed','Succeed',120);node('fail',500,305,'Notify failure','Fail',120);node('oos',500,140,'Out of stock','Task',120);
+const SFS=[['val','<b>Task</b>: a Lambda validates the order. A Retry block retries timeouts 3 times with exponential backoff; a Catch would send other errors to the failure branch.'],['ch','<b>Choice</b> branches on the output: items in stock or not.'],['par','<b>Parallel</b> runs a fixed set of branches at once and waits for all of them.'],['pay','Branch 1: charge the card (a direct SDK integration, no Lambda needed).'],['kit','Branch 2: notify the kitchen. If either branch fails, the Parallel state fails and its Catch takes over.'],['map','<b>Map</b> runs the same steps for each item in a list, with configurable concurrency (inline up to 40; distributed mode for huge datasets).'],['ok','<b>Succeed</b>. Every step\'s input, output and timing is visible in the execution history.'],['fail','Had stock been missing, the other branch would end in <b>Fail</b> after telling the customer.']];
+$('#sfStep').insertAdjacentHTML('beforeend',stepHTML());stepper('#sfStep',SFS.map(s=>s[1]),i=>{const on=SFS.slice(0,i+1).map(s=>s[0]);Object.entries(SN).forEach(([k,g])=>{g.style.opacity=on.includes(k)?1:.25;g.querySelector('rect').setAttribute('stroke-width',k===SFS[i][0]?3.2:1.6)})});
+
+/* CloudWatch alarm */
+const LAT=[180,200,190,240,320,350,280,330,310,360,250,210,190,200,220,410,180,170,200,190];
+function drawCw(){const th=+$('#th').value;$('#an').min=1;let N=+$('#an').value,M=+$('#am').value;if(M>N){M=N;$('#am').value=N}$('#thV').textContent=th+' ms';$('#amV').textContent=M;$('#anV').textContent=N;
+ const s=$('#cwSvg');s.innerHTML='';const X=i=>40+i*30,Y=v=>180-v/450*165;let state=[];for(let i=0;i<LAT.length;i++){const win=LAT.slice(Math.max(0,i-N+1),i+1);state.push(i>=N-1&&win.filter(v=>v>th).length>=M)}
+ state.forEach((a,i)=>{if(a)s.appendChild(el('rect',{x:X(i)-15,y:10,width:30,height:170,fill:'var(--bad)',opacity:.13}))});
+ s.appendChild(el('line',{x1:30,y1:Y(th),x2:630,y2:Y(th),stroke:'var(--bad)','stroke-dasharray':'5 4'}));s.appendChild(el('text',{x:628,y:Y(th)-4,'text-anchor':'end','font-size':10,fill:'var(--bad)'},'threshold'));
+ let d='';LAT.forEach((v,i)=>{d+=(i?'L':'M')+X(i)+','+Y(v);s.appendChild(el('circle',{cx:X(i),cy:Y(v),r:4,fill:v>th?'var(--bad)':'var(--blue)'}))});s.appendChild(el('path',{d,fill:'none',stroke:'var(--blue)','stroke-width':2}));
+ s.appendChild(el('text',{x:40,y:196,'font-size':10,class:'s-muted'},'p99 latency, one point per minute'));
+ const n=state.filter(Boolean).length;const first=state.indexOf(true);$('#cwTxt').innerHTML=`Alarm in ALARM state for ${n} of ${LAT.length} minutes (red bands). ${M===1&&N===1?'1 of 1 is twitchy: the lone spike at minute 16 pages someone at night.':first>=0?'Requiring several breaching points filters single spikes but reacts a little later.':'Nothing fired: maybe too lenient.'}`}
+['th','am','an'].forEach(i=>$('#'+i).addEventListener('input',drawCw));drawCw();
+
+/* IAM */
+const STM=[['a1',true,'Allow','s3:GetObject','arn:aws:s3:::cafe-data/*'],['a2',false,'Allow','s3:PutObject','arn:aws:s3:::cafe-data/menus/*'],['d1',true,'Deny','s3:*','arn:aws:s3:::cafe-data/finance/*'],['a3',false,'Allow','s3:*','arn:aws:s3:::cafe-data/*']];
+$('#pol').innerHTML=STM.map(s=>`<label><input type="checkbox" data-s="${s[0]}" ${s[1]?'checked':''}><span>{ "Effect": "<b class="${s[2]==='Deny'?'badc':'okc'}">${s[2]}</b>", "Action": "${s[3]}", "Resource": "${s[4]}" }</span></label>`).join('');
+function evalI(){const r=$('#iReq').value;const act={get:'s3:GetObject',put:'s3:PutObject',del:'s3:DeleteObject',getf:'s3:GetObject'}[r];const res=r==='getf'?'finance/q3.xlsx':'menus/today.json';
+ const on=STM.filter(s=>$(`[data-s="${s[0]}"]`).checked);const match=s=>(s[3]==='s3:*'||s[3]===act)&&(s[4].endsWith('/*')&&res.startsWith(s[4].split('cafe-data/')[1].replace('*','')));
+ const deny=on.find(s=>s[2]==='Deny'&&match(s)),allow=on.find(s=>s[2]==='Allow'&&match(s));let t,c;
+ if(deny){t='Explicit deny: '+deny[3]+' on '+deny[4]+'. Nothing can override it.';c='bad'}else if(allow){t='Allowed by '+allow[3]+' on '+allow[4]+'.';c='ok'}else{t='Implicit deny: no statement allows this action.';c='bad'}
+ $('#iOut').style.borderLeftColor=`var(--${c})`;$('#iOut').innerHTML=`<h3 class="${c==='ok'?'okc':'badc'}">${c==='ok'?'ALLOW':'DENY'}</h3><p>${t}</p>`}
+$$('#pol input').forEach(i=>i.addEventListener('change',evalI));$('#iReq').addEventListener('change',evalI);evalI();
+
+/* Cognito */
+const cS=$('#cgSvg');const CG={};const cb=(id,x,y,t,c)=>{const g=el('g');g.appendChild(el('rect',{x:x-62,y:y-20,width:124,height:40,rx:6,fill:'var(--surface)',stroke:`var(--${c})`,'stroke-width':1.6}));t.split('\n').forEach((l,i,a)=>g.appendChild(el('text',{x,y:y+4+(i-(a.length-1)/2)*13,'text-anchor':'middle','font-size':11.5,class:'s-ink'},l)));cS.appendChild(g);CG[id]=g};
+cb('app',80,100,'Mobile app','pencil');cb('up',260,40,'User pool','blue');cb('idp',460,40,'Google / SAML','muted');cb('ip',260,160,'Identity pool','d2');cb('sts',460,160,'IAM role\n(temp creds)','d5');cb('s3',600,100,'S3 / API','ok');
+const CGS=[[['app','up'],'The user signs in through the user pool\'s hosted UI (or your own screens).'],[['up','idp'],'Optionally the user pool federates to a social or enterprise identity provider.'],[['app','up'],'The user pool returns JWTs: an ID token (who), an access token (scopes) and a refresh token. API Gateway can verify them directly.'],[['app','ip'],'To call AWS directly, the app gives the token to an identity pool.'],[['ip','sts'],'The identity pool maps the user to an IAM role (by group, tag or rule) and returns temporary AWS credentials.'],[['app','s3'],'The app uploads the photo straight to S3 with those credentials, limited to the user\'s own prefix.']];
+$('#cgStep').insertAdjacentHTML('beforeend',stepHTML());stepper('#cgStep',CGS.map(s=>s[1]),i=>{const on=new Set(CGS.slice(0,i+1).flatMap(s=>s[0]));Object.entries(CG).forEach(([k,g])=>{g.style.opacity=on.has(k)?1:.25;g.querySelector('rect').setAttribute('stroke-width',CGS[i][0].includes(k)?3:1.6)})});
+
+quiz('#qq','#qs',[
+ {q:'Messages for the same customer must be processed in order. Use…',o:['SQS standard','SQS FIFO with the customer ID as message group','SNS'],a:1,why:'FIFO orders strictly within a message group.'},
+ {q:'A message keeps being processed twice by different consumers. Likely cause?',o:['Visibility timeout shorter than processing time','Too many shards','A missing filter policy'],a:0,why:'The message reappears before the first consumer deletes it.'},
+ {q:'One event must reach three independent systems, each with its own buffer. Pattern?',o:['SQS only','SNS topic fanned out to three SQS queues','Step Functions Map'],a:1,why:'SNS pushes a copy to each queue; each consumer drains its own queue.'},
+ {q:'An IAM policy allows s3:* on a bucket, another denies s3:DeleteObject. Delete is…',o:['Allowed','Denied'],a:1,why:'An explicit deny always wins.'},
+ {q:'Which Cognito part hands out temporary AWS credentials?',o:['User pool','Identity pool','Hosted UI'],a:1,why:'Identity pools exchange tokens for IAM role credentials.'}]);
+
+})();
+</script>
+</body>
+</html>

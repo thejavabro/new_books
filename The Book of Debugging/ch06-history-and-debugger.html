@@ -1,0 +1,497 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Check Version Histories and Attach the Debugger</title>
+<meta name="description" content="If it worked last week, the answer is in the history: find the change that broke it. And if you always run under a debugger, the moment the bug strikes you are already there to look.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for The Book of Debugging companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = the program and its structure, orange pencil = the investigator, green = fixed / good, red = bug / bad.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:minmax(0,1fr)}}
+.two>*,.three>*,.stack>*{min-width:0}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* additions for the debugging companion */
+pre.code{margin:0;font-family:var(--mono);font-size:.84rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)} pre.code .h{background:var(--bad-soft);color:var(--bad);border-radius:3px} pre.code .g{background:var(--ok-soft);color:var(--ok);border-radius:3px}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.term{font-family:var(--mono);font-size:.82rem;background:#0f1b2a;color:#d6e2f0;border-radius:8px;padding:12px 14px;min-height:5em;overflow-x:auto;white-space:pre-wrap;word-break:break-word}
+.term .e{color:#f2877c} .term .o{color:#76cf91} .term .m{color:#94a6ba}
+.theme-btn{position:absolute;top:6px;right:max(16px,env(safe-area-inset-right,0px));z-index:5;border:1px solid var(--line);background:var(--surface);color:var(--muted);border-radius:999px;padding:4px 11px;font-family:var(--mono);font-size:.72rem}
+.theme-btn:hover{border-color:var(--blue);color:var(--blue)}
+.pill{display:inline-block;font-family:var(--mono);font-size:.72rem;padding:2px 8px;border-radius:999px;border:1px solid currentColor}
+.meter{height:12px;border-radius:6px;background:var(--paper);border:1px solid var(--line);overflow:hidden}
+.meter>i{display:block;height:100%;width:0;background:var(--blue);transition:width .5s ease}
+.game{display:flex;flex-direction:column;gap:12px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.tiles button{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:10px;text-align:left;font-size:.9rem;display:flex;flex-direction:column;gap:2px}
+.tiles button b{font-family:var(--display);font-weight:600}
+.tiles button[aria-pressed="true"]{background:var(--blue-soft);border-color:var(--blue)}
+.tiles button.good{background:var(--ok-soft);border-color:var(--ok)} .tiles button.badt{background:var(--bad-soft);border-color:var(--bad)}
+.stat span.big{font-size:clamp(1.7rem,5vw,2.5rem);color:var(--ink)}
+.stat span.big.blue{color:var(--blue)} .stat span.big.badc{color:var(--bad)} .stat span.big.okc{color:var(--ok)} .stat span.big.pencil{color:var(--pencil)} .stat span.big.midc{color:var(--mid)}
+
+/* page */
+
+.commits{display:grid;grid-template-columns:repeat(50,1fr);gap:1px;height:46px}
+.commits i{background:var(--line);border-radius:1px}
+.commits i.g{background:var(--ok)} .commits i.b{background:var(--bad)} .commits i.cur{background:var(--pencil);outline:2px solid var(--pencil)} .commits i.bin{box-shadow:inset 0 -6px 0 var(--blue)}
+.hunks{display:flex;flex-direction:column;gap:8px}
+.hunk{border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.hunk header{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 10px;background:var(--paper);font-size:.88rem;flex-direction:row}
+.hunk pre{margin:0;border:0;border-radius:0}
+.hunk.rev{opacity:.5}
+.vars{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.vars div{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--paper);font-family:var(--mono);font-size:.85rem;display:flex;flex-direction:column}
+.vars div span{font-size:.7rem;color:var(--muted)}
+.vars div.ch{border-color:var(--pencil);background:var(--pencil-soft)}
+pre.code .cur{background:var(--blue-soft);outline:1px solid var(--blue);border-radius:2px}
+.tree g.fn{cursor:pointer}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">The Book of Debugging · visual companion</a><span class="tag">Part II · Probe · Strategies 6–7</span><span class="tag">Page 6 of 16</span></div>
+  <h1>Check Version Histories and Attach the Debugger</h1>
+  <p class="lede">If it worked last week, the answer is in the history: find the change that broke it. And if you always run under a debugger, the moment the bug strikes you are already there to look.</p>
+  <nav class="toc" aria-label="Sections"><a href="#when">Did it ever work?</a><a href="#bisect">Bisect</a><a href="#offending">The offending change</a><a href="#future">Look ahead</a><a href="#template">Debug by default</a><a href="#bp">Breakpoints</a><a href="#hard">Hard cases</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="when" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Did it ever work? Then the answer is in the history</h2></div>
+  <p>When a feature that used to work is now broken, some change in between broke it. Find a working version, compare it with the broken one, and the significant difference points straight at the related sources, sometimes at the fix itself. Start by asking the reporter, QA or other users when it last worked; it is worth adding "when did you last see this working?" to the bug report form. A freshly reported bug was probably introduced recently, so start with recent changes.</p>
+  <div class="callout blue"><b class="h">A story from the book</b><span>A report complained about poor performance across the board, right after a round of optimisations. The profiler showed no hot spot, just everything slower. The history revealed a colleague's commit that had accidentally included local debugging changes: optimisations disabled on several functions with a compiler attribute, so they could be stepped through in a release build.</span></div>
+</section>
+
+<section id="bisect" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Binary search through the commits</h2></div>
+  <p>With no idea when it broke, use binary search: test the commit in the middle, keep the half that contains the change, repeat. <code>git bisect</code> automates the bookkeeping. Testing cost matters too: an existing binary build (from CI, milestones or QA) takes minutes, a source build much longer. Use binaries to narrow the range, then build from source for the last few steps. Find the commit that introduced the bug.</p>
+  <div class="sheet">
+    <div class="row between"><span class="small">500 commits, oldest on the left. Blue underline = binary build exists.</span><span class="score" id="bsScore"></span></div>
+    <div class="commits" id="commits" aria-hidden="true"></div>
+    <div class="row"><span class="small" id="bsCur"></span></div>
+    <div class="row"><button class="btn" data-t="good">It works (good)</button><button class="btn" data-t="bad">Bug is there (bad)</button><button class="btn primary" id="auto">Let bisect pick the next commit</button><button class="btn" id="bsReset">New bug</button></div>
+    <pre class="code" id="bsLog" style="max-height:170px">$ git bisect start
+$ git bisect bad HEAD      <span class="c"># commit 500 is broken</span>
+$ git bisect good v1.0     <span class="c"># commit 1 worked</span></pre>
+  </div>
+</section>
+
+<section id="offending" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Pin down the offending part of the commit</h2></div>
+  <p>Commits rarely contain just one change. Once you have the guilty commit, find which part of it causes the bug and undo only that, keeping the improvements the author intended. Talk to the author if you can; they know why they made each change and may already suspect which one was risky.</p>
+  <div class="sheet">
+    <div class="row between"><h3>Commit 7c1e9a: "Faster sorting, tidy logging, fix tooltip"</h3><span class="small" id="perf"></span></div>
+    <div class="hunks" id="hunks"></div>
+    <div class="row"><button class="btn primary" id="measure">Build and measure</button></div>
+    <p class="small" id="hTip"></p>
+  </div>
+</section>
+
+<section id="future" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Look into the future, and sideways</h2></div>
+  <div class="two">
+    <div class="stack">
+      <p>Somebody may already have fixed it: a later commit, a release branch, a feature branch nobody merged yet, or a fork of an open-source project. On big teams this happens more often than it should. With third-party products it is very likely, because others hit the same bugs. Read changelogs, ask for roadmaps or public trackers, and if you have the source, read the commits themselves.</p>
+      <p>The book's advice: <span class="key">always push for a source code licence.</span> Without it, a bug in a closed blob means waiting for the vendor, and if the vendor disappears you are stuck for good.</p>
+    </div>
+    <div class="sheet">
+      <div class="svgbox fit"><svg id="branches" viewBox="0 0 360 200" role="img" aria-label="Branches: your pinned version, a newer release, a fix branch and a fork"></svg></div>
+      <div class="detail" id="brTip" aria-live="polite"></div>
+    </div>
+  </div>
+  <div class="tbl"><table class="t"><thead><tr><th>Found a fix in…</th><th>Option</th><th>Trade-off</th></tr></thead><tbody>
+    <tr><td>A bug-fix release, used as a binary</td><td>Update the dependency</td><td>Usually the easy case.</td></tr>
+    <tr><td>A newer release, used as source you modified</td><td>Upgrade, merging your changes</td><td>The further both sides diverged, the harder the merge.</td></tr>
+    <tr><td>A newer release, too risky to take whole</td><td>Backport just the fix</td><td>Often much simpler; one game team pulls single engine fixes between scheduled upgrades this way.</td></tr>
+    <tr><td>A fork or unmerged branch</td><td>Switch, or carry the one change</td><td>Switching loses upstream updates; carrying a patch means checking it against every future version.</td></tr>
+  </tbody></table></div>
+</section>
+
+<section id="template" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Always run under the debugger</h2></div>
+  <p>Make launching through the debugger your default. When something goes wrong you are already there: crashes stop at the faulting line with a call stack, exceptions can break the moment they are thrown, and breakpoints are a click away. The deeper reason is that <span class="key">code is only a template</span>; execution fills it with actual values and decisions, and those are not always what you assume. Step through this one.</p>
+  <div class="sheet stepper" id="tplStep">
+    <div class="two">
+      <pre class="code" id="tplCode"></pre>
+      <div class="stack">
+        <div class="vars" id="vars"></div>
+        <div class="term" id="out" aria-live="polite"></div>
+      </div>
+    </div>
+  </div>
+  <p class="small">Other ways a loop surprises you: <code>break</code>, <code>continue</code>, early <code>return</code>, thrown exceptions, <code>goto</code>, and other threads changing shared state. The debugger simply shows where execution actually goes.</p>
+</section>
+
+<section id="bp" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Where to put your first breakpoints</h2></div>
+  <div class="two">
+    <div class="stack">
+      <p>Most bugs do not stop the debugger by themselves, so you place breakpoints in code you suspect. Start with a few functions close to where you think the bug is, at the very top of each function so early returns cannot skip them. Too many generic breakpoints high in the stack fire constantly and tell you little. If none hit, move up the call stack until one does, then step down into the functionality.</p>
+      <p>Tap functions in the call tree to toggle breakpoints, then run the reproduction. The highlighted path is where execution really went.</p>
+    </div>
+    <div class="sheet">
+      <div class="svgbox fit tree"><svg id="tree" viewBox="0 0 360 250" role="img" aria-label="Call tree with toggleable breakpoints"></svg></div>
+      <div class="row"><button class="btn primary" id="runBp">Run the repro</button><button class="btn" id="clrBp">Clear breakpoints</button></div>
+      <p class="small" id="bpTip">Tap a function to set a breakpoint.</p>
+    </div>
+  </div>
+</section>
+
+<section id="hard" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>When the debugger is hard to get, or gets in the way</h2></div>
+  <div class="three">
+    <div class="sheet"><span class="eyebrow">No debugger?</span><p class="small">Worth real effort to get one: look for third-party tools, ask the platform vendor and community, report the gap to them, and only for long projects consider writing your own.</p></div>
+    <div class="sheet"><span class="eyebrow">It hides the bug</span><p class="small">A debugger can change timing and mask a race, or the program may detect it. Reproduce first, then attach and work backwards from the values you find.</p></div>
+    <div class="sheet"><span class="eyebrow">It causes a crash</span><p class="small">Do not work around it. Find out why the program fails under the debugger and fix that first; it will keep costing you otherwise.</p></div>
+  </div>
+  <div class="callout"><b class="h">Break on exceptions</b><span>Managed and scripted languages can break whenever a certain exception type is thrown, even if something catches it later. In native Windows code, structured exception handling exposes hardware faults such as access violations and division by zero. Stopping at the throw beats reading a stack that has already unwound.</span></div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="row between"><span class="small">Pick an answer for each.</span><span class="score" id="qScore"></span></div>
+  <div class="quiz" id="quizBox"></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>The Book of Debugging: A Systematic Workflow for Finding and Fixing Bugs</i> by Johannes Kuhlmann (No Starch Press). Explanations, code snippets, simulations and drawings are original summaries, not text from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch05-shortcuts-and-search.html"><span>Previous · Strategies 4–5</span><b>Try Shortcuts and Search the Internet</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch07-instrument-and-determinism.html"><span>Next · Strategies 8–9</span><b>Instrument the Program and Remove Randomness</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every page of The Book of Debugging companion. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('dbg:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('acc:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: auto -> light -> dark */
+(function(){const b=document.createElement('button');b.className='theme-btn';b.type='button';const modes=['auto','light','dark'];let m=store.get('theme','auto');
+function ap(){if(m==='auto')document.documentElement.removeAttribute('data-theme');else document.documentElement.setAttribute('data-theme',m);b.textContent='theme: '+m;b.setAttribute('aria-label','Colour theme: '+m+'. Click to change.')}
+b.addEventListener('click',()=>{m=modes[(modes.indexOf(m)+1)%3];store.set('theme',m);ap()});ap();document.body.appendChild(b)})();
+
+
+/* bisect */
+const N=500;let culprit,lo,hi,cur,tests,mins;
+function bsNew(){culprit=40+Math.floor(Math.random()*420);lo=1;hi=N;tests=0;mins=0;cur=null;$('#bsLog').innerHTML='$ git bisect start\n$ git bisect bad HEAD      <span class="c"># commit 500 is broken</span>\n$ git bisect good v1.0     <span class="c"># commit 1 worked</span>';pick();}
+function bin(c){return c%25===0}
+function draw(){const cells=[];for(let b=0;b<50;b++){const a=b*10+1,z=a+9;let cls='';if(z<=lo)cls='g';else if(a>hi-1&&hi<N)cls='b';else if(a>=hi)cls='b';if(cur&&cur>=a&&cur<=z)cls='cur';const hasBin=[...Array(10)].some((_,k)=>bin(a+k));cells.push(`<i class="${cls} ${hasBin?'bin':''}"></i>`)}$('#commits').innerHTML=cells.join('');
+ $('#bsScore').textContent=`${tests} tests · ${mins} min`}
+function pick(){if(hi-lo<=1){cur=null;draw();$('#bsCur').innerHTML=`<b class="okc">Found it: commit ${hi} introduced the bug.</b> ${tests} tests instead of up to ${N}. A linear search from the newest commit would have needed ${N-culprit+1}.`;return}
+ let mid=Math.floor((lo+hi)/2);const nb=Math.round(mid/25)*25;if(hi-lo>40&&nb>lo&&nb<hi)mid=nb;cur=mid;draw();
+ $('#bsCur').innerHTML=`Testing commit <b>${cur}</b> (${bin(cur)?'binary build, 3 min':'build from source, 15 min'}). Range left: ${hi-lo-1} commits, about ${Math.ceil(Math.log2(Math.max(2,hi-lo)))} steps.`}
+function mark(t){if(!cur)return;tests++;mins+=bin(cur)?3:15;const truth=cur>=culprit?'bad':'good';
+ if(t!==truth){$('#bsLog').insertAdjacentHTML('beforeend',`\n<span class="h">commit ${cur}: you said ${t}, but it is ${truth}. Run the repro again!</span>`);tests--;mins-=bin(cur)?3:15;return}
+ $('#bsLog').insertAdjacentHTML('beforeend',`\n$ git bisect ${t}   <span class="c"># commit ${cur}</span>`);if(t==='good')lo=cur;else hi=cur;$('#bsLog').scrollTop=1e6;pick()}
+$$('[data-t]').forEach(b=>b.addEventListener('click',()=>mark(b.dataset.t)));
+$('#auto').addEventListener('click',()=>{if(cur)mark(cur>=culprit?'bad':'good')});$('#bsReset').addEventListener('click',bsNew);bsNew();
+
+/* hunks */
+const H=[
+ {t:'sort.cpp: switch to introsort',c:'<span class="k">void</span> SortItems(Items&amp; v) {\n-  BubbleSort(v);\n+  IntroSort(v.begin(), v.end());\n}',cost:-30},
+ {t:'log.cpp: shorter prefixes',c:'- Log("[Renderer::Frame] %s", msg);\n+ Log("[R] %s", msg);',cost:0},
+ {t:'math.cpp: (debug leftover)',c:'+<span class="h">__attribute__((optnone))</span>\n <span class="k">float</span> Dot(Vec3 a, Vec3 b) { ... }',cost:120},
+ {t:'tooltip.cpp: clamp to screen',c:'+ pos.x = min(pos.x, screen.w - tip.w);',cost:0}];
+const rev=new Set();
+$('#hunks').innerHTML=H.map((h,i)=>`<div class="hunk" id="hk${i}"><header><span class="mono">${h.t}</span><button class="btn" data-h="${i}">Revert hunk</button></header><pre class="code">${h.c}</pre></div>`).join('');
+$$('[data-h]').forEach(b=>b.addEventListener('click',()=>{const i=+b.dataset.h;rev.has(i)?rev.delete(i):rev.add(i);$('#hk'+i).classList.toggle('rev',rev.has(i));b.textContent=rev.has(i)?'Restore hunk':'Revert hunk'}));
+$('#measure').addEventListener('click',()=>{let ms=100;H.forEach((h,i)=>{if(!rev.has(i))ms+=h.cost});$('#perf').textContent=`frame time: ${ms} ms (target ≤ 100)`;
+ $('#hTip').innerHTML=rev.has(2)&&!rev.has(0)?'<b class="okc">Exactly right.</b> Only the debug leftover is reverted; the faster sort stays.':rev.has(2)?'Fixed, but you also threw away an intended improvement. Revert only what causes the bug.':rev.size?'Still slow. Look for the change nobody meant to commit.':'All hunks applied: slow. Revert hunks one at a time and measure.'});
+
+/* branches */
+const bs=$('#branches');const BR=[
+ {n:'your pinned v4.1',y:150,c:'pencil',x1:20,x2:150,d:'You shipped against this version and found the bug here.'},
+ {n:'main / newer releases',y:100,c:'blue',x1:20,x2:340,d:'Later commits or a newer release may already contain the fix. Read the changelog first.'},
+ {n:'hotfix branch',y:50,c:'ok',x1:200,x2:300,d:'A fix that exists but is not merged or released yet. Backport it now if you cannot wait.'},
+ {n:'community fork',y:185,c:'d5',x1:240,x2:340,d:'A fork may fix your use case, at the price of leaving upstream behind.'}];
+BR.forEach((b,i)=>{const g=el('g',{tabindex:0,role:'button',style:'cursor:pointer'});g.appendChild(el('line',{x1:b.x1,y1:b.y,x2:b.x2,y2:b.y,stroke:`var(--${b.c})`,'stroke-width':4,'stroke-linecap':'round'}));
+ for(let x=b.x1+10;x<b.x2;x+=28)g.appendChild(el('circle',{cx:x,cy:b.y,r:5,fill:'var(--surface)',stroke:`var(--${b.c})`,'stroke-width':2}));
+ g.appendChild(el('text',{x:b.x1,y:b.y-10,'font-size':11.5,'font-weight':600,fill:`var(--${b.c})`},b.n));
+ g.addEventListener('click',()=>br(i));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();br(i)}});bs.appendChild(g)});
+bs.appendChild(el('path',{d:'M150,100 C170,100 170,150 150,150',fill:'none',stroke:'var(--muted)','stroke-dasharray':'3 3'}));
+bs.appendChild(el('path',{d:'M180,100 C195,100 190,50 200,50',fill:'none',stroke:'var(--muted)','stroke-dasharray':'3 3'}));
+bs.appendChild(el('path',{d:'M220,100 C235,100 230,185 240,185',fill:'none',stroke:'var(--muted)','stroke-dasharray':'3 3'}));
+function br(i){$('#brTip').style.borderLeftColor=`var(--${BR[i].c})`;$('#brTip').innerHTML=`<h3 style="color:var(--${BR[i].c})">${BR[i].n}</h3><p class="small">${BR[i].d}</p>`}br(1);
+
+/* template stepper */
+const code=['<span class="k">int</span> global_var = 10;','<span class="k">void</span> print_number(<span class="k">int</span> i) {','  global_var = printf(<span class="s">"%d\\n"</span>, i);','}','<span class="k">void</span> f() {','  <span class="k">for</span> (<span class="k">int</span> i = 0; i &lt; global_var; ++i)','    print_number(i);','}'];
+const T=[
+ {l:5,v:{i:0,global_var:10,'printf ret':'–'},o:'',c:'Reading the code, you expect ten lines, 0 to 9. Execution starts: i = 0, and 0 < 10.'},
+ {l:2,v:{i:0,global_var:10,'printf ret':'–'},o:'0',c:'print_number(0) calls printf, which prints "0\\n"…'},
+ {l:2,v:{i:0,global_var:2,'printf ret':2},o:'0',c:'…and returns the number of characters it wrote: 2. That return value is stored in global_var.',ch:['global_var','printf ret']},
+ {l:5,v:{i:1,global_var:2,'printf ret':2},o:'0',c:'Back in the loop: i becomes 1, and 1 < 2, so the body runs again.',ch:['i']},
+ {l:2,v:{i:1,global_var:2,'printf ret':2},o:'0\n1',c:'Prints "1\\n", global_var is set to 2 again.'},
+ {l:5,v:{i:2,global_var:2,'printf ret':2},o:'0\n1',c:'i becomes 2 and 2 < 2 is false. The loop ends after two iterations, not ten. The debugger shows it at once; reading alone hides it.',ch:['i']}];
+$('#tplStep').insertAdjacentHTML('beforeend',stepHTML());
+stepper('#tplStep',T.map(t=>t.c),i=>{const t=T[i];$('#tplCode').innerHTML=code.map((c,k)=>k===t.l?`<span class="cur">${c}</span>`:c).join('\n');
+ $('#vars').innerHTML=Object.entries(t.v).map(([k,v])=>`<div class="${(t.ch||[]).includes(k)?'ch':''}"><span>${k}</span>${v}</div>`).join('');$('#out').innerHTML='<span class="m">stdout</span>\n'+t.o});
+
+/* breakpoint tree */
+const FN=[{id:'main',x:180,y:25},{id:'App::Update',x:180,y:75},{id:'UI::Update',x:80,y:125},{id:'Doc::Update',x:280,y:125},{id:'Toolbar::Click',x:40,y:175},{id:'Dialog::Show',x:130,y:175},{id:'Doc::Save',x:240,y:175},{id:'Doc::Autosave',x:320,y:175},{id:'File::Write',x:240,y:225},{id:'Zip::Pack',x:330,y:225}];
+const ED=[[0,1],[1,2],[1,3],[2,4],[2,5],[3,6],[3,7],[6,8],[7,9]];const path=new Set(['main','App::Update','Doc::Update','Doc::Autosave','Zip::Pack']);
+const ts=$('#tree');const P={};FN.forEach(f=>P[f.id]=f);const bp=new Set();const lines=ED.map(([a,b])=>{const l=el('line',{x1:FN[a].x,y1:FN[a].y+10,x2:FN[b].x,y2:FN[b].y-10,stroke:'var(--line)','stroke-width':1.5});ts.appendChild(l);return {l,a:FN[a].id,b:FN[b].id}});
+const fr={};FN.forEach(f=>{const g=el('g',{class:'fn',tabindex:0,role:'button','aria-label':f.id});const r=el('rect',{x:f.x-42,y:f.y-11,width:84,height:22,rx:5,fill:'var(--surface)',stroke:'var(--line)','stroke-width':1.3});
+ const dot=el('circle',{cx:f.x-34,cy:f.y,r:4.5,fill:'var(--bad)',opacity:0});g.appendChild(r);g.appendChild(dot);g.appendChild(el('text',{x:f.x+4,y:f.y+4,'text-anchor':'middle','font-size':9.5,'font-family':'var(--mono)',fill:'var(--ink)'},f.id));
+ g.addEventListener('click',()=>{bp.has(f.id)?bp.delete(f.id):bp.add(f.id);dot.setAttribute('opacity',bp.has(f.id)?1:0)});g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();g.dispatchEvent(new Event('click'))}});ts.appendChild(g);fr[f.id]={r,dot}});
+$('#runBp').addEventListener('click',()=>{lines.forEach(o=>{const on=path.has(o.a)&&path.has(o.b);o.l.setAttribute('stroke',on?'var(--pencil)':'var(--line)');o.l.setAttribute('stroke-width',on?3:1.5)});
+ const hit=[...bp].filter(b=>path.has(b));FN.forEach(f=>fr[f.id].r.setAttribute('fill',hit.includes(f.id)?'var(--pencil-soft)':'var(--surface)'));
+ const generic=hit.filter(h=>h==='main'||h==='App::Update');
+ $('#bpTip').innerHTML=!bp.size?'No breakpoints set, so the bug just happens. Set some first.':!hit.length?'<b class="badc">None hit.</b> Your guesses were off the real path. Move up the call stack until one fires.':generic.length===hit.length?'<b class="midc">Only generic breakpoints hit.</b> They fire every frame and say little. Step down from here, or place deeper ones.':`<b class="okc">Hit: ${hit.join(', ')}.</b> The save in this report came from the autosave path, not the toolbar. Step into it from here.`});
+$('#clrBp').addEventListener('click',()=>{bp.clear();Object.values(fr).forEach(o=>{o.dot.setAttribute('opacity',0);o.r.setAttribute('fill','var(--surface)')});lines.forEach(o=>{o.l.setAttribute('stroke','var(--line)');o.l.setAttribute('stroke-width',1.5)});$('#bpTip').textContent='Tap a function to set a breakpoint.'});
+
+quiz('#quizBox','#qScore',[
+ {q:'500 commits, no idea when it broke. About how many tests does binary search need?',o:['~9','~50','~250'],a:0,why:'log2(500) is about 9.'},
+ {q:'You found the guilty commit. What do you undo?',o:['The whole commit','Only the part that causes the bug','Nothing, rewrite the feature'],a:1,why:'Keep the author\'s intended improvements; revert the problematic piece.'},
+ {q:'Why push for source licences on third-party code?',o:['It is cheaper','You can find, verify and fix bugs yourself','Faster builds'],a:1,why:'Without source you wait on the vendor, possibly forever.'},
+ {q:'Your breakpoints are never hit. Next move?',o:['Delete the debugger','Place breakpoints higher up the call stack','Add more in the same place'],a:1,why:'Climb until one hits, then step down toward the bug.'},
+ {q:'The program crashes only when the debugger is attached.',o:['Ignore and run without it','Investigate and fix that first','Switch debuggers'],a:1,why:'It will keep hurting you; it is a bug of its own.'}]);
+
+})();
+</script>
+</body>
+</html>

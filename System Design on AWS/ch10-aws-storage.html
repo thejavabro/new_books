@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AWS Storage Services</title>
+<meta name="description" content="AWS offers a purpose-built store for nearly every access pattern. This page helps you tell them apart and pick one.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the System Design on AWS companion. Layout: a drafting-table reading column on blueprint grid paper.
+   Blue ink = structure and data paths, orange pencil = clients and requests, green = healthy, red = failure.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:minmax(14rem,1fr) minmax(0,auto);gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* additions */
+button.tag.theme{cursor:pointer;margin-left:auto}
+button.tag.theme:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;max-width:100%;white-space:pre}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:5em;max-height:14em;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.pill{display:inline-block;font-family:var(--mono);font-size:.75rem;padding:2px 8px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.pill.ok{border-color:var(--ok);color:var(--ok);background:var(--ok-soft)} .pill.bad{border-color:var(--bad);color:var(--bad);background:var(--bad-soft)}
+input[type=number],input[type=text]{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+.sheet>.seg,.stack>.seg{align-self:flex-start}
+
+/* page */
+
+.lc{display:flex;align-items:stretch;gap:0;flex-wrap:wrap;font-size:.82rem}
+.lc div{padding:10px 8px;border:1px solid var(--line);margin-right:-1px;text-align:center;flex:1 1 90px;min-width:0}
+.az3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.az3>div{border:1px dashed var(--line);border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:6px;align-items:center}
+.az3>div.down{background:var(--bad-soft);border-color:var(--bad)}
+.az3 .cp{display:flex;gap:6px}
+.az3 .cp i{width:28px;height:28px;border-radius:5px;background:var(--blue);display:block}
+.az3>div.down .cp i{background:var(--bad);opacity:.4}
+.match{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.match .m{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line);font-size:.93rem}
+@media (max-width:560px){.match .m{grid-template-columns:1fr}}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">System Design on AWS · visual companion</a><span class="tag">Part II · Chapter 10 of 21</span><button class="tag theme" type="button" id="themeBtn" aria-label="Toggle light or dark theme">Theme</button></div>
+  <h1>AWS Storage Services</h1>
+  <p class="lede">AWS offers a purpose-built store for nearly every access pattern. This page helps you tell them apart and pick one.</p>
+  <nav class="toc" aria-label="Sections"><a href="#blockfile">EBS, EFS, S3</a><a href="#s3">S3 classes</a><a href="#rds">RDS & Aurora</a><a href="#dynamo">DynamoDB</a><a href="#others">Purpose-built DBs</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="blockfile" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Block, file and object storage on AWS</h2></div>
+  <p>Chapter 2's three storage shapes map to three services. Pick the requirement and see which fits.</p>
+  <div class="sheet">
+    <div class="seg" id="needSeg" role="group" aria-label="Requirement"></div>
+    <div class="tbl"><table class="t" id="stT"></table></div>
+  </div>
+  <div class="tbl"><table class="t">
+    <tr><th>EBS volume type</th><th>Medium</th><th>Best for</th></tr>
+    <tr><td><b>gp3</b></td><td>SSD, general purpose</td><td>Default: boot volumes, most databases; IOPS and throughput set independently of size</td></tr>
+    <tr><td><b>io2 Block Express</b></td><td>SSD, provisioned IOPS</td><td>Critical, I/O-heavy databases needing very high, consistent IOPS</td></tr>
+    <tr><td><b>st1</b></td><td>HDD, throughput optimized</td><td>Big sequential reads: logs, data processing</td></tr>
+    <tr><td><b>sc1</b></td><td>HDD, cold</td><td>Rarely accessed sequential data at the lowest cost</td></tr>
+  </table></div>
+  <p class="small">EBS volumes live in one AZ and usually attach to one instance; protect them with snapshots (stored in S3). Instance store disks are faster but vanish when the instance stops. For Windows or high-performance file systems, Amazon FSx offers managed Windows File Server, Lustre, NetApp ONTAP and OpenZFS.</p>
+</section>
+
+<section id="s3" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>S3 storage classes and what they cost</h2></div>
+  <p>S3 stores objects (up to 5 TB each) in buckets, addressed by key, with 11 nines of designed durability. Storage classes trade storage price against retrieval price, retrieval time and minimum storage duration. Describe your data and compare monthly costs. Prices are rough us-east-1 list prices for illustration only.</p>
+  <div class="sheet">
+    <div class="two"><label class="rng"><span>Data stored: <b id="gbV"></b></span><input type="range" id="gb" min="1" max="1000" value="200"></label><label class="rng"><span>Share read back each month: <b id="rdV"></b></span><input type="range" id="rd" min="0" max="100" value="5"></label></div>
+    <div class="bars" id="s3Bars"></div>
+    <p class="small" id="s3Txt" aria-live="polite"></p>
+  </div>
+  <p><b>Lifecycle rules</b> move objects between classes as they age (transition actions) and delete them when they expire (expiration actions). <b>Intelligent-Tiering</b> does the moving automatically based on observed access, for a small monitoring fee. Build a rule.</p>
+  <div class="sheet">
+    <div class="three"><label class="rng"><span>To Standard-IA after: <b id="l1V"></b></span><input type="range" id="l1" min="30" max="180" step="10" value="30"></label><label class="rng"><span>To Glacier Flexible after: <b id="l2V"></b></span><input type="range" id="l2" min="60" max="365" step="5" value="90"></label><label class="rng"><span>Expire after: <b id="l3V"></b></span><input type="range" id="l3" min="180" max="1095" step="15" value="365"></label></div>
+    <div class="lc" id="lc"></div>
+    <pre class="code" id="lcJson"></pre>
+  </div>
+  <div class="cardgrid" id="secCards"></div>
+</section>
+
+<section id="rds" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>RDS and Aurora</h2></div>
+  <p><b>Amazon RDS</b> runs MySQL, PostgreSQL, MariaDB, Oracle, SQL Server and Db2 for you: provisioning, patching, backups with point-in-time restore, monitoring. Two features are often confused. Toggle them.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Feature"><button data-rf="maz" aria-pressed="true">Multi-AZ</button><button data-rf="rr" aria-pressed="false">Read replicas</button></div>
+    <div class="svgbox"><svg id="rfSvg" viewBox="0 0 640 200" role="img" aria-label="RDS topology"></svg></div>
+    <p id="rfTxt" aria-live="polite"></p>
+  </div>
+  <p><b>Aurora</b> re-architects the database for the cloud: compute instances sit on a shared, distributed storage volume that keeps <b>six copies across three AZs</b> and grows automatically. A write needs 4 of 6 copies; a read 3 of 6. Knock out an AZ, then a further copy.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn" id="azKill">Lose AZ c</button><button class="btn" id="cpKill">Lose one more copy</button><button class="btn" id="azReset">Restore</button></div>
+    <div class="az3" id="az3"></div>
+    <p id="azTxt" aria-live="polite"></p>
+  </div>
+  <div class="cardgrid" id="auCards"></div>
+</section>
+
+<section id="dynamo" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>DynamoDB: capacity and indexes</h2></div>
+  <p>DynamoDB is AWS's serverless key-value and document store: single-digit millisecond reads at any scale, data spread over partitions by partition key and replicated across three AZs. You pay in capacity units. A read capacity unit (RCU) is one strongly consistent read per second of up to 4 KB, or two eventually consistent reads. A write capacity unit (WCU) is one write per second of up to 1 KB. Transactions cost double.</p>
+  <div class="sheet">
+    <div class="three"><label class="rng"><span>Item size: <b id="isV"></b></span><input type="range" id="is" min="1" max="40" value="6"></label><label class="rng"><span>Reads per second: <b id="rpsV"></b></span><input type="range" id="rps" min="10" max="5000" step="10" value="500"></label><label class="rng"><span>Writes per second: <b id="wpsV"></b></span><input type="range" id="wps" min="10" max="2000" step="10" value="100"></label></div>
+    <div class="seg" role="group" aria-label="Read consistency"><button data-cons="ev" aria-pressed="true">Eventually consistent</button><button data-cons="st" aria-pressed="false">Strongly consistent</button><button data-cons="tx" aria-pressed="false">Transactional</button></div>
+    <div class="kpis" id="ddK"></div>
+    <p class="small">Capacity modes: <b>on-demand</b> charges per request and absorbs unpredictable traffic; <b>provisioned</b> reserves RCUs and WCUs (with auto scaling) and is cheaper for steady load. Hot partition keys still throttle, so spread writes.</p>
+  </div>
+  <div class="tbl"><table class="t"><tr><th></th><th>Local secondary index (LSI)</th><th>Global secondary index (GSI)</th></tr>
+   <tr><td><b>Keys</b></td><td>Same partition key, different sort key</td><td>Any partition and sort key</td></tr>
+   <tr><td><b>When</b></td><td>Only at table creation</td><td>Any time</td></tr>
+   <tr><td><b>Scope and size</b></td><td>Within one partition key; 10 GB per key value</td><td>Across all partitions; no size limit</td></tr>
+   <tr><td><b>Capacity</b></td><td>Shares the table's</td><td>Its own</td></tr>
+   <tr><td><b>Consistency</b></td><td>Strong or eventual</td><td>Eventual only</td></tr></table></div>
+</section>
+
+<section id="others" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>The rest of the database shelf</h2></div>
+  <div class="cardgrid" id="dbCards"></div>
+  <p>DAX deserves a closer look: it is a write-through cache that speaks the DynamoDB API. Eventually consistent reads are served from its item cache in microseconds; strongly consistent reads pass straight through to DynamoDB; writes go to DynamoDB first, then update the cache.</p>
+  <div class="sheet">
+    <div class="row between"><h3>Match the requirement to a service</h3><span class="score" id="mScore"></span></div>
+    <div class="match" id="match"></div>
+  </div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qs"></span></div><div class="quiz" id="qq"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>System Design on AWS: Building and Scaling Enterprise Solutions</i> by Jayanth Kumar and Mandeep Singh (O'Reilly, 2025). Explanations, examples, code snippets and drawings are original summaries, not copied from the book. AWS limits and prices change; check current AWS documentation before relying on a number.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch09-aws-network.html"><span>Previous · Chapter 9</span><b>AWS Network Services</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch11-aws-compute.html"><span>Next · Chapter 11</span><b>AWS Compute Services</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('sda:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('sda:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle */
+(function(){const b=document.getElementById('themeBtn');if(!b)return;const r=document.documentElement;
+ const cur=store.get('theme',null);if(cur)r.setAttribute('data-theme',cur);
+ b.addEventListener('click',()=>{const dark=r.getAttribute('data-theme')?r.getAttribute('data-theme')==='dark':matchMedia('(prefers-color-scheme: dark)').matches;const n=dark?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n)});})();
+/* code blocks */
+
+
+/* storage chooser */
+const NEED=[['boot','Boot disk / database volume'],['share','Shared by many servers'],['media','Millions of images, backups'],['scratch','Temporary scratch space']];
+const ST=[['EBS','Block','One instance (Multi-Attach for io2)','One AZ','Low latency, per-volume IOPS','Pay for provisioned GB',['boot']],['Instance store','Block','One instance, ephemeral','That host only','Fastest local NVMe','Included with instance',['scratch']],['EFS','File (NFS)','Thousands of instances','Regional (or One Zone)','Scales throughput with use','Pay per GB used',['share']],['S3','Object (HTTP API)','Anything with credentials','Regional, 3+ AZs','High throughput, higher latency','Cheapest per GB, by class',['media']]];
+$('#needSeg').innerHTML=NEED.map((n,i)=>`<button data-n="${n[0]}" aria-pressed="${i===0}">${n[1]}</button>`).join('');
+function stT(n){$('#stT').innerHTML='<tr><th>Service</th><th>Type</th><th>Shared by</th><th>Scope</th><th>Performance</th><th>Pricing</th></tr>'+ST.map(r=>`<tr style="${r[6].includes(n)?'background:var(--ok-soft)':''}">${r.slice(0,6).map((c,i)=>`<td>${i===0?'<b>'+c+'</b>':c}</td>`).join('')}</tr>`).join('')}
+seg('#needSeg button',b=>stT(b.dataset.n));stT('boot');
+
+/* S3 cost */
+const CL=[['Standard',.023,0,'ms','none'],['Intelligent-Tiering',.0125,0,'ms','auto tiers, +monitoring'],['Standard-IA',.0125,.01,'ms','30 days'],['One Zone-IA',.01,.01,'ms','30 days, 1 AZ only'],['Glacier Instant',.004,.03,'ms','90 days'],['Glacier Flexible',.0036,.01,'minutes–hours','90 days'],['Glacier Deep Archive',.00099,.02,'12–48 hours','180 days']];
+function drawS3(){const gb=+$('#gb').value,rd=+$('#rd').value/100;$('#gbV').textContent=gb+' GB';$('#rdV').textContent=Math.round(rd*100)+'%';
+ const c=CL.map(k=>{let v=gb*k[1]+gb*rd*k[2];if(k[0]==='Intelligent-Tiering'){v=gb*(rd>.3?.023:rd>.05?.0125:.004)+gb*.0025/1000*400}return{l:k[0],v,txt:'$'+v.toFixed(2)}});const mx=Math.max(...c.map(x=>x.v));const best=c.reduce((a,b)=>a.v<b.v?a:b);
+ bars('#s3Bars',c.map(x=>({...x,c:x===best?'ok':'blue'})),mx);
+ const b=CL.find(k=>k[0]===best.l);$('#s3Txt').innerHTML=`Cheapest here: <b>${best.l}</b> (retrieval in ${b[3]}, minimum duration ${b[4]}). ${rd>.3?'Data read this often belongs in Standard; retrieval fees eat any storage savings.':'Rarely read data is far cheaper in colder classes, if you can wait for it.'}`}
+['gb','rd'].forEach(i=>$('#'+i).addEventListener('input',drawS3));drawS3();
+function drawLc(){let a=+$('#l1').value,b=+$('#l2').value,c=+$('#l3').value;if(b<a+30){b=a+30;$('#l2').value=b}if(c<b+90){c=b+90;$('#l3').value=c}
+ $('#l1V').textContent=a+' days';$('#l2V').textContent=b+' days';$('#l3V').textContent=c+' days';
+ $('#lc').innerHTML=`<div style="flex-grow:${a};background:var(--blue-soft)">Standard<br><span class="small">0–${a}</span></div><div style="flex-grow:${b-a};background:var(--ok-soft)">Standard-IA<br><span class="small">${a}–${b}</span></div><div style="flex-grow:${c-b};background:var(--mid-soft)">Glacier Flexible<br><span class="small">${b}–${c}</span></div><div style="flex-grow:40;background:var(--bad-soft)">deleted</div>`;
+ $('#lcJson').textContent=`{\n  "Rules": [{\n    "ID": "logs-tiering",\n    "Filter": { "Prefix": "logs/" },\n    "Status": "Enabled",\n    "Transitions": [\n      { "Days": ${a}, "StorageClass": "STANDARD_IA" },\n      { "Days": ${b}, "StorageClass": "GLACIER" }\n    ],\n    "Expiration": { "Days": ${c} }\n  }]\n}`}
+['l1','l2','l3'].forEach(i=>$('#'+i).addEventListener('input',drawLc));drawLc();
+cards('#secCards',[{t:'Private by default',d:'New buckets block public access. Keep it that way unless a bucket truly serves public content, and then prefer CloudFront in front.'},{t:'Bucket policies and IAM',d:'Resource policies on the bucket and identity policies on users and roles decide who can do what. ACLs are legacy; leave them disabled.'},{t:'Encryption',d:'Objects are encrypted at rest by default (SSE-S3); use SSE-KMS for key control and audit. Enforce TLS in transit with a policy.'},{t:'Versioning and Object Lock',d:'Keep every version to recover from overwrites and deletes; Object Lock adds write-once-read-many retention.'},{t:'Amazon Macie',d:'Scans buckets with machine learning to find sensitive data such as personal information and flags risky access settings.'},{t:'Presigned URLs',d:'Grant time-limited upload or download rights for one object without sharing credentials.'}]);
+
+/* RDS */
+function drawRf(m){const s=$('#rfSvg');s.innerHTML='';const box=(x,y,t,c,f)=>{s.appendChild(el('rect',{x,y,width:130,height:46,rx:6,fill:f||'var(--surface)',stroke:`var(--${c})`,'stroke-width':1.6}));t.split('\n').forEach((l,i,a)=>s.appendChild(el('text',{x:x+65,y:y+27+(i-(a.length-1)/2)*14,'text-anchor':'middle','font-size':12,class:'s-ink'},l)))};
+ ['AZ a','AZ b','AZ c'].forEach((z,i)=>{s.appendChild(el('rect',{x:20+i*205,y:20,width:190,height:170,rx:8,fill:'none',stroke:'var(--line)','stroke-dasharray':'5 4'}));s.appendChild(el('text',{x:30+i*205,y:38,'font-size':11,class:'s-muted'},z))});
+ box(50,80,'Primary\nreads + writes','blue','var(--blue-soft)');
+ if(m==='maz'){box(255,80,'Standby\nno traffic','muted','var(--paper)');s.appendChild(el('line',{x1:180,y1:103,x2:255,y2:103,stroke:'var(--ok)','stroke-width':2.5,class:'flow'}));s.appendChild(el('text',{x:217,y:96,'text-anchor':'middle','font-size':10,fill:'var(--ok)'},'sync'));
+  $('#rfTxt').innerHTML='<b>Multi-AZ is for availability.</b> Every write is synchronously replicated to a standby in another AZ. If the primary or its AZ fails, RDS flips the DNS endpoint to the standby, usually in a minute or two, with no data loss. The classic standby serves no reads. (Multi-AZ <i>cluster</i> deployments add two readable standbys.)'}
+ else{box(255,80,'Read replica','d2');box(460,80,'Read replica\n(or other region)','d2');[255,460].forEach(x=>s.appendChild(el('line',{x1:180,y1:103,x2:x,y2:103,stroke:'var(--pencil)','stroke-width':2,'stroke-dasharray':'6 4',class:'flow'})));s.appendChild(el('text',{x:320,y:160,'text-anchor':'middle','font-size':11,fill:'var(--pencil)'},'async replication; reads via replica endpoints'));
+  $('#rfTxt').innerHTML='<b>Read replicas are for read scale.</b> Changes are copied asynchronously, so replicas can lag. Point reporting and read-heavy queries at them; promote one manually if needed. They can live in other regions for local reads and disaster recovery.'}}
+seg('[data-rf]',b=>drawRf(b.dataset.rf));drawRf('maz');
+let azDown=false,extra=false;
+function drawAz(){$('#az3').innerHTML=['a','b','c'].map(z=>{const d=z==='c'&&azDown;const lost=z==='b'&&extra?1:0;return `<div class="${d?'down':''}"><b>AZ ${z}</b><div class="cp"><i style="${lost?'background:var(--bad);opacity:.4':''}"></i><i></i></div><span class="small">${z==='a'?'writer + reader':'reader'}</span></div>`}).join('');
+ const alive=6-(azDown?2:0)-(extra?1:0);$('#azTxt').innerHTML=`${alive} of 6 copies alive. ${alive>=4?'<b class="okc">Reads and writes continue</b> (write quorum 4, read quorum 3).':alive>=3?'<b class="midc">Reads continue, writes pause</b> until copies are repaired. No data is lost; Aurora re-replicates segments quickly from survivors.':'<b class="badc">Unavailable.</b>'}`}
+$('#azKill').addEventListener('click',()=>{azDown=true;drawAz()});$('#cpKill').addEventListener('click',()=>{extra=true;drawAz()});$('#azReset').addEventListener('click',()=>{azDown=extra=false;drawAz()});drawAz();
+cards('#auCards',[{t:'Up to 15 replicas',d:'Readers share the same storage, so replica lag is typically milliseconds, and any can be promoted fast.'},{t:'Endpoints',d:'A cluster (writer) endpoint, a reader endpoint that load-balances replicas, and custom endpoints for groups of instances.'},{t:'Aurora Serverless v2',d:'Capacity scales up and down in fine steps with load: good for spiky or unpredictable workloads.'},{t:'Global Database',d:'Storage-level replication to other regions with about a second of lag, for low-latency global reads and fast regional failover.'},{t:'Aurora DSQL',d:'A newer distributed SQL option aimed at virtually unlimited scale with active-active multi-region writes.'},{t:'Security',d:'Runs inside your VPC; encryption with KMS; IAM database authentication; place it in private subnets.'}]);
+
+/* DynamoDB */
+let cons='ev';
+function drawDd(){const kb=+$('#is').value,r=+$('#rps').value,w=+$('#wps').value;$('#isV').textContent=kb+' KB';$('#rpsV').textContent=r;$('#wpsV').textContent=w;
+ const ru=Math.ceil(kb/4),wu=Math.ceil(kb/1);let rcu=r*ru*(cons==='ev'?.5:cons==='tx'?2:1),wcu=w*wu*(cons==='tx'?2:1);
+ $('#ddK').innerHTML=`<div class="stat"><span class="big blue" style="font-size:1.6rem">${Math.ceil(rcu).toLocaleString()}</span><span>RCUs (${ru} unit${ru>1?'s':''} per read)</span></div><div class="stat"><span class="big pencil" style="font-size:1.6rem">${Math.ceil(wcu).toLocaleString()}</span><span>WCUs (${wu} per write)</span></div><div class="stat"><span class="big" style="font-size:1.6rem">${Math.max(1,Math.ceil(Math.max(rcu/3000,wcu/1000)))}</span><span>partitions needed at minimum (3,000 RCU / 1,000 WCU each)</span></div>`}
+['is','rps','wps'].forEach(i=>$('#'+i).addEventListener('input',drawDd));seg('[data-cons]',b=>{cons=b.dataset.cons;drawDd()});drawDd();
+
+/* other DBs */
+cards('#dbCards',[{t:'DocumentDB',d:'MongoDB-compatible JSON document database. Storage is separated from compute like Aurora; collections and documents instead of tables and rows.',c:'d1'},{t:'Neptune',d:'Managed graph database (property graph with Gremlin or openCypher, and RDF with SPARQL). Six copies of data across three AZs; separate writer and reader endpoints.',c:'d2'},{t:'ElastiCache',d:'Managed Redis/Valkey and Memcached. Redis: replication, Multi-AZ failover, persistence, data tiering to SSD, rich types. Memcached: multithreaded, simple, no persistence.',c:'d3'},{t:'DAX',d:'In-memory write-through cache for DynamoDB with microsecond reads and no application rewrite.',c:'d4'},{t:'OpenSearch Service',d:'Managed OpenSearch (Elasticsearch fork) for full-text search, log analytics and dashboards. Dedicated cluster-manager nodes for production.',c:'d5'},{t:'Timestream',d:'Serverless time-series database: recent data in a memory store, older data in a cheaper magnetic store, with built-in time functions.',c:'d1'},{t:'Keyspaces',d:'Serverless, Cassandra-compatible wide-column store. Use CQL drivers without running a cluster.',c:'d2'},{t:'MemoryDB',d:'Redis-compatible but durable, with a multi-AZ transaction log: an in-memory primary database, not just a cache.',c:'d3'}]);
+const MT=[['Customer accounts and orders with transactions','Aurora'],['Food items with flexible attributes per restaurant','DocumentDB'],['Restaurant photos and review images','S3'],['Who follows whom in food communities','Neptune'],['Search dishes by name, location and rating','OpenSearch'],['Sensor readings from delivery bikes every second','Timestream']];
+const OPT=['Aurora','DocumentDB','S3','Neptune','OpenSearch','Timestream','DynamoDB'];let mOk=0;
+$('#match').innerHTML=MT.map((m,i)=>`<div class="m"><span>${m[0]}</span><select data-i="${i}" aria-label="Service"><option value="">choose…</option>${OPT.map(o=>`<option>${o}</option>`).join('')}</select><span class="pill" id="mp${i}">?</span></div>`).join('');
+function mScore(){let ok=0;$$('#match select').forEach(s=>{const i=+s.dataset.i,v=s.value,p=$('#mp'+i);if(!v){p.className='pill';p.textContent='?';return}const good=v===MT[i][1]||(i===0&&v==='DynamoDB'&&false);p.className='pill '+(good?'ok':'bad');p.textContent=good?'yes':'try again';if(good)ok++});$('#mScore').textContent=ok+' / '+MT.length}
+$$('#match select').forEach(s=>s.addEventListener('change',mScore));mScore();
+
+quiz('#qq','#qs',[
+ {q:'Several EC2 instances need the same POSIX file system. Use…',o:['EBS','EFS','Instance store'],a:1,why:'EFS is a shared NFS file system across instances and AZs.'},
+ {q:'Which S3 class has a 180-day minimum and hours-long retrieval?',o:['Standard-IA','Glacier Instant Retrieval','Glacier Deep Archive'],a:2,why:'The cheapest archive tier, with 12 to 48 hour retrieval.'},
+ {q:'RDS Multi-AZ (classic) primarily gives you…',o:['Read scaling','Automatic failover with no data loss','Cross-region reads'],a:1,why:'A synchronous standby takes over; it serves no reads.'},
+ {q:'An item is 6 KB. How many RCUs does one strongly consistent read use?',o:['1','2','6'],a:1,why:'Reads are metered in 4 KB steps: 6 KB rounds up to 8 KB = 2 RCUs.'},
+ {q:'You need a new query pattern on an existing DynamoDB table with a different partition key. Add…',o:['An LSI','A GSI'],a:1,why:'GSIs can use any key and be added at any time; LSIs only at creation.'}]);
+
+})();
+</script>
+</body>
+</html>

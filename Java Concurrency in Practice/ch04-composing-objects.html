@@ -1,0 +1,536 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Composing Objects</title>
+<meta name="description" content="You rarely want to reason about every field access in a whole program. This chapter shows how to build thread-safe classes out of smaller pieces so that safety can be checked one class at a time.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Java Concurrency in Practice companion. A lab-notebook reading column on blueprint grid paper.
+   Blue ink = threads and structure, orange pencil = shared state and locks, green = safe, red = broken.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code */
+pre.code{margin:0;background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--blue);border-radius:0 8px 8px 0;padding:12px 14px;overflow-x:auto;font-family:var(--mono);font-size:.82rem;line-height:1.55;tab-size:2;max-width:100%}
+pre.code.bad{border-left-color:var(--bad)} pre.code.good{border-left-color:var(--ok)}
+pre.code .k{color:var(--d5);font-weight:600} pre.code .c{color:var(--muted);font-style:italic} pre.code .s{color:var(--d2)} pre.code .a{color:var(--pencil)} pre.code .n{color:var(--d3)}
+pre.code .hl{background:var(--mid-soft);border-radius:3px;box-shadow:0 0 0 2px var(--mid-soft)}
+code{font-family:var(--mono);font-size:.88em;background:var(--blue-soft);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+pre code{background:none;padding:0;font-size:inherit;overflow-wrap:normal}
+.codecap{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;display:flex;gap:8px;align-items:center}
+.codecap b{color:var(--ok)} .codecap b.x{color:var(--bad)}
+.rule{border:1.5px solid var(--blue);border-radius:10px;padding:12px 16px;background:var(--blue-soft);font-weight:600;max-width:66ch}
+.rule::before{content:"Rule of thumb";display:block;font-family:var(--mono);font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:var(--blue);font-weight:600;margin-bottom:2px}
+/* thread lanes */
+.lanes{display:flex;flex-direction:column;gap:8px}
+.lane{display:grid;grid-template-columns:5.5rem minmax(0,1fr);gap:10px;align-items:center}
+.lane>b{font-family:var(--mono);font-size:.8rem}
+.lane .ops{display:flex;flex-wrap:wrap;gap:6px;min-height:34px;align-items:center}
+.op{font-family:var(--mono);font-size:.78rem;padding:4px 8px;border-radius:6px;border:1px solid var(--line);background:var(--paper)}
+.op.on{border-color:var(--blue);background:var(--blue-soft)}
+.op.badop{border-color:var(--bad);background:var(--bad-soft);color:var(--bad)}
+.op.okop{border-color:var(--ok);background:var(--ok-soft);color:var(--ok)}
+.memcell{display:inline-flex;flex-direction:column;align-items:center;gap:2px;border:1.5px solid var(--pencil);border-radius:8px;padding:6px 14px;background:var(--pencil-soft);font-family:var(--mono)}
+.memcell span{font-size:.7rem;color:var(--muted)}
+.memcell b{font-size:1.3rem}
+.themebtn{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted)}
+.themebtn:hover{border-color:var(--blue);color:var(--blue)}
+.sec-head h2,h1{min-width:0;overflow-wrap:break-word}
+
+/* page */
+
+.chk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.ss text{font-size:12px}
+.mapgrid{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:16px;align-items:start}
+@media (max-width:620px){.mapgrid{grid-template-columns:1fr}}
+.vt{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:.82rem}
+.vt td,.vt th{border-bottom:1px solid var(--line);padding:5px 8px;text-align:left}
+.vt td.ch{color:var(--ok);font-weight:700}
+.ways{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+@media (max-width:620px){.ways{grid-template-columns:1fr 1fr}}
+.ways button{border:1.5px solid var(--line);background:var(--surface);border-radius:10px;padding:10px;text-align:left;font-size:.9rem;display:flex;flex-direction:column;gap:2px}
+.ways button b{font-family:var(--display)}
+.ways button[aria-pressed="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Java Concurrency in Practice · visual companion</a><span class="tag">Part I · Chapter 4 of 16</span><button class="themebtn" type="button">Theme: auto</button></div>
+  <h1>Composing Objects</h1>
+  <p class="lede">You rarely want to reason about every field access in a whole program. This chapter shows how to build thread-safe classes out of smaller pieces so that safety can be checked one class at a time.</p>
+  <nav class="toc" aria-label="Sections"><a href="#design">Design</a><a href="#confinement">Instance confinement</a><a href="#tracker">Vehicle tracker</a><a href="#delegation">Delegation</a><a href="#extending">Adding features</a><a href="#docs">Documentation</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="design" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Designing a thread-safe class</h2></div>
+  <p>Proving a whole program thread-safe by checking every field access is hopeless. Encapsulation lets you check one class at a time. Designing a thread-safe class comes down to three steps:</p>
+  <div class="recap">
+    <div><b class="blue">1. Find the state variables</b><span>The object's fields, plus the state of objects it owns through those fields. A <code>LinkedList</code> field means the list's nodes are part of your state too.</span></div>
+    <div><b class="pencil">2. Find the invariants</b><span>Which combinations of values are valid, and which transitions are allowed from one state to the next.</span></div>
+    <div><b class="okc">3. Set a synchronization policy</b><span>Decide how immutability, confinement and locking combine to protect the state, and which lock guards which variables. Then write it down.</span></div>
+  </div>
+  <p>Invariants and postconditions shrink the space of valid states. The smaller the space, the easier the reasoning. Take a range with <code>lower</code> and <code>upper</code> bounds and the invariant <code>lower ≤ upper</code>. Drag the bounds.</p>
+  <div class="sheet">
+    <div class="two">
+      <label class="rng"><span>lower: <b id="loV"></b></span><input type="range" id="lo" min="0" max="10" value="3"></label>
+      <label class="rng"><span>upper: <b id="upV"></b></span><input type="range" id="up" min="0" max="10" value="7"></label>
+    </div>
+    <div class="svgbox fit"><svg id="ssSvg" class="ss" viewBox="0 0 640 130" role="img" aria-label="Number line showing the range"></svg></div>
+    <p id="ssTxt" aria-live="polite"></p>
+  </div>
+  <p>Because the invariant ties two variables together, they can't be updated independently. Both must be guarded by one lock, and changed in one atomic step. Operations with <b>state-based preconditions</b> (you can't remove from an empty queue) are <b>state-dependent</b>; chapter 5 and 14 show how to make them wait rather than fail.</p>
+</section>
+
+<section id="confinement" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Instance confinement and the Java monitor pattern</h2></div>
+  <p>A non-thread-safe object can still be used safely if it is <b>encapsulated</b> inside another object, and every path to it holds the outer object's lock. For example, a class can keep people in a private, plain <code>HashSet</code> and expose only <code>synchronized</code> <code>add</code> and <code>contains</code>. The set never escapes, so its own lack of thread safety doesn't matter. Confinement makes it easy to analyse a class without looking at the whole program.</p>
+  <p>The simplest policy is the <b>Java monitor pattern</b>: encapsulate all mutable state and guard it with the object's own intrinsic lock. <code>Vector</code> and <code>Hashtable</code> work this way. A variation uses a <b>private lock object</b> instead of <code>this</code>.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Lock choice"><button data-l="this" aria-pressed="true">Lock on this</button><button data-l="priv" aria-pressed="false">Private lock object</button></div>
+    <pre class="code" id="lkCode"></pre>
+    <p id="lkTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="tracker" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Example: tracking fleet vehicles</h2></div>
+  <p>The book builds the same vehicle tracker several ways. A view thread reads every vehicle's location; updater threads move them. Two designs answer the question "what does <code>getLocations()</code> return?" differently.</p>
+  <div class="cardgrid" id="vtCards"></div>
+  <p>Press <b>Move vehicles</b> after taking a snapshot. The <b>snapshot</b> (monitor version, deep copy under the lock) stays frozen. The <b>live view</b> (delegating version: an unmodifiable view over a <code>ConcurrentHashMap</code> of immutable points) shows updates as they happen.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn" id="vtSnap">getLocations()</button><button class="btn primary" id="vtMove">Move vehicles</button></div>
+    <div class="mapgrid">
+      <div class="svgbox fit"><svg id="vtSvg" viewBox="0 0 300 200" role="img" aria-label="Map of vehicle positions"></svg></div>
+      <div class="stack">
+        <div class="tbl"><table class="vt" id="vtTab"></table></div>
+        <p class="small" id="vtTxt"></p>
+      </div>
+    </div>
+  </div>
+  <div class="callout blue"><b class="h">Which is better?</b><span>It depends on what callers need. A snapshot is consistent, but costs a deep copy under the lock and goes stale. A live view is always current but may show some cars from before an update and some after. Neither is wrong; the choice belongs in the documentation.</span></div>
+</section>
+
+<section id="delegation" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Delegating thread safety, and when it fails</h2></div>
+  <p>Often a class can hand its thread safety to fields that are already thread-safe. A counter backed by an <code>AtomicLong</code> is thread-safe because its only state is the atomic. A component that keeps keyboard listeners and mouse listeners in two <code>CopyOnWriteArrayList</code>s is thread-safe too: the two lists are <b>independent</b>, with no invariant linking them.</p>
+  <p>Delegation breaks as soon as there is an invariant <i>across</i> the delegated variables. Build the range from two <code>AtomicInteger</code>s, each setter checking the invariant first. Step through two threads updating it at once.</p>
+  <pre class="code bad">
+class NumberRange {  // NOT thread-safe
+  private final AtomicInteger lower = new AtomicInteger(0);
+  private final AtomicInteger upper = new AtomicInteger(10);
+  void setLower(int i) {
+!!    if (i > upper.get()) throw new IllegalArgumentException();
+    lower.set(i);
+  }
+  void setUpper(int i) {
+!!    if (i < lower.get()) throw new IllegalArgumentException();
+    upper.set(i);
+  }
+}</pre>
+  <div class="sheet">
+    <div class="row"><div class="memcell"><span>lower</span><b id="nrL">0</b></div><div class="memcell"><span>upper</span><b id="nrU">10</b></div><b id="nrOk"></b></div>
+    <div class="lanes"><div class="lane"><b class="blue">setLower(5)</b><div class="ops" id="nrA"></div></div><div class="lane"><b class="pencil">setUpper(4)</b><div class="ops" id="nrB"></div></div></div>
+    <div class="stepper" id="nrStep"></div>
+  </div>
+  <div class="rule">If a class has independent thread-safe state variables and no invalid state transitions, it can delegate thread safety to them. Otherwise it needs its own lock.</div>
+  <p>A delegated variable can even be <b>published</b> (made accessible to clients) if it is thread-safe, takes part in no invariants, and has no forbidden transitions. A tracker that stores mutable but thread-safe <code>SafePoint</code>s can let callers move a vehicle directly.</p>
+</section>
+
+<section id="extending" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Adding functionality to a thread-safe class</h2></div>
+  <p>You want a <code>putIfAbsent</code> on a synchronized list. The library doesn't have it. The book compares four ways to add it, and shows one that looks right but is broken.</p>
+  <div class="sheet">
+    <div class="ways" id="ways"></div>
+    <pre class="code" id="wayCode"></pre>
+    <p id="wayTxt" aria-live="polite"></p>
+  </div>
+  <div class="sheet"><div class="row between"><h3>Which lock makes client-side locking correct?</h3><span class="score" id="cScore"></span></div><div class="quiz" id="cQuiz"></div></div>
+</section>
+
+<section id="docs" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Document your synchronization policy</h2></div>
+  <p>Documentation is one of the strongest tools for managing thread safety, and one of the most neglected. Users need to know what thread-safety guarantees they get; maintainers need to know which lock guards which state. Many JDK classes say nothing, leaving people to guess. Is <code>SimpleDateFormat</code> thread-safe? (No, and the docs said so only from JDK 1.4.) Is a JDBC <code>DataSource</code>? The book suggests reading specs from the implementer's point of view, but better still: write it down. Annotations such as <code>@ThreadSafe</code>, <code>@NotThreadSafe</code> and <code>@GuardedBy</code> are a cheap start (see the appendix page).</p>
+  <div class="two">
+    <pre class="code good">
+@ThreadSafe
+public class Inventory {
+  @GuardedBy("this")
+  private final Map&lt;String,Integer&gt; stock = new HashMap&lt;&gt;();
+  // Policy: all access holds this.
+  // Clients may lock on an Inventory to
+  // make compound actions atomic.
+}</pre>
+    <div class="callout"><b class="h">What to record</b><span>Whether the class is thread-safe; which lock guards each mutable field; whether callers may (or must) use client-side locking; whether callbacks occur while a lock is held.</span></div>
+  </div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Java Concurrency in Practice</i> by Brian Goetz with Tim Peierls, Joshua Bloch, Joseph Bowbeer, David Holmes and Doug Lea (Addison-Wesley, 2006). Explanations, code snippets and drawings are original summaries, not copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch03-sharing-objects.html"><span>Previous · Chapter 3</span><b>Sharing Objects</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch05-building-blocks.html"><span>Next · Chapter 5</span><b>Building Blocks</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('jcip:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('jcip:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: auto -> light -> dark */
+(function(){const r=document.documentElement;let m=store.get('theme','auto');
+  function ap(){if(m==='auto')r.removeAttribute('data-theme');else r.setAttribute('data-theme',m);$$('.themebtn').forEach(b=>b.textContent='Theme: '+m)}
+  ap();$$('.themebtn').forEach(b=>b.addEventListener('click',()=>{m=m==='auto'?'light':m==='light'?'dark':'auto';store.set('theme',m);ap()}))})();
+/* tiny Java highlighter for <pre class="code">. Lines starting with "!!" are highlighted. */
+(function(){const KW='abstract|boolean|break|case|catch|class|char|continue|default|do|double|else|enum|extends|final|finally|for|if|implements|import|instanceof|int|interface|long|new|null|private|protected|public|return|static|super|switch|synchronized|this|throw|throws|true|false|try|var|void|volatile|while|byte|short|float';
+  const re=new RegExp('(//[^\\n]*|/\\*[\\s\\S]*?\\*/)|("(?:[^"\\\\\\n]|\\\\.)*"|\'(?:[^\'\\\\\\n]|\\\\.)*\')|(@[A-Za-z]+)|\\b('+KW+')\\b|\\b(\\d[\\d_]*L?)\\b','g');
+  const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  window.hlJava=function(p){const src=p.textContent.replace(/^\n/,'').replace(/\s+$/,'');
+    const lines=src.split('\n').map(l=>{const mark=l.startsWith('!!');if(mark)l=l.slice(2);
+      let out='',last=0;l.replace(re,(m,c,s,a,k,n,off)=>{out+=esc(l.slice(last,off));const cls=c?'c':s?'s':a?'a':k?'k':'n';out+=`<span class="${cls}">${esc(m)}</span>`;last=off+m.length;return m});out+=esc(l.slice(last));
+      return mark?`<span class="hl">${out}</span>`:out});
+    p.innerHTML='<code>'+lines.join('\n')+'</code>'};
+  $$('pre.code').forEach(hlJava)})();
+
+
+/* state space */
+function drawSS(){const lo=+$('#lo').value,up=+$('#up').value;$('#loV').textContent=lo;$('#upV').textContent=up;const s=$('#ssSvg');s.innerHTML='';const x=v=>40+v*56;const ok=lo<=up;
+  s.appendChild(el('line',{x1:30,y1:70,x2:610,y2:70,stroke:'var(--muted)','stroke-width':2}));
+  for(let i=0;i<=10;i++){s.appendChild(el('line',{x1:x(i),y1:64,x2:x(i),y2:76,stroke:'var(--muted)'}));s.appendChild(el('text',{x:x(i),y:96,'text-anchor':'middle',class:'s-muted'},i))}
+  s.appendChild(el('rect',{x:Math.min(x(lo),x(up)),y:56,width:Math.abs(x(up)-x(lo))||3,height:28,rx:4,fill:ok?'var(--ok-soft)':'var(--bad-soft)',stroke:ok?'var(--ok)':'var(--bad)'}));
+  [[lo,'lower','blue'],[up,'upper','pencil']].forEach(([v,t,c],k)=>{s.appendChild(el('circle',{cx:x(v),cy:70,r:8,fill:`var(--${c})`}));s.appendChild(el('text',{x:x(v),y:k?122:42,'text-anchor':'middle','font-weight':700,fill:`var(--${c})`},t))});
+  $('#ssTxt').innerHTML=ok?'Valid state: <b class="okc">lower ≤ upper</b>.':'<b class="badc">Invalid state.</b> A correct class must never let anyone observe this, not even briefly.'}
+$('#lo').addEventListener('input',drawSS);$('#up').addEventListener('input',drawSS);drawSS();
+
+const LK={this:[`@ThreadSafe
+public class Account {
+  @GuardedBy("this") private long balance;
+  public synchronized void deposit(long n) { balance += n; }
+  public synchronized long balance() { return balance; }
+}`,'Simple. But the lock is public: any client can synchronize on your Account, which allows client-side locking, and also lets badly behaved code hold it for ages or join it in a deadlock.'],
+ priv:[`@ThreadSafe
+public class Account {
+  private final Object lock = new Object();
+  @GuardedBy("lock") private long balance;
+  public void deposit(long n) { synchronized (lock) { balance += n; } }
+  public long balance() { synchronized (lock) { return balance; } }
+}`,'The lock is encapsulated: no outside code can acquire it, so you can verify correct use by reading this one class. Clients lose the ability to lock for their own compound actions.']};
+function showLK(k){const c=$('#lkCode');c.textContent=LK[k][0];hlJava(c);$('#lkTxt').textContent=LK[k][1]}
+seg('[data-l]',b=>showLK(b.dataset.l));showLK('this');
+
+cards('#vtCards',[
+ {t:'Monitor-based tracker',d:'Stores mutable points in a plain map, all under the tracker\'s lock. getLocations() returns a deep copy made while holding the lock. Safe, but copying a big fleet under the lock can hurt responsiveness.',c:'blue'},
+ {t:'Delegating tracker',d:'Stores immutable points in a ConcurrentHashMap. No explicit locks at all. getLocations() returns an unmodifiable live view; setLocation replaces a point with map.replace.',c:'d2'},
+ {t:'Publishing tracker',d:'Stores thread-safe, mutable SafePoints whose get returns x and y together. Callers can update locations directly through the published objects.',c:'d3'}]);
+let cars={A:[50,40],B:[150,120],C:[240,70]},snap=null;
+function drawVT(){const s=$('#vtSvg');s.innerHTML='';s.appendChild(el('rect',{x:2,y:2,width:296,height:196,rx:8,fill:'var(--surface)',stroke:'var(--line)'}));
+  for(let i=1;i<6;i++){s.appendChild(el('line',{x1:i*50,y1:2,x2:i*50,y2:198,stroke:'var(--grid)'}))}
+  Object.entries(cars).forEach(([k,[x,y]],i)=>{s.appendChild(el('circle',{cx:x,cy:y,r:13,fill:`var(--d${i+1})`}));s.appendChild(el('text',{x,y:y+4,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--surface)'},k))});
+  const rows=Object.entries(cars).map(([k,p])=>{const sp=snap?snap[k]:null;const ch=sp&&(sp[0]!==p[0]||sp[1]!==p[1]);return `<tr><td>${k}</td><td>${sp?`(${sp[0]},${sp[1]})`:'–'}</td><td class="${ch?'ch':''}">(${p[0]},${p[1]})</td></tr>`}).join('');
+  $('#vtTab').innerHTML=`<tr><th>id</th><th>snapshot</th><th>live view</th></tr>${rows}`}
+$('#vtSnap').addEventListener('click',()=>{snap=JSON.parse(JSON.stringify(cars));$('#vtTxt').textContent='Snapshot taken: a deep copy, consistent as of this instant.';drawVT()});
+$('#vtMove').addEventListener('click',()=>{Object.keys(cars).forEach(k=>{cars[k]=[Math.max(20,Math.min(280,cars[k][0]+Math.round(Math.random()*60-30))),Math.max(20,Math.min(180,cars[k][1]+Math.round(Math.random()*60-30)))]});$('#vtTxt').textContent=snap?'The live view shows the moves (green); the snapshot doesn\'t.':'Take a snapshot first to compare.';drawVT()});drawVT();
+
+const NR=[[0,10,[],[],'Start: lower 0, upper 10. Two threads call setLower(5) and setUpper(4) at the same time.'],
+ [0,10,[['5 > upper(10)? no','on']],[],'setLower checks against upper: 10. Passes.'],
+ [0,10,[['5 > upper(10)? no','']],[['4 < lower(0)? no','on']],'setUpper checks against lower, which is still 0. Passes too.'],
+ [5,10,[['check ok',''],['lower.set(5)','on']],[['check ok','']],'lower becomes 5.'],
+ [5,4,[['check ok',''],['lower.set(5)','']],[['check ok',''],['upper.set(4)','badop']],'upper becomes 4. Range (5, 4): <b class="badc">invariant broken</b>, though every individual operation was atomic.'],
+ [0,10,[['lock','okop'],['check+set','']],[['lock (waits)','on'],['4 < 5? throw','okop']],'Fix: guard both bounds with one lock so check-then-set is atomic. The second call then sees the first one\'s result and fails cleanly.']];
+$('#nrStep').innerHTML=stepHTML();
+stepper('#nrStep',NR.map(s=>s[4]),i=>{const s=NR[i],f=a=>a.map(o=>`<span class="op ${o[1]}">${o[0]}</span>`).join('');$('#nrL').textContent=i===5?5:s[0];$('#nrU').textContent=s[1];$('#nrA').innerHTML=f(s[2]);$('#nrB').innerHTML=f(s[3]);
+  const L=i===5?5:s[0];$('#nrOk').innerHTML=L<=s[1]?'<span class="okc">lower ≤ upper</span>':'<span class="badc">lower &gt; upper</span>'});
+
+const WAYS=[['Modify the class','Safest, if you own it',`// inside the class itself
+public synchronized boolean putIfAbsent(E x) { ... }`,'All synchronization stays in one source file. Often impossible: you may not have the source or permission to change it.'],
+ ['Extend it','Fragile',`class BetterVector<E> extends Vector<E> {
+  public synchronized boolean putIfAbsent(E x) {
+    boolean absent = !contains(x);
+    if (absent) add(x);
+    return absent;
+  }
+}`,'Works only because Vector documents that it locks on itself. The policy is now split across two classes; if the base class changes its lock, the subclass silently breaks.'],
+ ['Client-side locking','Fragile, but works',`class ListHelper<E> {
+  final List<E> list = Collections.synchronizedList(new ArrayList<>());
+  boolean putIfAbsent(E x) {
+    synchronized (list) {   // the list's own lock
+      boolean absent = !list.contains(x);
+      if (absent) list.add(x);
+      return absent;
+    }
+  }
+}`,'You must lock on the same object the list uses for its own methods: the list itself. Correct, but you depend on an implementation detail and spread the policy into unrelated classes.'],
+ ['Composition','Most robust',`class ImprovedList<T> implements List<T> {
+  private final List<T> list;          // never published
+  public synchronized boolean putIfAbsent(T x) { ... }
+  public synchronized void clear() { list.clear(); }
+  // ...every List method delegates under this lock
+}`,'Wraps the list and adds its own layer of locking with the monitor pattern. It doesn\'t care whether the underlying list is thread-safe. A tiny extra cost for a sturdy result.']];
+$('#ways').innerHTML=WAYS.map((w,i)=>`<button data-i="${i}" aria-pressed="${i===3}"><b>${w[0]}</b><span class="small">${w[1]}</span></button>`).join('');
+function showWay(i){const w=WAYS[i],c=$('#wayCode');c.textContent=w[2];hlJava(c);c.className='code '+(i===3?'good':'');$('#wayTxt').textContent=w[3]}
+seg('#ways button',b=>showWay(+b.dataset.i));showWay(3);
+
+quiz('#cQuiz','#cScore',[
+ {q:'A ListHelper method marked synchronized, wrapping a synchronizedList field',a:1,why:'That locks the helper, not the list. Other threads using the list directly aren\'t excluded: it only looks safe.'},
+ {q:'synchronized (list) { ... } around contains + add',a:0,why:'Collections.synchronizedList documents that it locks on the wrapper itself.'},
+ {q:'A fresh new Object() lock local to the method',a:1,why:'A lock nobody else uses excludes nobody.'}],['Correct','Broken']);
+
+quiz('#qQuiz','#qScore',[
+ {q:'Your class keeps state in a private HashSet and every method that touches it is synchronized. Is it thread-safe?',o:['Yes, by confinement','No, HashSet isn\'t thread-safe'],a:0,why:'The set never escapes, so its own safety doesn\'t matter.'},
+ {q:'Two independent CopyOnWriteArrayLists with no invariant between them: can the class delegate?',o:['Yes','No'],a:0,why:'Independent thread-safe variables: delegation works.'},
+ {q:'Two AtomicIntegers that must satisfy lower ≤ upper: can the class delegate?',o:['Yes','No'],a:1,why:'An invariant across them needs a single lock.'},
+ {q:'Which way of adding putIfAbsent is most robust?',o:['Subclassing','Composition'],a:1,why:'Composition owns its own lock and doesn\'t depend on the wrapped class\'s policy.'},
+ {q:'A private lock object, compared with locking on this…',o:['stops clients joining in the lock','is slower'],a:0,why:'Encapsulated locks can\'t be acquired by outside code.'}]);
+
+})();
+</script>
+</body>
+</html>

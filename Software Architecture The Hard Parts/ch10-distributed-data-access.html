@@ -1,0 +1,504 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Distributed Data Access</title>
+<meta name="description" content="A service needs data it does not own. Ask the owner each time, keep a copy, share a cache, or share the tables: four patterns with very different trade-offs.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for The Hard Parts companion. Layout: a reading column on blueprint grid paper.
+   Blue ink = structure and services, orange pencil = coupling and data, green = good trade-off, red = bad trade-off.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* additions for The Hard Parts */
+button.tag.theme{cursor:pointer;margin-left:auto}
+button.tag.theme:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;color:var(--ink)}
+pre.code .k{color:var(--blue);font-weight:600} pre.code .c{color:var(--muted);font-style:italic} pre.code .s{color:var(--ok)}
+.rate{display:inline-flex;gap:3px;vertical-align:middle}
+.rate .dot{width:10px;height:10px;border-radius:50%;border:1.5px solid var(--blue);display:inline-block}
+.rate .dot.on{background:var(--blue)}
+.pc{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.pc>div{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--surface);display:flex;flex-direction:column;gap:6px}
+.pc h3{font-size:.95rem}.pc ul{margin:0;padding-left:1.1em;font-size:.92rem;display:flex;flex-direction:column;gap:4px}
+.pc .pro{border-top:4px solid var(--ok)}.pc .con{border-top:4px solid var(--bad)}
+@media (max-width:560px){.pc{grid-template-columns:1fr}}
+.adr{border:1px solid var(--line);border-radius:10px;background:var(--surface);overflow:hidden}
+.adr>div{padding:12px 16px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:4px}
+.adr>div:first-child{border-top:0;background:var(--blue-soft)}
+.adr b{font-family:var(--mono);font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.adr p{font-size:.95rem}
+.saga{border-left:4px solid var(--pencil);padding:10px 16px;background:var(--surface);border-radius:0 10px 10px 0;display:flex;flex-direction:column;gap:8px;font-size:.95rem}
+.saga .who{font-family:var(--mono);font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--pencil)}
+@media (min-width:561px){.q{grid-template-columns:minmax(200px,1fr) auto}}
+.q .opts{max-width:480px}.q .opts button{text-align:left;max-width:100%}
+.tabs{display:flex;flex-wrap:wrap;gap:6px}
+.tabs button{border:1px solid var(--line);background:var(--paper);border-radius:999px;padding:5px 12px;font-size:.88rem}
+.tabs button[aria-pressed="true"]{background:var(--blue);border-color:var(--blue);color:var(--surface)}
+
+/* page */
+
+.cmp{width:100%;border-collapse:collapse;font-size:.9rem;min-width:520px}
+.cmp th,.cmp td{border-bottom:1px solid var(--line);padding:8px 6px;text-align:left;vertical-align:middle}
+.cmp th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.cmp tr.on td{background:var(--blue-soft)}
+.cmp .g{color:var(--ok);font-weight:700}.cmp .b{color:var(--bad);font-weight:700}.cmp .m{color:var(--mid);font-weight:700}
+.chk{display:flex;flex-direction:column;gap:8px}
+.chk label{display:flex;gap:8px;align-items:flex-start;font-size:.93rem}
+.verdict{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}
+.verdict>div{border:2px solid var(--line);border-radius:10px;padding:10px;background:var(--surface);font-size:.85rem;display:flex;flex-direction:column;gap:4px}
+.verdict>div b{font-family:var(--display);font-size:.98rem}
+.verdict>div.okv{border-color:var(--ok);background:var(--ok-soft)}
+.verdict>div.nov{opacity:.55;text-decoration:line-through;text-decoration-color:var(--bad)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">The Hard Parts · visual companion</a><span class="tag">Part II · Chapter 10 of 15</span><button class="tag theme" id="themeBtn" type="button" aria-label="Toggle light or dark theme">Theme</button></div>
+  <h1>Distributed Data Access</h1>
+  <p class="lede">A service needs data it does not own. Ask the owner each time, keep a copy, share a cache, or share the tables: four patterns with very different trade-offs.</p>
+  <nav class="toc" aria-label="Sections"><a href="#problem">The problem</a><a href="#isc">Interservice call</a><a href="#col">Column replication</a><a href="#cache">Caching models</a><a href="#rc">Replicated cache limits</a><a href="#dd">Data domain</a><a href="#pick">Choosing</a><a href="#sysops">Sysops Squad</a><a href="#quiz">Check yourself</a></nav>
+</header>
+
+<section id="problem" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Reading data you no longer own</h2></div>
+  <p>In a monolith, a join is free. After Chapter 9 every table has one owner, and a service that needs someone else's data can no longer just query it. The example: the <b>Wishlist</b> service shows each saved item with its description, but descriptions live in the <b>Catalog</b> service's bounded context. Four patterns answer "how does Wishlist get <code>item_desc</code>?" Pick one to see the shape and the scorecard.</p>
+  <div class="sheet">
+    <div class="tabs" id="paTabs" role="group" aria-label="Pattern"><button data-p="isc" aria-pressed="true">Interservice call</button><button data-p="col" aria-pressed="false">Column replication</button><button data-p="rc" aria-pressed="false">Replicated cache</button><button data-p="dd" aria-pressed="false">Data domain</button></div>
+    <div class="svgbox"><svg id="paSvg" viewBox="0 0 660 220" role="img" aria-label="How the Wishlist service gets item descriptions"></svg></div>
+    <p id="paTxt" aria-live="polite"></p>
+  </div>
+  <div class="tbl"><table class="cmp" id="cmpT"></table></div>
+  <p class="small">The scorecard condenses the trade-off lists in the chapter into good, mixed and poor. It is a reading aid, not a measurement.</p>
+</section>
+
+<section id="isc" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Just ask the owner</h2></div>
+  <p>The most common pattern, and the simplest: Wishlist sends a list of item IDs to Catalog and gets descriptions back. Nothing is duplicated and data volume is irrelevant. The costs are three kinds of latency, plus coupling: if Catalog is down or slow, so is Wishlist, and Catalog must scale whenever Wishlist does. Try your own numbers.</p>
+  <div class="sheet">
+    <label class="rng"><span>Network latency per call: <b id="nlV"></b></span><input type="range" id="nl" min="5" max="300" value="40"></label>
+    <label class="rng"><span>Security check at the endpoint: <b id="slV"></b></span><input type="range" id="sl" min="0" max="400" value="60"></label>
+    <label class="rng"><span>Extra database lookups the owner must do: <b id="dlV"></b></span><input type="range" id="dl" min="0" max="5" value="1"></label>
+    <label class="rng"><span>Catalog availability: <b id="avV"></b></span><input type="range" id="av" min="900" max="999" value="990"></label>
+    <div class="bars" id="iscBars"></div>
+    <p id="iscTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout"><b class="h">Three latencies, named</b><span><b>Network</b>: getting packets there and back. <b>Security</b>: extra authorization at the endpoint, which can easily add tens to hundreds of milliseconds. <b>Data</b>: the owner makes its own database call to answer you, so one logical read becomes two.</span></div>
+</section>
+
+<section id="col" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Copy the column across</h2></div>
+  <p>Add an <code>item_desc</code> column to the Wishlist table. Reads are now local, fast, and immune to Catalog outages. The price is keeping copies in step: every time Catalog adds, removes or renames a product it has to tell every service holding a copy, usually asynchronously. And since the copy sits in someone else's table, nothing technically stops them from editing it. Watch drift build up.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn" id="colEdit">Catalog renames a product</button><button class="btn" id="colLag">Sync message delayed</button><button class="btn" id="colRogue">Wishlist edits its copy</button><button class="btn" id="colReset">Reset</button></div>
+    <div class="svgbox"><svg id="colSvg" viewBox="0 0 660 180" role="img" aria-label="Catalog table and replicated column in the Wishlist table"></svg></div>
+    <p id="colTxt" aria-live="polite"></p>
+  </div>
+  <p>The authors are wary of this for wish-list style lookups. It earns its place in aggregation and reporting, or where volume, responsiveness or fault-tolerance demands rule out everything else.</p>
+</section>
+
+<section id="cache" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Three caching models, only one fits</h2></div>
+  <p>Caching is usually sold as speed. Here it is used for sharing. Compare the three models when Catalog updates a description, and when Catalog or the cache server goes away.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Cache model"><button data-cm="single" aria-pressed="true">Single in-memory</button><button data-cm="dist" aria-pressed="false">Distributed (cache server)</button><button data-cm="repl" aria-pressed="false">Replicated in-memory</button></div>
+    <div class="row"><button class="btn" id="cUpd">Catalog updates an item</button><button class="btn" id="cKill">Take the owner / server down</button></div>
+    <div class="svgbox"><svg id="cSvg" viewBox="0 0 660 210" role="img" aria-label="Cache model diagram"></svg></div>
+    <p id="cTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="rc" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Where replicated caching runs out</h2></div>
+  <p>Catalog owns the cache and is the only writer; Wishlist holds a read-only replica that the caching product keeps current. Access is in-memory, there are no calls, and Catalog can go down without hurting Wishlist. So what is the trade-off? Four of them. The first two are arithmetic.</p>
+  <div class="sheet">
+    <label class="rng"><span>Cached data size: <b id="csV"></b></span><input type="range" id="cs" min="10" max="2000" step="10" value="200"></label>
+    <label class="rng"><span>Instances of services holding a replica: <b id="ciV"></b></span><input type="range" id="ci" min="1" max="20" value="5"></label>
+    <label class="rng"><span>Updates per second to the cached data: <b id="cuV"></b></span><input type="range" id="cu" min="0" max="500" value="5"></label>
+    <div class="bars" id="rcBars"></div>
+    <p id="rcTxt" aria-live="polite"></p>
+  </div>
+  <div class="recap">
+    <div><b>Startup dependency</b><span>The first Wishlist instance needs Catalog running to fill its cache. Later instances can copy from a peer.</span></div>
+    <div><b>Data volume</b><span>Every instance holds the full copy. Past roughly half a gigabyte, memory bills climb fast.</span></div>
+    <div><b>Update rate</b><span>Very volatile data, such as stock counts, may change faster than replication can keep up.</span></div>
+    <div><b>Configuration</b><span>Peers find each other by network broadcast and lookup, which is fiddly in cloud and container setups with shifting IP addresses.</span></div>
+  </div>
+</section>
+
+<section id="dd" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Share the schema, on purpose</h2></div>
+  <p>The same move Chapter 9 used for joint writes. Put Catalog's product table and Wishlist's table in one shared schema, and Wishlist reads with an ordinary join. No calls, no copies, no sync, and foreign keys work again. The catch: the <b>schema itself becomes the contract</b>. There is no API in front to absorb changes, so a column rename can break both services. And Wishlist can now see everything in that schema, which may include data it should not.</p>
+  <pre class="code"><span class="c">-- inside the shared product_domain schema</span>
+<span class="k">SELECT</span> w.item_id, p.description
+<span class="k">FROM</span>   wishlist_item w
+<span class="k">JOIN</span>   product p <span class="k">ON</span> p.item_id = w.item_id
+<span class="k">WHERE</span>  w.customer_id = :customer;</pre>
+</section>
+
+<section id="pick" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Choosing by elimination</h2></div>
+  <p>The chapter reaches the data domain pattern by ruling the others out one by one. Do the same: tick what is true for your situation.</p>
+  <div class="sheet">
+    <div class="chk" id="pkChk"></div>
+    <div class="verdict" id="pkOut"></div>
+  </div>
+</section>
+
+<section id="sysops" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Sysops Squad: expert profiles for ticket assignment</h2></div>
+  <div class="saga"><span class="who">Sysops Squad</span><span>Ticket Assignment reads the expert profile table constantly, and that table now belongs to User Management. Asking over the network on every assignment is too slow and fragile. A shared schema is out because Ticket Assignment already uses the ticketing data domain and the two are different domains. Nobody can find a serious drawback to a replicated cache, so the team checks it against the deployment environment and builds a proof of concept.</span></div>
+  <div class="adr"><div><b>ADR</b><p style="font-family:var(--display);font-weight:600">In-memory replicated cache for expert profile data</p></div><div><b>Decision</b><p>Replicate expert profiles from User Management into Ticket Assignment. User Management is the only writer. This fixes the speed and fault-tolerance issues of remote calls without merging schemas across domains.</p></div><div><b>Consequences</b><p>At least one User Management instance must be up when the first Ticket Assignment instance starts. The caching product carries a licence cost.</p></div></div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Check yourself</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Software Architecture: The Hard Parts</i> by Neal Ford, Mark Richards, Pramod Sadalage and Zhamak Dehghani (O'Reilly, 2021). Explanations, examples, code and drawings are original summaries, not copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch09-data-ownership.html"><span>Previous · Chapter 9</span><b>Data Ownership and Distributed Transactions</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch11-distributed-workflows.html"><span>Next · Chapter 11</span><b>Managing Distributed Workflows</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every page of The Hard Parts companion. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('hp:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('hp:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: follows the system until the reader picks one */
+(function(){const r=document.documentElement,b=document.getElementById('themeBtn');const t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+  function cur(){return r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light')}
+  function lab(){if(b)b.textContent=cur()==='dark'?'Light theme':'Dark theme'}
+  if(b)b.addEventListener('click',()=>{const n=cur()==='dark'?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n);lab()});lab()})();
+/* star / dot rating: n of max */
+function rateDots(n,max){max=max||5;let s='';for(let i=0;i<max;i++)s+=`<i class="dot${i<n?' on':''}"></i>`;return `<span class="rate" aria-label="${n} of ${max}">${s}</span>`}
+
+
+/* ---------- pattern overview ---------- */
+const PA={isc:{n:'Interservice call',t:'Wishlist calls Catalog on every request. Simple, nothing copied, but slower and only as available as Catalog.',r:['b','b','b','g','g','g']},
+col:{n:'Column replication',t:'Catalog pushes description changes into a copied column in the Wishlist table. Local reads, but copies can drift.',r:['g','g','g','b','b','m']},
+rc:{n:'Replicated cache',t:'Catalog writes to its in-memory cache; the caching product mirrors it into Wishlist. Fast and resilient within size and update-rate limits.',r:['g','g','g','g','g','b']},
+dd:{n:'Data domain',t:'Both services use one shared schema and join directly. Fast and consistent, but the bounded context is wider and the schema is the contract.',r:['g','g','g','g','m','m']}};
+const CR=['Speed','Fault tolerance','Scalability','Consistency','Ownership kept','Ease of change / volume'];
+function rPa(p){const s=$('#paSvg');s.innerHTML='';
+  const sv=(x,n)=>{s.appendChild(el('rect',{x:x-70,y:20,width:140,height:44,rx:10,fill:'var(--surface)',stroke:'var(--blue)','stroke-width':2}));s.appendChild(el('text',{x,y:47,'text-anchor':'middle','font-size':14,'font-weight':700,fill:'var(--ink)'},n))};
+  const tb=(x,y,n,cols)=>{s.appendChild(el('rect',{x:x-80,y,width:160,height:24+cols.length*18,rx:4,fill:'var(--paper)',stroke:'var(--ink)','stroke-width':1.2}));s.appendChild(el('text',{x:x-72,y:y+16,'font-size':12,'font-weight':700,fill:'var(--ink)'},n));cols.forEach((c,k)=>s.appendChild(el('text',{x:x-72,y:y+34+k*18,'font-size':11,class:'t-mono',fill:c.includes('desc')?'var(--pencil)':'var(--muted)'},c)))};
+  const ln=(x1,y1,x2,y2,c,f)=>s.appendChild(el('line',{x1,y1,x2,y2,stroke:c||'var(--muted)','stroke-width':2,class:f?'flow':''}));
+  sv(140,'Wishlist');sv(520,'Catalog');
+  if(p==='dd'){s.appendChild(el('rect',{x:30,y:100,width:600,height:110,rx:14,fill:'none',stroke:'var(--pencil)','stroke-dasharray':'6 5','stroke-width':1.5}));s.appendChild(el('text',{x:330,y:204,'text-anchor':'middle','font-size':11,class:'t-mono',fill:'var(--pencil)'},'shared schema'));tb(240,112,'Wishlist',['customer_id','item_id']);tb(420,112,'Product',['item_id','item_desc']);ln(140,64,230,112);ln(520,64,430,112);ln(320,150,340,150,'var(--pencil)')}
+  else{tb(140,112,'Wishlist',p==='col'?['customer_id','item_id','item_desc (copy)']:['customer_id','item_id']);tb(520,112,'Product',['item_id','item_desc']);ln(140,64,140,112);ln(520,64,520,112)}
+  if(p==='isc'){ln(210,36,450,36,'var(--blue)',1);ln(450,50,210,50,'var(--blue)',1);s.appendChild(el('text',{x:330,y:30,'text-anchor':'middle','font-size':11,class:'t-mono',fill:'var(--blue)'},'item IDs →'));s.appendChild(el('text',{x:330,y:66,'text-anchor':'middle','font-size':11,class:'t-mono',fill:'var(--blue)'},'← descriptions'))}
+  if(p==='col'){ln(450,42,210,42,'var(--pencil)',1);s.appendChild(el('text',{x:330,y:34,'text-anchor':'middle','font-size':11,class:'t-mono',fill:'var(--pencil)'},'← async change events'))}
+  if(p==='rc'){[[140,'read-only replica'],[520,'owner cache']].forEach(([x,l])=>{s.appendChild(el('rect',{x:x+75,y:72,width:0,height:0}));s.appendChild(el('rect',{x:x-60,y:70,width:120,height:26,rx:13,fill:'var(--ok-soft)',stroke:'var(--ok)','stroke-width':1.5}));s.appendChild(el('text',{x,y:87,'text-anchor':'middle','font-size':10.5,class:'t-mono',fill:'var(--ok)'},l))});ln(460,83,200,83,'var(--ok)',1);s.appendChild(el('text',{x:330,y:78,'text-anchor':'middle','font-size':10.5,class:'t-mono',fill:'var(--ok)'},'caching product syncs'))}
+  $('#paTxt').textContent=PA[p].t;
+  const lab={g:'good',m:'mixed',b:'poor'};
+  $('#cmpT').innerHTML=`<thead><tr><th>Pattern</th>${CR.map(c=>`<th>${c}</th>`).join('')}</tr></thead><tbody>${Object.entries(PA).map(([k,v])=>`<tr class="${k===p?'on':''}"><td><b>${v.n}</b></td>${v.r.map(x=>`<td class="${x}">${lab[x]}</td>`).join('')}</tr>`).join('')}</tbody>`}
+seg('#paTabs button',b=>rPa(b.dataset.p));rPa('isc');
+
+/* ---------- interservice latency ---------- */
+function rIsc(){const n=+$('#nl').value,sl=+$('#sl').value,d=+$('#dl').value,av=+$('#av').value/10;
+  $('#nlV').textContent=n+' ms';$('#slV').textContent=sl+' ms';$('#dlV').textContent=d;$('#avV').textContent=av.toFixed(1)+'%';
+  const local=8,remote=local+2*n+sl+d*8;const own=99.9,comb=own*av/100;
+  bars('#iscBars',[{l:'Own table only',v:local,c:'ok',txt:local+' ms'},{l:'Plus call to Catalog',v:remote,c:remote>300?'bad':'mid',txt:remote+' ms'},{l:'Wishlist availability',v:comb-90,c:comb<99?'bad':'ok',txt:comb.toFixed(2)+'%'}],Math.max(400,remote));
+  $('#iscTxt').textContent=`Each wish-list view now costs about ${remote} ms instead of ${local} ms, and Wishlist's availability falls from ${own}% to ${comb.toFixed(2)}%, because it is up only when Catalog is too. (Assumes an 8 ms local query; the availability bar shows the part above 90%.)`}
+['#nl','#sl','#dl','#av'].forEach(i=>$(i).addEventListener('input',rIsc));rIsc();
+
+/* ---------- column replication drift ---------- */
+let cat={'A17':'Desk lamp','B22':'USB hub'},cp={'A17':'Desk lamp','B22':'USB hub'},pend=[],lag=false,colMsg='';
+function rCol(){const s=$('#colSvg');s.innerHTML='';
+  const draw=(x,title,data,owner)=>{s.appendChild(el('text',{x,y:22,'font-size':13,'font-weight':700,fill:'var(--ink)'},title));Object.entries(data).forEach(([k,v],i)=>{const y=34+i*34;const diff=!owner&&cat[k]!==v;s.appendChild(el('rect',{x,y,width:250,height:28,rx:4,fill:diff?'var(--bad-soft)':'var(--paper)',stroke:diff?'var(--bad)':'var(--line)'}));s.appendChild(el('text',{x:x+10,y:y+19,'font-size':12,class:'t-mono',fill:'var(--muted)'},k));s.appendChild(el('text',{x:x+60,y:y+19,'font-size':13,fill:'var(--ink)'},v))})};
+  draw(20,'Catalog: Product (owner)',cat,1);draw(390,'Wishlist: item_desc copy',cp,0);
+  s.appendChild(el('line',{x1:275,y1:60,x2:385,y2:60,stroke:lag?'var(--bad)':'var(--pencil)','stroke-width':2,class:'flow'}));s.appendChild(el('text',{x:330,y:52,'text-anchor':'middle','font-size':10.5,class:'t-mono',fill:lag?'var(--bad)':'var(--pencil)'},lag?`${pend.length} stuck`:'sync'));
+  const drift=Object.keys(cat).filter(k=>cat[k]!==cp[k]).length;s.appendChild(el('text',{x:20,y:160,'font-size':12,class:'t-mono',fill:drift?'var(--bad)':'var(--ok)'},drift?`${drift} row(s) out of step`:'copies match'));
+  $('#colTxt').textContent=colMsg}
+const names=['Desk lamp, brass','LED desk lamp','USB-C hub','7-port USB hub','Clip lamp'];let ni=0;
+$('#colEdit').addEventListener('click',()=>{const k=ni%2?'B22':'A17';cat[k]=names[ni++%names.length];if(lag){pend.push(k);colMsg='Catalog changed the description, but the message is stuck. Wishlist shows the old text.'}else{cp[k]=cat[k];colMsg='The change event reached Wishlist and the copy was updated. Fine, as long as every message arrives.'}rCol()});
+$('#colLag').addEventListener('click',()=>{lag=!lag;$('#colLag').textContent=lag?'Deliver delayed messages':'Sync message delayed';if(!lag){pend.forEach(k=>cp[k]=cat[k]);colMsg=pend.length?`${pend.length} delayed message(s) delivered. Consistent again, eventually.`:'Sync restored.';pend=[]}else colMsg='Messages to Wishlist are now delayed.';rCol()});
+$('#colRogue').addEventListener('click',()=>{cp.B22='Hub (edited by Wishlist)';colMsg='Wishlist changed data it does not own. Nothing in the database stopped it, and Catalog will never know. This is the ownership-governance problem.';rCol()});
+$('#colReset').addEventListener('click',()=>{cat={'A17':'Desk lamp','B22':'USB hub'};cp={...cat};pend=[];lag=false;ni=0;$('#colLag').textContent='Sync message delayed';colMsg='';rCol()});rCol();
+
+/* ---------- cache models ---------- */
+let cM='single',cDown=false,cV=1,cMsg='';
+function rC(){const s=$('#cSvg');s.innerHTML='';const box=(x,y,n,c,dead)=>{s.appendChild(el('rect',{x:x-75,y,width:150,height:44,rx:10,fill:dead?'var(--bad-soft)':'var(--surface)',stroke:dead?'var(--bad)':c||'var(--blue)','stroke-width':2}));s.appendChild(el('text',{x,y:y+27,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--ink)'},n))};
+  const cache=(x,y,txt,c)=>{s.appendChild(el('rect',{x:x-60,y,width:120,height:30,rx:15,fill:c==='bad'?'var(--bad-soft)':'var(--ok-soft)',stroke:c==='bad'?'var(--bad)':'var(--ok)','stroke-width':1.5}));s.appendChild(el('text',{x,y:y+20,'text-anchor':'middle','font-size':11,class:'t-mono',fill:'var(--ink)'},txt))};
+  if(cM==='single'){box(140,30,'Catalog',0,cDown);box(520,30,'Wishlist');cache(140,90,`desc v${cV}`);cache(520,90,'(no catalog data)','bad');s.appendChild(el('text',{x:330,y:170,'text-anchor':'middle','font-size':12,fill:'var(--muted)'},'each service caches only its own data; nothing is shared'))}
+  if(cM==='dist'){box(140,30,'Catalog');box(520,30,'Wishlist');box(330,140,'Cache server','var(--pencil)',cDown);cache(330,100,cDown?'unreachable':`desc v${cV}`,cDown?'bad':'');[[140,74],[520,74]].forEach(([x,y])=>s.appendChild(el('line',{x1:x,y1:y,x2:330,y2:140,stroke:cDown?'var(--bad)':'var(--muted)','stroke-width':2,'stroke-dasharray':'5 4'})))}
+  if(cM==='repl'){box(140,30,'Catalog',0,cDown);box(520,30,'Wishlist');cache(140,90,`desc v${cV} (owner)`);cache(520,90,`desc v${cV} (replica)`);s.appendChild(el('line',{x1:200,y1:105,x2:460,y2:105,stroke:'var(--ok)','stroke-width':2,class:cDown?'':'flow'}));s.appendChild(el('text',{x:330,y:160,'text-anchor':'middle','font-size':12,fill:'var(--muted)'},'in-process copies, synchronized by the caching product'))}
+  $('#cTxt').textContent=cMsg||{single:'Simplest model: fast, but no sharing at all. Useless for the Wishlist problem.',dist:'Data lives on an external cache server reached over the network.',repl:'Each service holds the data in its own memory; updates replicate automatically.'}[cM]}
+seg('[data-cm]',b=>{cM=b.dataset.cm;cDown=false;cMsg='';$('#cKill').textContent='Take the owner / server down';rC()});
+$('#cUpd').addEventListener('click',()=>{cV++;cMsg={single:'Catalog\'s own cache updates. Wishlist still has no way to see it.',dist:cDown?'The update cannot reach the cache server.':'Catalog writes to the server, but so could Wishlist: a shared store weakens ownership, and every read is a network call.',repl:cDown?'Catalog is down, so nothing changes, but Wishlist keeps serving the last version.':'The new version appears in Wishlist\'s memory a moment later, with no call from Wishlist.'}[cM];rC()});
+$('#cKill').addEventListener('click',()=>{cDown=!cDown;$('#cKill').textContent=cDown?'Bring it back':'Take the owner / server down';cMsg=cDown?{single:'Catalog is down. Wishlist never relied on it, but it also never had the data.',dist:'The cache server is down, so Wishlist is down too. The dependency moved from Catalog to the cache server; it did not go away.',repl:'Catalog is down, and Wishlist keeps working from its replica. This is the fault-tolerance win.'}[cM]:'';rC()});rC();
+
+/* ---------- replicated cache limits ---------- */
+function rRc(){const sz=+$('#cs').value,n=+$('#ci').value,u=+$('#cu').value;$('#csV').textContent=sz>=1000?(sz/1000).toFixed(1)+' GB':sz+' MB';$('#ciV').textContent=n;$('#cuV').textContent=u;
+  const tot=sz*n;bars('#rcBars',[{l:'Memory across all replicas',v:tot,c:tot>4000?'bad':tot>1500?'mid':'ok',txt:tot>=1000?(tot/1000).toFixed(1)+' GB':tot+' MB'},{l:'Size per replica',v:sz,c:sz>500?'bad':'ok',txt:sz+' MB'},{l:'Update pressure',v:u,c:u>100?'bad':u>30?'mid':'ok',txt:u+'/s'}],Math.max(tot,1000));
+  const w=[];if(sz>500)w.push('the data set is past the rough half-gigabyte comfort line');if(u>100)w.push('updates may outrun replication, so replicas lag');if(tot>4000)w.push('total memory across instances is large');
+  $('#rcTxt').textContent=w.length?'Rethink this: '+w.join('; ')+'.':'Comfortably inside the pattern\'s sweet spot: modest data that changes slowly.'}
+['#cs','#ci','#cu'].forEach(i=>$(i).addEventListener('input',rRc));rRc();
+
+/* ---------- picker ---------- */
+const PK=[['own','The owning service is unreliable or slow',['isc']],['cons','Readers need highly consistent data',['col']],['vol','The shared data is large or changes very often',['rc']],['dom','The two services are in clearly different domains',['dd']],['sec','The schema holds data the reader must not see',['dd']],['cloud','Dynamic cloud networking makes peer discovery hard',['rc']]];
+const PN={isc:'Interservice call',col:'Column replication',rc:'Replicated cache',dd:'Data domain'};
+$('#pkChk').innerHTML=PK.map(([k,t])=>`<label><input type="checkbox" data-pk="${k}"> ${t}</label>`).join('');
+function rPk(){const out=new Set();$$('[data-pk]').forEach(c=>{if(c.checked)PK.find(p=>p[0]===c.dataset.pk)[2].forEach(x=>out.add(x))});
+  $('#pkOut').innerHTML=Object.entries(PN).map(([k,n])=>{const no=out.has(k);return `<div class="${no?'nov':'okv'}"><b>${n}</b><span>${no?'ruled out':'still in play'}</span></div>`}).join('')}
+$$('[data-pk]').forEach(c=>c.addEventListener('change',rPk));rPk();
+
+quiz('#qQuiz','#qScore',[
+{q:'Which pattern makes the reader only as available as the owner?',o:['Interservice call','Replicated cache','Data domain'],a:0,why:'Every read is a remote call, so an owner outage is a reader outage.'},
+{q:'Why does a distributed cache server not solve the access problem well?',o:['It is too fast','The dependency just moves to the cache server, and reads are remote','It cannot store text'],a:1,why:'You still depend on something remote, and shared write access blurs ownership.'},
+{q:'Replicated caching struggles most with...',o:['Small, stable reference data','Large or highly volatile data','Read-heavy workloads'],a:1,why:'Every replica holds the full set, and fast-changing data can outrun replication.'},
+{q:'In the data domain pattern, what acts as the contract between services?',o:['A JSON schema','The table schema itself','A gRPC interface'],a:1,why:'With no API in between, a schema change can break every service using it.'},
+{q:'Why did Sysops Squad reject a shared data domain for expert profiles?',o:['Too slow','The services sit in different domains and Ticket Assignment already uses the ticketing schema','Licence cost'],a:1,why:'Merging tables across domains was not wanted; the cache avoids that.'}]);
+
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,587 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>System Design Trade-offs and Guidelines</title>
+<meta name="description" content="Every large system is a pile of choices between good things you cannot have all at once. This chapter names the qualities we want, how to measure them, and the trade-offs that connect them.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the System Design on AWS companion. Layout: a drafting-table reading column on blueprint grid paper.
+   Blue ink = structure and data paths, orange pencil = clients and requests, green = healthy, red = failure.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:minmax(14rem,1fr) minmax(0,auto);gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* additions */
+button.tag.theme{cursor:pointer;margin-left:auto}
+button.tag.theme:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;max-width:100%;white-space:pre}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:5em;max-height:14em;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.pill{display:inline-block;font-family:var(--mono);font-size:.75rem;padding:2px 8px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.pill.ok{border-color:var(--ok);color:var(--ok);background:var(--ok-soft)} .pill.bad{border-color:var(--bad);color:var(--bad);background:var(--bad-soft)}
+input[type=number],input[type=text]{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+.sheet>.seg,.stack>.seg{align-self:flex-start}
+
+/* page */
+
+.seqlane{stroke:var(--line);stroke-width:2;stroke-dasharray:4 4}
+.msg{transition:opacity .35s}
+.nines td:first-child{font-family:var(--mono);font-weight:600}
+.nines tr.on td{background:var(--blue-soft)}
+.cmp{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media (max-width:560px){.cmp{grid-template-columns:1fr}}
+.pc{display:flex;flex-direction:column;align-items:center;gap:6px}
+.dec{display:flex;flex-direction:column;gap:10px}
+.dec .qbox{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--paper)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">System Design on AWS · visual companion</a><span class="tag">Part I · Chapter 1 of 21</span><button class="tag theme" type="button" id="themeBtn" aria-label="Toggle light or dark theme">Theme</button></div>
+  <h1>System Design Trade-offs and Guidelines</h1>
+  <p class="lede">Every large system is a pile of choices between good things you cannot have all at once. This chapter names the qualities we want, how to measure them, and the trade-offs that connect them.</p>
+  <nav class="toc" aria-label="Sections"><a href="#concepts">Building blocks</a><a href="#comm">Sync vs async</a><a href="#consistency">Consistency</a><a href="#availability">Availability</a><a href="#patterns">Failover & replication</a><a href="#reliability">Reliability</a><a href="#scale">Scaling</a><a href="#fallacies">Fallacies</a><a href="#tradeoffs">Trade-offs</a><a href="#cap">CAP & PACELC</a><a href="#guidelines">Guidelines</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="concepts" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>The qualities every system is judged on</h2></div>
+  <p>A large system is many small servers talking over a network. Abstraction lets us ignore the wiring and reason about a handful of qualities instead: how servers <b>communicate</b>, whether they agree on the data (<b>consistency</b>), whether they answer at all (<b>availability</b>), whether they keep doing the right thing over time (<b>reliability</b>), whether they grow with demand (<b>scalability</b>), whether people can change them (<b>maintainability</b>), and whether they survive breakage (<b>fault tolerance</b>). Tap each to see the one-line test.</p>
+  <div class="cardgrid" id="qCards"></div>
+</section>
+
+<section id="comm" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Synchronous or asynchronous communication</h2></div>
+  <p>Synchronous calls work like a phone call: the caller waits, blocked, until the reply arrives. Asynchronous calls work like email: the caller hands off the message and carries on, picking up the reply later. Async decouples services and absorbs bursts, but makes the flow harder to follow and to debug.</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Mode"><button data-m="sync" aria-pressed="true">Synchronous</button><button data-m="async" aria-pressed="false">Asynchronous</button></div><button class="btn primary" id="cPlay">Play</button></div>
+    <div class="svgbox"><svg id="cSvg" viewBox="0 0 640 260" role="img" aria-label="Sequence diagram of a client calling a server"></svg></div>
+    <p id="cTxt" class="small" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="consistency" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Strong versus eventual consistency</h2></div>
+  <p>With replicas, "consistent" means every copy agrees. The book places models on a <b>consistency spectrum</b>: at one end <b>strong</b> (every read sees the latest write, as if there were one copy), at the other <b>eventual</b> (replicas converge if writes stop, but a read may be stale for a while). In between sit guarantees such as <b>monotonic reads</b> (you never go back in time) and <b>monotonic writes</b> (your writes apply in order). Try it: a client writes <code>x = 2</code> to the leader, then another client reads from a replica.</p>
+  <div class="sheet">
+    <div class="row"><div class="seg" role="group" aria-label="Model"><button data-k="strong" aria-pressed="true">Strong</button><button data-k="eventual" aria-pressed="false">Eventual</button></div></div>
+    <label class="rng"><span>Replication lag: <b id="lagV"></b></span><input type="range" id="lag" min="0" max="400" value="150"></label>
+    <label class="rng"><span>Reader arrives after write: <b id="readV"></b></span><input type="range" id="readAt" min="0" max="400" value="60"></label>
+    <div class="svgbox"><svg id="kSvg" viewBox="0 0 640 200" role="img" aria-label="Leader and replica timelines"></svg></div>
+    <p id="kTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout blue"><b class="h">Stricter costs more</b><span>Strong consistency needs coordination: synchronous replication, blocking and consensus. That adds latency and makes failures harder to handle, especially across regions. Eventual consistency is cheaper and faster, at the price of stale reads.</span></div>
+</section>
+
+<section id="availability" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Counting nines</h2></div>
+  <p>Availability is the share of time the system answers: <code>(total time − downtime) / total time</code>. It is quoted in "nines". Each extra nine cuts allowed downtime by ten, and usually costs far more than the last one. Pick a target.</p>
+  <div class="sheet">
+    <div class="seg" id="nSeg" role="group" aria-label="Nines"></div>
+    <div class="kpis" id="nK"></div>
+  </div>
+  <p>Components combine. In <b>sequence</b> (a request must pass through all of them) availabilities multiply, so the chain is weaker than its weakest link. In <b>parallel</b> (any one can serve) only the chance that <i>all</i> fail at once counts: <code>1 − (1−A₁)(1−A₂)</code>.</p>
+  <div class="sheet">
+    <div class="row"><div class="seg" role="group" aria-label="Arrangement"><button data-a="seq" aria-pressed="true">In sequence</button><button data-a="par" aria-pressed="false">In parallel</button></div></div>
+    <div class="two">
+      <label class="rng"><span>Each component: <b id="aV"></b></span><input type="range" id="aR" min="0" max="5" value="2"></label>
+      <label class="rng"><span>How many: <b id="cntV"></b></span><input type="range" id="cnt" min="1" max="5" value="2"></label>
+    </div>
+    <div class="svgbox"><svg id="aSvg" viewBox="0 0 640 170" role="img" aria-label="Components arranged in sequence or parallel"></svg></div>
+    <p id="aTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="patterns" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Failover and replication patterns</h2></div>
+  <p>High availability rests on two complementary patterns. <b>Failover</b> switches traffic to a spare when something dies. <b>Replication</b> keeps extra copies of the data so the spare has something to serve. Toggle the failover style and then knock out the primary.</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Failover"><button data-f="ap" aria-pressed="true">Active-passive</button><button data-f="aa" aria-pressed="false">Active-active</button></div><button class="btn" id="kill">Fail server A</button></div>
+    <div class="svgbox"><svg id="fSvg" viewBox="0 0 640 220" role="img" aria-label="Load balancer in front of two servers"></svg></div>
+    <p id="fTxt" aria-live="polite"></p>
+  </div>
+  <div class="cmp">
+    <div class="sheet"><h3 class="blue">Single-leader replication</h3><p class="small">One node takes all writes and streams them to read replicas. Simple and conflict-free, but the leader is a write bottleneck, and if it dies before replicating, recent writes can be lost. More replicas also means more replication lag.</p></div>
+    <div class="sheet"><h3 class="pencil">Multileader replication</h3><p class="small">Several nodes accept writes and sync with each other. Writes survive a leader loss and can happen near users, but concurrent updates to the same item conflict and need a resolution rule (for example, last write wins).</p></div>
+  </div>
+</section>
+
+<section id="reliability" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Reliability: MTBF, MTTR, RPO and RTO</h2></div>
+  <p>Reliability is doing the intended job, correctly, over time. Two averages describe it: <b>MTBF</b>, mean time between failures, and <b>MTTR</b>, mean time to repair. A system can be available but unreliable (it answers, wrongly) or reliable but unavailable (correct when up, but often down). Long MTBF and short MTTR together give steady-state availability of roughly <code>MTBF / (MTBF + MTTR)</code>.</p>
+  <div class="sheet">
+    <div class="two">
+      <label class="rng"><span>MTBF: <b id="mbV"></b></span><input type="range" id="mb" min="1" max="100" value="40"></label>
+      <label class="rng"><span>MTTR: <b id="mrV"></b></span><input type="range" id="mr" min="1" max="120" value="30"></label>
+    </div>
+    <div class="svgbox"><svg id="rSvg" viewBox="0 0 640 90" role="img" aria-label="Timeline of up and down periods"></svg></div>
+    <p id="rTxt" aria-live="polite"></p>
+  </div>
+  <p>Fault tolerance adds two recovery levers. <b>Replication</b> keeps live copies. <b>Checkpointing</b> saves state periodically (synchronously, pausing writes, or asynchronously in the background) so you can restore. Checkpoints set your <b>RPO</b>, how much recent data you can afford to lose, while your restore process sets the <b>RTO</b>, how long you can afford to be down.</p>
+  <div class="sheet">
+    <label class="rng"><span>Checkpoint every: <b id="ckV"></b></span><input type="range" id="ck" min="5" max="240" value="60" step="5"></label>
+    <div class="svgbox"><svg id="ckSvg" viewBox="0 0 640 110" role="img" aria-label="Checkpoints along a timeline with a crash"></svg></div>
+    <p id="ckTxt" class="small" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="scale" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Scaling up and scaling out</h2></div>
+  <p>Scalability means performance keeps up as load grows. <b>Vertical scaling</b> buys a bigger machine: easy, no code changes, but capped by the largest box and still a single point of failure. <b>Horizontal scaling</b> adds more machines behind a load balancer: nearly unlimited and more resilient, but you must handle distribution, state and coordination. A common path: scale up early, scale out when you hit the ceiling.</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Direction"><button data-s="v" aria-pressed="true">Vertical</button><button data-s="h" aria-pressed="false">Horizontal</button></div><span class="small">Load: <b id="ldV" class="mono"></b></span></div>
+    <input type="range" id="ld" min="1" max="16" value="3" aria-label="Load">
+    <div class="svgbox"><svg id="sSvg" viewBox="0 0 640 200" role="img" aria-label="Servers growing in size or count"></svg></div>
+    <p id="sTxt" class="small" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="fallacies" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Eight fallacies of distributed computing</h2></div>
+  <p>L. Peter Deutsch's list of things developers wrongly assume about networks. Each one has bitten real systems. Tap a card for the counter-move.</p>
+  <div class="cardgrid" id="fCards"></div>
+  <div class="callout blue"><b class="h">AWS angle</b><span>The AWS Well-Architected Framework's six pillars (operational excellence, security, reliability, performance efficiency, cost optimization, sustainability) are largely a checklist for not falling for these.</span></div>
+</section>
+
+<section id="tradeoffs" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>The classic trade-offs</h2></div>
+  <div class="cardgrid" id="tCards"></div>
+  <p><b>Latency</b> is how long a request waits; <b>processing time</b> is how long it takes once picked up; <b>response time</b> is the sum the user feels. <b>Throughput</b> is how much work completes per second, bounded by <b>bandwidth</b>. Batching raises throughput but adds wait. Slide the batch size.</p>
+  <div class="sheet">
+    <label class="rng"><span>Batch size: <b id="bV"></b></span><input type="range" id="bR" min="1" max="64" value="8"></label>
+    <div class="kpis" id="bK"></div>
+  </div>
+</section>
+
+<section id="cap" class="stack">
+  <div class="sec-head"><span class="num">10</span><h2>CAP and PACELC</h2></div>
+  <p>The <b>CAP theorem</b>: a distributed store cannot guarantee consistency, availability and partition tolerance all at once. Since partitions happen whether you like it or not, the real choice is what to do <i>during</i> one: refuse (stay consistent) or answer (stay available). <b>PACELC</b> adds the everyday case: <b>E</b>lse, when there is no partition, you still trade <b>L</b>atency against <b>C</b>onsistency. Walk the decision.</p>
+  <div class="sheet dec">
+    <div class="qbox"><b>Is the network partitioned right now?</b><div class="row" style="margin-top:8px"><div class="seg" id="pSeg" role="group" aria-label="Partition"><button data-p="1" aria-pressed="true">Yes (P)</button><button data-p="0" aria-pressed="false">No (Else)</button></div></div></div>
+    <div class="qbox"><b id="q2"></b><div class="row" style="margin-top:8px"><div class="seg" id="cSeg" role="group" aria-label="Choice"><button data-c="a" aria-pressed="true"></button><button data-c="c" aria-pressed="false"></button></div></div></div>
+    <div class="detail" id="capOut" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="guidelines" class="stack">
+  <div class="sec-head"><span class="num">11</span><h2>Five design guidelines</h2></div>
+  <p>The chapter closes with five rules of thumb, each paired with a quote from a computing pioneer. They come back again and again in Part III.</p>
+  <div class="cardgrid" id="gCards"></div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">12</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qs"></span></div><div class="quiz" id="qq"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>System Design on AWS: Building and Scaling Enterprise Solutions</i> by Jayanth Kumar and Mandeep Singh (O'Reilly, 2025). Explanations, examples, code snippets and drawings are original summaries, not copied from the book. AWS limits and prices change; check current AWS documentation before relying on a number.</footer>
+  <nav class="pager" aria-label="Chapters"><span></span><a class="home" href="index.html">All chapters</a><a class="nx" href="ch02-relational.html"><span>Next · Chapter 2</span><b>Storage Types and Relational Stores</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('sda:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('sda:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle */
+(function(){const b=document.getElementById('themeBtn');if(!b)return;const r=document.documentElement;
+ const cur=store.get('theme',null);if(cur)r.setAttribute('data-theme',cur);
+ b.addEventListener('click',()=>{const dark=r.getAttribute('data-theme')?r.getAttribute('data-theme')==='dark':matchMedia('(prefers-color-scheme: dark)').matches;const n=dark?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n)});})();
+/* code blocks */
+
+
+cards('#qCards',[
+ {t:'Communication',d:'How do servers exchange data: wait for a reply (sync) or hand off and move on (async)?',c:'d1'},
+ {t:'Consistency',d:'Do all replicas show the same data at the same moment?',c:'d2'},
+ {t:'Availability',d:'What share of the time does the system answer requests?',c:'d3'},
+ {t:'Reliability',d:'Does it keep doing the right thing, without failure, over a period?',c:'d4'},
+ {t:'Scalability',d:'Does performance hold as users and data grow, by adding resources?',c:'d5'},
+ {t:'Maintainability',d:'Can people understand, change, extend and operate it easily?',c:'d1'},
+ {t:'Fault tolerance',d:'When a part breaks, does the whole keep working and recover its data?',c:'d2'}]);
+
+/* sync vs async */
+let cm='sync',ctimer=[];
+function drawComm(t){const s=$('#cSvg');s.innerHTML='';
+ const X={c:90,s:330,q:560};
+ [['c','Client'],['s','Service'],['q',cm==='async'?'Queue / worker':'']].forEach(([k,n])=>{if(!n)return;s.appendChild(el('rect',{x:X[k]-55,y:8,width:110,height:30,rx:6,class:'s-surface st-blue','stroke-width':1.5}));s.appendChild(el('text',{x:X[k],y:28,'text-anchor':'middle','font-size':13,'font-weight':600,class:'s-ink'},n));s.appendChild(el('line',{x1:X[k],y1:40,x2:X[k],y2:250,class:'seqlane'}))});
+ const msgs=cm==='sync'?[['c','s',60,'request'],['s','s',90,'work…'],['s','c',150,'response']]:[['c','s',60,'request'],['s','c',85,'202 accepted'],['s','q',110,'enqueue job'],['q','q',150,'work…'],['q','c',210,'callback / notify']];
+ msgs.forEach((m,i)=>{const g=el('g',{class:'msg',opacity:t>i?1:.1});const[a,b,y,l]=m;
+  if(a===b){g.appendChild(el('rect',{x:X[a]-6,y:y-12,width:12,height:40,rx:3,class:'s-pencil'}));g.appendChild(el('text',{x:X[a]+14,y:y+10,'font-size':12,class:'s-muted'},l))}
+  else{const d=X[b]>X[a]?1:-1;g.appendChild(el('line',{x1:X[a],y1:y,x2:X[b]-d*8,y2:y,stroke:'var(--blue)','stroke-width':2}));g.appendChild(el('polygon',{points:`${X[b]},${y} ${X[b]-d*10},${y-5} ${X[b]-d*10},${y+5}`,fill:'var(--blue)'}));g.appendChild(el('text',{x:(X[a]+X[b])/2,y:y-6,'text-anchor':'middle','font-size':12,class:'s-ink'},l))}
+  s.appendChild(g)});
+ if(cm==='sync'){s.appendChild(el('rect',{x:X.c-5,y:60,width:10,height:90,rx:3,fill:'var(--bad)',opacity:t>0?.55:0}));s.appendChild(el('text',{x:X.c-12,y:110,'text-anchor':'end','font-size':11,fill:'var(--bad)',opacity:t>0?1:0},'blocked'))}
+ else{s.appendChild(el('rect',{x:X.c-5,y:85,width:10,height:125,rx:3,fill:'var(--ok)',opacity:t>1?.45:0}));s.appendChild(el('text',{x:X.c-12,y:150,'text-anchor':'end','font-size':11,fill:'var(--ok)',opacity:t>1?1:0},'free'))}
+ $('#cTxt').textContent=cm==='sync'?'The client holds its thread open until the service answers. Simple to reason about; a slow service makes every caller slow.':'The service acknowledges at once and does the work later via a queue. The client is free; the reply arrives through a callback, a notification or polling.';}
+function playComm(){ctimer.forEach(clearTimeout);ctimer=[];const n=cm==='sync'?3:5;drawComm(0);for(let i=1;i<=n;i++)ctimer.push(setTimeout(()=>drawComm(i),i*600))}
+seg('[data-m]',b=>{cm=b.dataset.m;playComm()});$('#cPlay').addEventListener('click',playComm);drawComm(9);
+
+/* consistency */
+let km='strong';
+function drawK(){const lag=+$('#lag').value,ra=+$('#readAt').value;$('#lagV').textContent=lag+' ms';$('#readV').textContent=ra+' ms';
+ const s=$('#kSvg');s.innerHTML='';const x0=110,sc=1.15;const X=t=>x0+t*sc;
+ [['Leader',50],['Replica',130]].forEach(([n,y])=>{s.appendChild(el('text',{x:10,y:y+5,'font-size':13,'font-weight':600,class:'s-ink'},n));s.appendChild(el('line',{x1:x0,y1:y,x2:630,y2:y,class:'st-line','stroke-width':2}))});
+ s.appendChild(el('circle',{cx:X(0),cy:50,r:7,class:'s-blue'}));s.appendChild(el('text',{x:X(0),y:30,'text-anchor':'middle','font-size':12,class:'s-ink'},'write x=2'));
+ s.appendChild(el('line',{x1:X(0),y1:50,x2:X(lag),y2:130,stroke:'var(--blue)','stroke-width':1.5,'stroke-dasharray':'5 4'}));
+ s.appendChild(el('circle',{cx:X(lag),cy:130,r:6,class:'s-blue'}));s.appendChild(el('text',{x:X(lag),y:155,'text-anchor':'middle','font-size':11,class:'s-muted'},'x=2 arrives'));
+ let val,ret,col;
+ if(km==='strong'){ret=Math.max(ra,lag);val=2;col='var(--ok)'}else{ret=ra;val=ra>=lag?2:0;col=val===2?'var(--ok)':'var(--bad)'}
+ s.appendChild(el('rect',{x:X(ra)-2,y:116,width:Math.max(4,(ret-ra)*sc+4),height:28,rx:4,fill:'var(--mid)',opacity:km==='strong'&&ret>ra?.35:0}));
+ s.appendChild(el('polygon',{points:`${X(ra)},112 ${X(ra)-6},100 ${X(ra)+6},100`,fill:'var(--pencil)'}));s.appendChild(el('text',{x:X(ra),y:94,'text-anchor':'middle','font-size':12,fill:'var(--pencil)'},'read'));
+ s.appendChild(el('text',{x:X(ret),y:185,'text-anchor':'middle','font-size':13,'font-weight':700,fill:col},'→ '+val));
+ $('#kTxt').innerHTML=km==='strong'?(ra<lag?`The replica has not caught up, so the read <b>blocks ${lag-ra} ms</b> until x=2 lands, then returns 2. Correct, but slower.`:'The replica already has the write; the read returns 2 immediately.'):(ra<lag?'The read is answered immediately with the <b class="badc">stale value 0</b>. Wait long enough and the replica converges.':'The replica has caught up, so even eventual consistency returns the fresh value 2.');}
+seg('[data-k]',b=>{km=b.dataset.k;drawK()});['lag','readAt'].forEach(i=>$('#'+i).addEventListener('input',drawK));drawK();
+
+/* nines */
+const NN=[['90%',.9],['99%',.99],['99.9%',.999],['99.99%',.9999],['99.999%',.99999],['99.9999%',.999999]];
+function dur(sec){if(sec>=86400*2)return (sec/86400).toFixed(1)+' days';if(sec>=3600)return (sec/3600).toFixed(1)+' hours';if(sec>=60)return (sec/60).toFixed(1)+' min';return sec.toFixed(1)+' s'}
+$('#nSeg').innerHTML=NN.map((n,i)=>`<button data-n="${i}" aria-pressed="${i===2}">${n[0]}</button>`).join('');
+function showN(i){const u=1-NN[i][1];$('#nK').innerHTML=[['per year',365*86400],['per month',30*86400],['per week',7*86400],['per day',86400]].map(([l,t])=>`<div class="stat"><span class="big blue" style="font-size:1.6rem">${dur(u*t)}</span><span>downtime ${l}</span></div>`).join('')}
+seg('#nSeg button',b=>showN(+b.dataset.n));showN(2);
+
+/* seq/par */
+let am='seq';
+function drawA(){const A=NN[+$('#aR').value][1],n=+$('#cnt').value;$('#aV').textContent=NN[+$('#aR').value][0];$('#cntV').textContent=n;
+ const tot=am==='seq'?Math.pow(A,n):1-Math.pow(1-A,n);const s=$('#aSvg');s.innerHTML='';
+ if(am==='seq'){const w=Math.min(90,460/n);for(let i=0;i<n;i++){const x=80+i*(w+20);s.appendChild(el('rect',{x,y:60,width:w,height:46,rx:6,class:'s-bluesoft st-blue','stroke-width':1.5}));s.appendChild(el('text',{x:x+w/2,y:88,'text-anchor':'middle','font-size':12,class:'s-ink'},NN[+$('#aR').value][0]));if(i<n-1)s.appendChild(el('line',{x1:x+w,y1:83,x2:x+w+20,y2:83,class:'st-ink','stroke-width':2}))}
+  s.appendChild(el('line',{x1:20,y1:83,x2:80,y2:83,class:'st-ink','stroke-width':2}));const ex=80+n*(w+20)-20;s.appendChild(el('line',{x1:ex,y1:83,x2:ex+40,y2:83,class:'st-ink','stroke-width':2}))}
+ else{const h=Math.min(28,140/n);for(let i=0;i<n;i++){const y=85-(n*(h+6))/2+i*(h+6);s.appendChild(el('rect',{x:260,y,width:120,height:h,rx:5,class:'s-bluesoft st-blue','stroke-width':1.5}));s.appendChild(el('text',{x:320,y:y+h/2+4,'text-anchor':'middle','font-size':11,class:'s-ink'},NN[+$('#aR').value][0]));s.appendChild(el('line',{x1:160,y1:85,x2:260,y2:y+h/2,class:'st-muted','stroke-width':1.5}));s.appendChild(el('line',{x1:380,y1:y+h/2,x2:480,y2:85,class:'st-muted','stroke-width':1.5}))}
+  s.appendChild(el('line',{x1:40,y1:85,x2:160,y2:85,class:'st-ink','stroke-width':2}));s.appendChild(el('line',{x1:480,y1:85,x2:600,y2:85,class:'st-ink','stroke-width':2}))}
+ const pct=(tot*100).toFixed(tot>.99999?5:4).replace(/0+$/,'').replace(/\.$/,'');
+ $('#aTxt').innerHTML=`Overall availability: <b class="${tot<A?'badc':'okc'}">${pct}%</b>, about <b>${dur((1-tot)*365*86400)}</b> of downtime a year. ${am==='seq'?'Every extra hop in the chain lowers it.':'Every extra replica raises it, if failures are independent.'}`}
+seg('[data-a]',b=>{am=b.dataset.a;drawA()});['aR','cnt'].forEach(i=>$('#'+i).addEventListener('input',drawA));drawA();
+
+/* failover */
+let fm='ap',dead=false;
+function drawF(){const s=$('#fSvg');s.innerHTML='';
+ s.appendChild(el('rect',{x:20,y:85,width:100,height:44,rx:6,class:'s-pencilsoft st-pencil','stroke-width':1.5}));s.appendChild(el('text',{x:70,y:112,'text-anchor':'middle','font-size':13,class:'s-ink'},'Clients'));
+ s.appendChild(el('rect',{x:200,y:85,width:110,height:44,rx:6,class:'s-surface st-blue','stroke-width':1.5}));s.appendChild(el('text',{x:255,y:112,'text-anchor':'middle','font-size':13,class:'s-ink'},'Load balancer'));
+ s.appendChild(el('line',{x1:120,y1:107,x2:200,y2:107,stroke:'var(--pencil)','stroke-width':2,class:'flow'}));
+ const sv=[['A',40],['B',150]];sv.forEach(([n,y])=>{const isDead=n==='A'&&dead;const active=fm==='aa'?!isDead:(n==='A'?!dead:dead);
+  s.appendChild(el('line',{x1:310,y1:107,x2:430,y2:y+22,stroke:active?'var(--blue)':'var(--line)','stroke-width':active?2.5:1.5,class:active?'flow':''}));
+  s.appendChild(el('rect',{x:430,y,width:150,height:44,rx:6,fill:isDead?'var(--bad-soft)':active?'var(--ok-soft)':'var(--paper)',stroke:isDead?'var(--bad)':active?'var(--ok)':'var(--muted)','stroke-width':1.5,'stroke-dasharray':active||isDead?'':'5 4'}));
+  s.appendChild(el('text',{x:505,y:y+27,'text-anchor':'middle','font-size':13,class:'s-ink'},`Server ${n} · ${isDead?'down':active?'serving':'standby'}`))});
+ s.appendChild(el('text',{x:505,y:212,'text-anchor':'middle','font-size':11,class:'s-muted'},fm==='ap'?'heartbeat A ↔ B':'both share the load'));
+ $('#kill').textContent=dead?'Restore server A':'Fail server A';
+ $('#fTxt').innerHTML=fm==='ap'?(dead?'B notices missing heartbeats and takes over. There is a short gap while it promotes itself (and if it was a <i>cold</i> standby, a longer one while it warms up).':'Only A serves. B waits idle, which wastes capacity but keeps things simple.'):(dead?'B was already serving, so traffic simply shifts. No switchover delay, but B must have headroom for the whole load.':'Both serve at once and share load. Better use of hardware; both must stay in sync.')}
+seg('[data-f]',b=>{fm=b.dataset.f;drawF()});$('#kill').addEventListener('click',()=>{dead=!dead;drawF()});drawF();
+
+/* MTBF/MTTR */
+function drawR(){const mb=+$('#mb').value,mr=+$('#mr').value;$('#mbV').textContent=mb+' days';$('#mrV').textContent=mr+' hours';
+ const up=mb*24,av=up/(up+mr);const s=$('#rSvg');s.innerHTML='';const W=600,span=365*24;let t=0,x=20;
+ while(t<span){const u=Math.min(up,span-t);s.appendChild(el('rect',{x:20+t/span*W,y:20,width:Math.max(.5,u/span*W),height:30,fill:'var(--ok)'}));t+=u;if(t>=span)break;const d=Math.min(mr,span-t);s.appendChild(el('rect',{x:20+t/span*W,y:20,width:Math.max(2,d/span*W),height:30,fill:'var(--bad)'}));t+=d}
+ s.appendChild(el('text',{x:20,y:72,'font-size':11,class:'s-muted'},'one year →'));
+ $('#rTxt').innerHTML=`About <b>${Math.floor(365/(mb+mr/24))}</b> failures a year, availability ≈ <b>${(av*100).toFixed(3)}%</b>. Halving MTTR helps as much as doubling MTBF, and is usually cheaper: better alarms, runbooks and automated recovery.`}
+['mb','mr'].forEach(i=>$('#'+i).addEventListener('input',drawR));drawR();
+function drawCk(){const c=+$('#ck').value;$('#ckV').textContent=c+' min';const s=$('#ckSvg');s.innerHTML='';const W=600,span=480,crash=397;
+ s.appendChild(el('line',{x1:20,y1:50,x2:620,y2:50,class:'st-line','stroke-width':3}));let last=0;
+ for(let t=c;t<span;t+=c){if(t<=crash)last=t;s.appendChild(el('rect',{x:20+t/span*W-3,y:38,width:6,height:24,rx:2,fill:t<=crash?'var(--blue)':'var(--line)'}))}
+ const cx=20+crash/span*W;s.appendChild(el('text',{x:cx,y:30,'text-anchor':'middle','font-size':13,fill:'var(--bad)','font-weight':700},'✕ crash'));
+ s.appendChild(el('rect',{x:20+last/span*W,y:70,width:(crash-last)/span*W,height:12,fill:'var(--bad)',opacity:.5}));
+ s.appendChild(el('text',{x:20+last/span*W,y:100,'font-size':11,fill:'var(--bad)'},'lost since last checkpoint'));
+ $('#ckTxt').textContent=`Worst case you lose up to ${c} minutes of writes (RPO). Here the crash wipes ${crash-last} minutes. Checkpointing more often lowers RPO but costs I/O and, if synchronous, pauses writes.`}
+$('#ck').addEventListener('input',drawCk);drawCk();
+
+/* scaling */
+let sm='v';
+function drawS(){const L=+$('#ld').value;$('#ldV').textContent=L+'×';const s=$('#sSvg');s.innerHTML='';const maxV=8;
+ if(sm==='v'){const sz=Math.min(L,maxV);const h=30+sz*18,w=60+sz*14;s.appendChild(el('rect',{x:320-w/2,y:190-h,width:w,height:h,rx:8,fill:L>maxV?'var(--bad-soft)':'var(--blue-soft)',stroke:L>maxV?'var(--bad)':'var(--blue)','stroke-width':2}));
+  s.appendChild(el('text',{x:320,y:190-h/2+5,'text-anchor':'middle','font-size':14,'font-weight':600,class:'s-ink'},sz*4+' vCPU'));
+  $('#sTxt').innerHTML=L>maxV?'<b class="badc">Out of road.</b> There is no bigger instance to buy, and one box is still one point of failure.':'One bigger server. Nothing in the code changes.'}
+ else{const per=24;for(let i=0;i<L;i++){const col=i%8,row=Math.floor(i/8);s.appendChild(el('rect',{x:60+col*68,y:60+row*62,width:56,height:46,rx:6,class:'s-bluesoft st-blue','stroke-width':1.5}));s.appendChild(el('text',{x:88+col*68,y:88+row*62,'text-anchor':'middle','font-size':11,class:'s-ink'},'4 vCPU'))}
+  s.appendChild(el('rect',{x:220,y:10,width:200,height:30,rx:6,class:'s-surface st-ink'}));s.appendChild(el('text',{x:320,y:30,'text-anchor':'middle','font-size':12,class:'s-ink'},'load balancer'));
+  $('#sTxt').textContent=`${L} identical servers. Keep them stateless so any one can take any request, and losing one costs only 1/${L} of capacity.`}}
+seg('[data-s]',b=>{sm=b.dataset.s;drawS()});$('#ld').addEventListener('input',drawS);drawS();
+
+cards('#fCards',[
+ {t:'1. The network is reliable',d:'Packets drop and links fail. Use timeouts, retries with backoff and idempotent operations.'},
+ {t:'2. Latency is zero',d:'Every hop costs time. Cache, batch, and keep chatty calls inside one region or one process.'},
+ {t:'3. Bandwidth is infinite',d:'Pipes fill. Compress, paginate and send only the fields that are needed.'},
+ {t:'4. The network is secure',d:'Assume attackers on the wire. Encrypt in transit, authenticate every call, threat-model.'},
+ {t:'5. Topology doesn\'t change',d:'Servers come and go. Use service discovery and DNS rather than hardcoded addresses.'},
+ {t:'6. There is one administrator',d:'Many teams and providers share control. Automate config and document ownership.'},
+ {t:'7. Transport cost is zero',d:'Serialization takes CPU and data transfer costs money. Account for both in the design.'},
+ {t:'8. The network is homogeneous',d:'Devices, protocols and links differ. Stick to open standards and test across them.'}]);
+cards('#tCards',[
+ {t:'Time vs space',d:'Spend memory to save time (precomputed tables, caches, indexes) or spend time to save memory (compression, recomputing).',c:'d1'},
+ {t:'Latency vs throughput',d:'Optimizing how quickly one request finishes is not the same as maximizing requests per second. Batching and queuing trade one for the other.',c:'d2'},
+ {t:'Performance vs scalability',d:'Performance is speed for one request; scalability is keeping that speed as load grows. A system can be fast for one user and collapse under many.',c:'d3'},
+ {t:'Consistency vs availability',d:'Under partitions you choose between refusing and answering possibly stale data. See CAP and PACELC below.',c:'d4'}]);
+function drawB(){const b=+$('#bR').value;$('#bV').textContent=b;const per=2,over=8,arr=4;const thr=b/(over+per*b)*1000;const lat=over+per*b+(b-1)*arr/2;
+ $('#bK').innerHTML=`<div class="stat"><span class="big blue" style="font-size:1.6rem">${Math.round(thr)}/s</span><span>throughput</span></div><div class="stat"><span class="big pencil" style="font-size:1.6rem">${Math.round(lat)} ms</span><span>average latency</span></div>`}
+$('#bR').addEventListener('input',drawB);drawB();
+
+/* CAP */
+let P='1',C='a';
+function capUpd(){const lab=P==='1'?['Answer anyway (A)','Refuse until consistent (C)']:['Answer fast (L)','Wait for replicas (C)'];
+ $('#q2').textContent=P==='1'?'Some replicas cannot reach the others. Do you keep answering?':'All replicas can talk. Do you wait for replication before replying?';
+ $$('#cSeg button').forEach((b,i)=>b.textContent=lab[i]);
+ const key=P+C;const R={'1a':['PA','Stay available, accept divergence','Nodes keep serving and reconcile later. Typical of Dynamo-style stores such as DynamoDB (default reads), Cassandra and Riak.'],'1c':['PC','Stay consistent, refuse some requests','The minority side errors or times out rather than return possibly wrong data. Typical of systems built on consensus, and of relational primaries.'],'0a':['EL','Favor low latency','Reply from the nearest replica without waiting; reads may be slightly stale. Asynchronous replication.'],'0c':['EC','Favor consistency','Replicate synchronously before acknowledging; every read is fresh but each write waits on the slowest replica.']};
+ const r=R[key];$('#capOut').innerHTML=`<span class="eyebrow">PACELC: ${r[0]}</span><h3 class="blue">${r[1]}</h3><p>${r[2]}</p>`}
+seg('#pSeg button',b=>{P=b.dataset.p;capUpd()});seg('#cSeg button',b=>{C=b.dataset.c;capUpd()});capUpd();
+
+cards('#gCards',[
+ {t:'Isolation: build it modularly',d:'Split the system into loosely coupled modules with clear interfaces, so each can be built, tested, scaled and replaced on its own.',c:'d1'},
+ {t:'Simplicity: keep it simple',d:'Avoid features and moving parts you do not need. Simple systems are easier to understand, operate and fix.',c:'d2'},
+ {t:'Performance: metrics don\'t lie',d:'Measure, then build. Instrument everything and let observability, not hunches, drive optimization.',c:'d3'},
+ {t:'Trade-offs: no free lunch',d:'Every gain costs something elsewhere. Name the cost explicitly and decide whether it is worth it.',c:'d4'},
+ {t:'Use cases: it always depends',d:'The right design depends on requirements, users, constraints and budget. There is no universal answer.',c:'d5'}]);
+
+quiz('#qq','#qs',[
+ {q:'Two services, each 99.9% available, are called one after another. Overall availability is roughly…',o:['99.9%','99.8%','99.9999%'],a:1,why:'In sequence you multiply: 0.999 × 0.999 ≈ 0.998.'},
+ {q:'The same two services in parallel (either can serve) give roughly…',o:['99.8%','99.9%','99.9999%'],a:2,why:'Both must fail together: 1 − 0.001 × 0.001 = 0.999999.'},
+ {q:'Eventual consistency guarantees that a read right after a write…',o:['Sees the write','May be stale','Blocks'],a:1,why:'Replicas converge over time; a read before that may return an older value.'},
+ {q:'PACELC adds what to CAP?',o:['Cost','Latency vs consistency when there is no partition','Durability'],a:1,why:'Else (no partition), you still trade latency against consistency.'},
+ {q:'Which metric bounds how much data you might lose in a crash?',o:['RTO','RPO','MTBF'],a:1,why:'Recovery point objective: the age of the newest data you can restore.'}]);
+
+})();
+</script>
+</body>
+</html>

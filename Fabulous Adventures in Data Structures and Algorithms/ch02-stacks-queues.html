@@ -1,0 +1,527 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Immutable Stacks and Queues</title>
+<meta name="description" content="Data that never changes sounds like a limitation. It turns out to be a superpower: correctness, free history, cheap sharing, painless undo, and one very strange list that holds no data at all.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Fabulous Adventures companion: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:4px;flex-wrap:wrap;flex:1 1 80px;min-width:0}
+.dots i{width:clamp(6px,3vw,22px);height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code + data-structure helpers */
+pre.code{margin:0;font-family:var(--mono);font-size:.84rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .k{color:var(--blue);font-weight:600} pre.code .c{color:var(--muted);font-style:italic} pre.code .s{color:var(--d2)}
+code{font-family:var(--mono);font-size:.88em;background:var(--blue-soft);padding:1px 5px;border-radius:4px}
+.cells{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.cell{font-family:var(--mono);font-size:.9rem;min-width:2.2em;padding:4px 8px;border:1.5px solid var(--blue);border-radius:6px;background:var(--surface);text-align:center;transition:all .3s}
+.cell.hl{background:var(--blue);color:var(--surface)} .cell.pc{border-color:var(--pencil);background:var(--pencil-soft)} .cell.ok{border-color:var(--ok);background:var(--ok-soft)} .cell.bad{border-color:var(--bad);background:var(--bad-soft)} .cell.dim{opacity:.35}
+.log{font-family:var(--mono);font-size:.82rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+input[type=text],input[type=number]{font:inherit;font-size:.92rem;padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+canvas{max-width:100%;display:block}
+
+/* page */
+
+.qs{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:560px){.qs{grid-template-columns:1fr}}
+.qs>div{border:1px solid var(--line);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;min-height:90px}
+.meter{display:flex;gap:2px;align-items:flex-end;height:90px;border-bottom:1px solid var(--line);overflow:hidden}
+.meter i{flex:1;min-width:3px;background:var(--blue);border-radius:2px 2px 0 0;transition:height .3s}
+.meter i.x{background:var(--pencil)}
+.toctou{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.toctou div{border:1px solid var(--line);border-radius:8px;padding:10px;font-size:.9rem;display:flex;flex-direction:column;gap:4px;transition:all .3s}
+.toctou div.on{border-color:var(--pencil);background:var(--pencil-soft)}
+@media (max-width:560px){.toctou{grid-template-columns:1fr}}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Fabulous Adventures in DS&A · visual companion</a><span class="tag">Part 1 · Chapter 2 of 16</span></div>
+  <h1>Immutable Stacks and Queues</h1>
+  <p class="lede">Data that never changes sounds like a limitation. It turns out to be a superpower: correctness, free history, cheap sharing, painless undo, and one very strange list that holds no data at all.</p>
+  <nav class="toc" aria-label="Sections"><a href="#why">Why immutability</a><a href="#toctou">TOCTOU</a><a href="#stack">Immutable stack</a><a href="#cov">Covariance</a><a href="#queue">Two-stack queue</a><a href="#undo">Undo and redo</a><a href="#curry">Currying</a><a href="#hughes">Hughes list</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="why" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Why prefer data that cannot change?</h2></div>
+  <p>If two structures do the same job but one cannot be modified, why choose the one with fewer features? Because the restriction buys a lot. The deepest reason: <b>any fact you deduce about an immutable object stays true forever</b>. On the C# compiler team, a common bug class was caching a fact, mutating the program tree so the fact went stale, then trusting it later. The Roslyn rewrite leaned on immutable structures and whole classes of such bugs disappeared.</p>
+  <div class="cardgrid" id="whyCards"></div>
+</section>
+
+<section id="toctou" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>A security story: time of check, time of use</h2></div>
+  <p>Low-trust code hands a resource name to high-trust code, which <b>checks</b> permission and then <b>uses</b> the name. If the name object is mutable, a second hostile thread can flip it between a permitted and a forbidden name, and sooner or later the flip lands between the check and the use. Run the attack against both kinds of object.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Name object"><button data-m="mut" aria-pressed="true">Mutable name</button><button data-m="imm" aria-pressed="false">Immutable name</button></div>
+    <div class="toctou"><div id="t1"><b>1. Check</b><span>Is "<span class="mono" id="tc">report.txt</span>" allowed?</span></div><div id="t2"><b>2. Attacker thread</b><span id="ta">waiting…</span></div><div id="t3"><b>3. Use</b><span>Open "<span class="mono" id="tu">?</span>"</span></div></div>
+    <div class="row"><button class="btn primary" id="tRun">Run 20 attempts</button><span class="small" id="tRes" aria-live="polite"></span></div>
+  </div>
+</section>
+
+<section id="stack" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>An immutable stack, designed properly</h2></div>
+  <p>Start from the <b>abstract data type</b>, not the mechanism: what can users do with a stack? Create one, push, peek, pop, ask if it is empty, and enumerate it. Only push and pop mutate a normal stack, so in the immutable version those two return a <i>new</i> stack instead.</p>
+  <div class="two">
+    <pre class="code"><span class="k">interface</span> IImStack&lt;T&gt; : IEnumerable&lt;T&gt; {
+  IImStack&lt;T&gt; Push(T item);
+  T Peek();
+  IImStack&lt;T&gt; Pop();
+  <span class="k">bool</span> IsEmpty { <span class="k">get</span>; }
+}</pre>
+    <div class="stack">
+      <p class="small"><b>Two classes, one interface.</b> A singleton <code>Empty</code> stack that throws on Peek and Pop, and a non-empty node holding an item and a tail. Constructors are private: the only way to get a stack is to start from Empty and push. No <code>null</code> anywhere, so nothing to dereference by mistake (the null object pattern).</p>
+    </div>
+  </div>
+  <div class="sheet">
+    <div class="row"><button class="btn primary" id="sPush">s = s.Push(next)</button><button class="btn" id="sPop">s = s.Pop()</button><button class="btn" id="sReset">Reset</button></div>
+    <div class="svgbox fit"><svg id="sSvg" viewBox="0 0 640 220" role="img" aria-label="Stack versions sharing nodes"></svg></div>
+    <p class="small" id="sTxt" aria-live="polite"></p>
+  </div>
+  <div class="three">
+    <div class="stat"><b>O(1)</b><span>Push, Peek, Pop, IsEmpty</span></div>
+    <div class="stat"><b>O(n)</b><span>enumerating n items, with O(1) extra memory</span></div>
+    <div class="stat"><b>Shared</b><span>stacks with the same tail share it; nothing is copied</span></div>
+  </div>
+</section>
+
+<section id="cov" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Immutability makes covariance safe</h2></div>
+  <p>A giraffe is an animal, but is a <i>list</i> of tigers a list of animals? If it were, you could add a giraffe to it through the animal-typed reference, and a tiger variable could end up holding a giraffe. <b>Mutability prevents covariance.</b> Read-only sequences are safe. An immutable stack ought to be safe too, except <code>Push(T)</code> takes T as input. The trick: move Push out of the interface into an extension method, mark the interface <code>out T</code>, and pushing a giraffe onto a stack of tigers simply yields a stack of animals.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Type"><button data-c="list" aria-pressed="true">IList&lt;Tiger&gt; as IList&lt;Animal&gt;</button><button data-c="stack" aria-pressed="false">IImStack&lt;Tiger&gt; as IImStack&lt;Animal&gt;</button></div>
+    <div class="svgbox fit"><svg id="cSvg" viewBox="0 0 640 170" role="img" aria-label="Covariance outcome"></svg></div>
+    <p id="cTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="queue" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>A queue made from two stacks</h2></div>
+  <p>A stack is cheap at one end; a queue needs two cheap ends. So use <b>two stacks</b>: enqueue pushes onto the back stack, dequeue pops from the front stack, and when the front stack runs dry, <b>reverse</b> the back stack to become the new front. One invariant keeps the code small: <i>a non-empty queue always has a non-empty front stack</i>. Try it, and watch the cost of each operation.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn primary" id="qEn">Enqueue</button><button class="btn" id="qEn5">Enqueue ×5</button><button class="btn" id="qDe">Dequeue</button><button class="btn" id="qRe">Reset</button></div>
+    <div class="qs"><div><span class="eyebrow">Front (dequeue) stack, top first</span><div class="cells" id="qF"></div></div><div><span class="eyebrow">Back (enqueue) stack, top first</span><div class="cells" id="qB"></div></div></div>
+    <p class="mono small" id="qView"></p>
+    <div><span class="eyebrow">Cost of each operation (orange = a reversal)</span><div class="meter" id="qMeter"></div></div>
+    <p class="small" id="qTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout blue"><b class="h">Amortized O(1)</b><span>Follow one item: pushed onto the back stack, popped off it during a reversal, pushed onto the front stack, popped by dequeue. Four constant-time steps per item, so the <b>average</b> cost is constant even though one dequeue after a million enqueues does a million steps. Whether that occasional pause is acceptable depends on the user.</span></div>
+</section>
+
+<section id="undo" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Undo and redo for free</h2></div>
+  <p>Undo for a queue is surprisingly awkward: dequeuing does not undo an enqueue. The book weighs three designs.</p>
+  <div class="cardgrid" id="undoCards"></div>
+  <p>The third design is a <b>mutable wrapper over an immutable value</b>: a class with one private field pointing at the current immutable queue. Every operation replaces the field. Undo and redo stacks simply hold old queue values, and persistence means each snapshot costs O(1) extra memory on average.</p>
+  <div class="sheet">
+    <div class="row"><button class="btn primary" id="uEn">Enqueue</button><button class="btn" id="uDe">Dequeue</button><button class="btn" id="uUndo">Undo</button><button class="btn" id="uRedo">Redo</button><button class="btn" id="uRe">Reset</button></div>
+    <div class="three">
+      <div class="stat"><span class="eyebrow">Undo stack</span><div class="stack" id="uU" style="gap:4px"></div></div>
+      <div class="stat" style="border-color:var(--blue)"><span class="eyebrow">Current queue</span><div class="cells" id="uC"></div></div>
+      <div class="stat"><span class="eyebrow">Redo stack</span><div class="stack" id="uR" style="gap:4px"></div></div>
+    </div>
+    <p class="small" id="uTxt" aria-live="polite">Each box in the undo and redo stacks is a whole queue value. They share nodes, so this is cheap.</p>
+  </div>
+  <div class="callout"><b class="h">The flaw in the amortization argument</b><span>Enqueue 100 items, dequeue (reversing 99), undo, dequeue again, undo… Each dequeue repeats the expensive reversal, so the cost is never spread out. Options: don't worry if it never happens in practice, use a structure with a better worst case (chapter 3), or memoize the reversal (chapter 4). A nice bonus the other way round: <b>redo</b> of an expensive operation is free, because the result is already stored.</span></div>
+</section>
+
+<section id="curry" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Currying, and a very odd way to store a number</h2></div>
+  <p>Any two-argument function can be split into a function that takes the first argument and returns a function waiting for the second. That is <b>currying</b>; fixing the first argument is <b>partial application</b>. Off-label use: <code>add(n)</code> "stores" n, and calling the result with 0 gets n back out.</p>
+  <pre class="code">Func&lt;<span class="k">int</span>, Func&lt;<span class="k">int</span>, <span class="k">int</span>&gt;&gt; add = x =&gt; y =&gt; x + y;
+<span class="k">var</span> box = add(123);   <span class="c">// a function that "holds" 123</span>
+box(0);                <span class="c">// 123: zero is the "give it back" argument</span></pre>
+  <p>The Hughes list does exactly this with stacks: a list is stored as "the function that concatenates me onto whatever you pass", and the <b>empty stack</b> plays the role of zero.</p>
+</section>
+
+<section id="hughes" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>The Hughes list: build it cheap, pay later</h2></div>
+  <p>John Hughes' <b>difference list</b> holds a single field: a delegate <code>stack ⇒ myItems ++ stack</code>. Empty is the identity function. Push, Append and Concatenate just build a new delegate that calls the old ones, so they are all <b>O(1)</b> no matter how big the list. The bill arrives when you Peek or Pop: you must call the delegate with the empty stack, which runs every deferred concatenation, O(n).</p>
+  <pre class="code">Empty        = s =&gt; s
+Single(x)    = s =&gt; s.Push(x)
+Concat(a, b) = s =&gt; a(b(s))        <span class="c">// O(1) to build</span>
+ToStack()    = this(ImStack.Empty) <span class="c">// O(n) to run</span></pre>
+  <div class="sheet">
+    <div class="row"><button class="btn primary" id="hPush">Push next</button><button class="btn" id="hApp">Append next</button><button class="btn" id="hDup">Concatenate with itself</button><button class="btn" id="hRe">Reset</button></div>
+    <div class="svgbox"><svg id="hSvg" viewBox="0 0 640 260" role="img" aria-label="Closure tree behind a Hughes list"></svg></div>
+    <div class="row"><button class="btn" id="hRun">ToStack(): run the delegates</button><span class="mono small" id="hOut"></span></div>
+    <p class="small" id="hTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout blue"><b class="h">Where is the data?</b><span>In the closures. When a lambda captures <code>a</code> and <code>b</code>, the compiler generates a class with fields for them, so every Concat delegate is secretly a <b>binary tree node</b> with left and right children, and Single delegates are leaves holding one item. The drawing above is that hidden tree. Running it is a recursive traversal, which also means a list built from thousands of pushes can <b>overflow the call stack</b>.</span></div>
+  <div class="cardgrid" id="hCards"></div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="score"></span></div><div class="quiz" id="quizBox"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Fabulous Adventures in Data Structures and Algorithms</i> by Eric Lippert (Manning, 2026). Explanations, code snippets, simulations and drawings are original summaries written for study; they are not taken from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch01-starting.html"><span>Previous · Chapter 1</span><b>Starting a Fabulous Adventure</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch03-deque.html"><span>Next · Chapter 3</span><b>An Immutable Deque</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('fadsa:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('fadsa:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+
+cards('#whyCards',[
+ {t:'Correctness',d:'Facts you computed earlier never go stale. Easier to test, debug and maintain.',c:'blue'},
+ {t:'History',d:'Like a bank ledger or source control: you only add new records, so every past state is still there.',c:'d2'},
+ {t:'Security',d:'Low-trust code cannot change an object after high-trust code has validated it.',c:'bad'},
+ {t:'Thread safety',d:'Share freely across threads without locks; nobody can change what others see.',c:'d5'},
+ {t:'Memoization',d:'A fact about an immutable value can be cached forever, trading memory for time (chapter 4).',c:'d3'},
+ {t:'Persistence',d:'"A new version doubles the memory"? The opposite: new versions reuse the old one\'s insides. Mutable arrays must be copied to keep both.',c:'ok'},
+ {t:'Functional attitude',d:'Functional languages build programs from side-effect-free functions. C# lets you mix that style in where it helps.',c:'pencil'}]);
+
+/* TOCTOU */
+let tm='mut';seg('[data-m]',b=>{tm=b.dataset.m;$('#tRes').textContent=''});
+$('#tRun').addEventListener('click',async()=>{const btn=$('#tRun');btn.disabled=true;let wins=0;
+ for(let k=0;k<20;k++){const name={v:'report.txt'};$('#tc').textContent=name.v;$('#t1').classList.add('on');await new Promise(r=>setTimeout(r,60));$('#t1').classList.remove('on');
+  const flip=Math.random()<.35;$('#t2').classList.toggle('on',flip);
+  if(flip){if(tm==='mut'){name.v='payroll.db';$('#ta').textContent='flipped name to payroll.db!'}else{$('#ta').textContent='tried to flip: object is immutable'}}else $('#ta').textContent='flipped too early or too late';
+  await new Promise(r=>setTimeout(r,60));$('#tu').textContent=name.v;$('#t3').classList.add('on');if(name.v!=='report.txt')wins++;await new Promise(r=>setTimeout(r,60));$('#t3').classList.remove('on');$('#t2').classList.remove('on')}
+ $('#tRes').innerHTML=wins?`<b class="badc">The attacker read a forbidden file ${wins} time${wins>1?'s':''} out of 20.</b>`:`<b class="okc">0 out of 20.</b> The checked value is the used value.`;btn.disabled=false});
+
+/* stack versions */
+let sn,cur,nextv,hist;function sReset(){sn=[];cur=-1;nextv=10;hist=[{h:-1}];sDraw('s = Empty')}
+function sDraw(msg){const s=$('#sSvg');s.innerHTML='';const pos={};const lvl=i=>i<0?0:1+lvl(sn[i].t);const rowCount={};
+ sn.forEach((n,i)=>{const d=lvl(i);rowCount[d]=(rowCount[d]||0);pos[i]={x:40+d*86,y:30+rowCount[d]*52};rowCount[d]++});
+ s.appendChild(el('rect',{x:-6+0,y:30,width:44,height:30,rx:6,fill:'var(--paper)',stroke:'var(--muted)','stroke-dasharray':'3 3'}));s.appendChild(el('text',{x:16,y:50,'text-anchor':'middle','font-size':11,fill:'var(--muted)',class:'t-mono'},'Empty'));
+ sn.forEach((n,i)=>{const p=pos[i],q=n.t<0?{x:16-30,y:30}:pos[n.t];s.appendChild(el('line',{x1:p.x+8,y1:p.y+15,x2:q.x+60,y2:q.y+15,stroke:'var(--muted)','stroke-width':1.4}))});
+ sn.forEach((n,i)=>{const p=pos[i];const on=i===cur;s.appendChild(el('rect',{x:p.x+8,y:p.y,width:56,height:30,rx:15,fill:on?'var(--pencil-soft)':'var(--surface)',stroke:on?'var(--pencil)':'var(--blue)','stroke-width':1.8}));s.appendChild(el('text',{x:p.x+36,y:p.y+20,'text-anchor':'middle','font-size':13,fill:'var(--ink)',class:'t-mono'},n.v))});
+ const H=Math.max(120,...Object.values(pos).map(p=>p.y+50));s.setAttribute('viewBox',`-10 0 650 ${H}`);
+ const items=[];for(let i=cur;i>=0;i=sn[i].t)items.push(sn[i].v);$('#sTxt').innerHTML=`${msg}. Current s = [${items.join(', ')}]. Nodes ever allocated: <b>${sn.length}</b>. Orange marks the node s points at; older nodes are still referenced by earlier versions.`}
+$('#sPush').addEventListener('click',()=>{if(sn.length>=14){$('#sTxt').textContent='Enough nodes for one picture; reset to continue.';return}sn.push({v:nextv,t:cur});cur=sn.length-1;sDraw(`Pushed ${nextv}: one new node`);nextv+=10});
+$('#sPop').addEventListener('click',()=>{if(cur<0){$('#sTxt').innerHTML='<b class="badc">Pop on the empty stack throws.</b> Check IsEmpty first.';return}cur=sn[cur].t;sDraw('Popped: no allocation, s now points at the old tail')});
+$('#sReset').addEventListener('click',sReset);sReset();
+
+/* covariance */
+function cv(m){const s=$('#cSvg');s.innerHTML='';const box=(x,lab,c)=>{s.appendChild(el('rect',{x,y:60,width:70,height:40,rx:8,fill:'var(--surface)',stroke:`var(--${c})`,'stroke-width':2}));s.appendChild(el('text',{x:x+35,y:85,'text-anchor':'middle','font-size':13,fill:'var(--ink)'},lab))};
+ if(m==='list'){box(30,'Tiger','blue');box(110,'Tiger','blue');box(190,'Giraffe','bad');s.appendChild(el('text',{x:30,y:40,'font-size':13,fill:'var(--muted)',class:'t-mono'},'one shared List object'));
+  s.appendChild(el('text',{x:300,y:70,'font-size':13,fill:'var(--ink)',class:'t-mono'},'animals.Add(new Giraffe());'));s.appendChild(el('text',{x:300,y:95,'font-size':13,fill:'var(--bad)',class:'t-mono'},'Tiger t = tigers[2]; // a giraffe!'));
+  s.appendChild(el('text',{x:300,y:130,'font-size':13,fill:'var(--bad)','font-weight':700},'Type safety broken, so C# forbids it.'));
+  $('#cTxt').innerHTML='Because <code>Add</code> takes a T as <b>input</b>, a mutable list cannot be covariant. C# only allows <code>out T</code> where T appears in output positions.'}
+ else{box(30,'Tiger','blue');box(110,'Tiger','blue');s.appendChild(el('text',{x:30,y:40,'font-size':13,fill:'var(--muted)',class:'t-mono'},'tigers (unchanged)'));
+  s.appendChild(el('rect',{x:30,y:118,width:70,height:36,rx:8,fill:'var(--ok-soft)',stroke:'var(--ok)','stroke-width':2}));s.appendChild(el('text',{x:65,y:141,'text-anchor':'middle','font-size':13,fill:'var(--ink)'},'Giraffe'));
+  s.appendChild(el('path',{d:'M65,118 L65,100',stroke:'var(--muted)','stroke-width':1.5}));
+  s.appendChild(el('text',{x:300,y:70,'font-size':13,fill:'var(--ink)',class:'t-mono'},'IImStack<Animal> a = tigers;'));s.appendChild(el('text',{x:300,y:95,'font-size':13,fill:'var(--ink)',class:'t-mono'},'var b = a.Push(new Giraffe());'));
+  s.appendChild(el('text',{x:300,y:130,'font-size':13,fill:'var(--ok)','font-weight':700},'b is a new stack of Animal. Safe.'));
+  $('#cTxt').innerHTML='The tiger stack is never modified; the giraffe sits on a <b>new</b> stack whose tail is the tigers, typed as animals. Moving <code>Push</code> to an extension method removes T from input positions, so <code>IImStack&lt;out T&gt;</code> compiles, and as a bonus the duplicated Push body disappears.'}}
+seg('[data-c]',b=>cv(b.dataset.c));cv('list');
+
+/* two-stack queue */
+let F,B,nq,costs;function qReset(){F=[];B=[];nq=1;costs=[];qDraw('Empty queue: both stacks empty (a singleton).')}
+function qDraw(msg){$('#qF').innerHTML=F.length?F.slice().reverse().map((v,i)=>`<span class="cell${i===0?' hl':''}">${v}</span>`).join(''):'<span class="small">empty</span>';
+ $('#qB').innerHTML=B.length?B.slice().reverse().map((v,i)=>`<span class="cell${i===0?' pc':''}">${v}</span>`).join(''):'<span class="small">empty</span>';
+ $('#qView').textContent='queue (front → back): ['+F.slice().reverse().concat(B).join(', ')+']';
+ const mx=Math.max(4,...costs.map(c=>c.c));$('#qMeter').innerHTML=costs.slice(-60).map(c=>`<i class="${c.x?'x':''}" style="height:${c.c/mx*100}%" title="${c.c}"></i>`).join('');
+ const tot=costs.reduce((a,c)=>a+c.c,0);$('#qTxt').innerHTML=msg+(costs.length?` <b>${costs.length}</b> operations, total cost ${tot}, average <b>${(tot/costs.length).toFixed(2)}</b> per operation.`:'')}
+function enq(){const v=nq++;if(!F.length&&!B.length){F.push(v);costs.push({c:1});return `Enqueued ${v} into an empty queue: it goes on the front stack to keep the invariant.`}B.push(v);costs.push({c:1});return `Enqueued ${v}: one push onto the back stack.`}
+$('#qEn').addEventListener('click',()=>qDraw(enq()));$('#qEn5').addEventListener('click',()=>{let m;for(let i=0;i<5;i++)m=enq();qDraw('Enqueued five items onto the back stack.')});
+$('#qDe').addEventListener('click',()=>{if(!F.length){qDraw('<b class="badc">Dequeue on an empty queue throws.</b>');return}const v=F.pop();if(F.length){costs.push({c:1});qDraw(`Dequeued ${v}: one pop.`)}else if(!B.length){costs.push({c:1});qDraw(`Dequeued ${v}: back to the empty singleton.`)}else{const n=B.length;F=B.slice();B=[];costs.push({c:1+n,x:1});qDraw(`Dequeued ${v}; front stack ran dry, so the ${n}-item back stack was <b class="pencil">reversed</b> onto the front: cost ${1+n}.`)}});
+$('#qRe').addEventListener('click',qReset);qReset();
+
+cards('#undoCards',[
+ {t:'1. An army of clones',d:'Clone the whole queue before every change and keep clones on undo/redo stacks. Each clone is O(n), so memory grows as O(n²). Doesn\'t scale.',c:'bad'},
+ {t:'2. Command pattern',d:'Use a deque and record an inverse command for every action (EnqueueLeft is undone by DequeueLeft, and so on). Works, but every mutation needs a matching pair of commands. Complicated.',c:'mid'},
+ {t:'3. Mutable over immutable',d:'Keep the state as an immutable value and stash old values on undo/redo stacks. One generic helper class, a few lines per type.',c:'ok'}]);
+
+/* undo/redo */
+let uq,uU,uR,un;const qs=q=>'['+q.join(',')+']';
+function uReset(){uq=[];uU=[];uR=[];un=10;uDraw()}
+function uDraw(){$('#uC').innerHTML=uq.length?uq.map(v=>`<span class="cell">${v}</span>`).join(''):'<span class="small">empty</span>';
+ const L=a=>a.slice(-5).reverse().map((q,i)=>`<span class="mono small" style="opacity:${1-i*.15}">${qs(q)}</span>`).join('')||'<span class="small">empty</span>';$('#uU').innerHTML=L(uU);$('#uR').innerHTML=L(uR);
+ $('#uUndo').disabled=!uU.length;$('#uRedo').disabled=!uR.length}
+function act(f,msg){uU.push(uq);uR=[];uq=f(uq);uDraw();$('#uTxt').textContent=msg+' Old value pushed on undo; redo cleared.'}
+$('#uEn').addEventListener('click',()=>{const v=un;un+=10;act(q=>q.concat([v]),`Enqueued ${v}.`)});
+$('#uDe').addEventListener('click',()=>{if(!uq.length){$('#uTxt').textContent='Nothing to dequeue.';return}act(q=>q.slice(1),`Dequeued ${uq[0]}.`)});
+$('#uUndo').addEventListener('click',()=>{uR.push(uq);uq=uU.pop();uDraw();$('#uTxt').textContent='Undo: current value moved to redo, previous value restored. O(1).'});
+$('#uRedo').addEventListener('click',()=>{uU.push(uq);uq=uR.pop();uDraw();$('#uTxt').textContent='Redo: O(1), even if the original operation was an expensive reversal.'});
+$('#uRe').addEventListener('click',uReset);uReset();
+
+/* Hughes list as closure tree */
+let ht,hn;function hReset(){ht={k:'empty'};hn=1;hDraw('Empty = the identity function s ⇒ s.')}
+const single=v=>({k:'single',v}),cat=(a,b)=>a.k==='empty'?b:b.k==='empty'?a:{k:'cat',a,b};
+function size(t){return t.k==='empty'?0:t.k==='single'?1:size(t.a)+size(t.b)}
+function nodes(t){return t.k==='cat'?1+nodes(t.a)+nodes(t.b):1}
+function hDraw(msg){const s=$('#hSvg');s.innerHTML='';let leaf=0;const lay=[];
+ function L(t,d){if(t.k!=='cat'){const p={x:leaf++,d,t};lay.push(p);return p}const a=L(t.a,d+1),b=L(t.b,d+1);const p={x:(a.x+b.x)/2,d,t,a,b};lay.push(p);return p}
+ const root=L(ht,0);const W=Math.max(leaf,1),D=Math.max(...lay.map(p=>p.d))+1;const sx=x=>W===1?320:40+x*(560/(W-1)),sy=d=>30+d*Math.min(60,200/Math.max(D-1,1));
+ lay.forEach(p=>{if(p.a){[p.a,p.b].forEach(c=>s.appendChild(el('line',{x1:sx(p.x),y1:sy(p.d),x2:sx(c.x),y2:sy(c.d),stroke:'var(--muted)','stroke-width':1.4})))}});
+ lay.forEach(p=>{const t=p.t;const lab=t.k==='cat'?'a(b(s))':t.k==='single'?'push '+t.v:'s⇒s';const w=t.k==='cat'?58:48;
+  s.appendChild(el('rect',{x:sx(p.x)-w/2,y:sy(p.d)-13,width:w,height:26,rx:t.k==='single'?13:5,fill:t.k==='cat'?'var(--blue-soft)':'var(--surface)',stroke:t.k==='cat'?'var(--blue)':'var(--ok)','stroke-width':1.6,'data-id':'n'}));
+  s.appendChild(el('text',{x:sx(p.x),y:sy(p.d)+4,'text-anchor':'middle','font-size':11,fill:'var(--ink)',class:'t-mono'},lab))});
+ s.setAttribute('viewBox',`0 0 640 ${Math.max(80,sy(D-1)+30)}`);
+ $('#hTxt').innerHTML=`${msg} Represents ${size(ht)} item${size(ht)===1?'':'s'} using ${nodes(ht)} closure${nodes(ht)===1?'':'s'}. Every build step above cost O(1).`;$('#hOut').textContent=''}
+$('#hPush').addEventListener('click',()=>{if(size(ht)>=24)return;const v=hn++;ht=cat(single(v),ht);hDraw(`Push ${v}: Concat(Single(${v}), list).`)});
+$('#hApp').addEventListener('click',()=>{if(size(ht)>=24)return;const v=hn++;ht=cat(ht,single(v));hDraw(`Append ${v} to the far end: Concat(list, Single(${v})). Still O(1)!`)});
+$('#hDup').addEventListener('click',()=>{if(size(ht)*2>24){hDraw('That would be a big picture; reset first.');return}ht=cat(ht,ht);hDraw('Concatenate with itself: one new closure pointing at the same subtree twice.')});
+$('#hRun').addEventListener('click',async()=>{const out=[];let steps=0;function run(t,stk){steps++;if(t.k==='empty')return stk;if(t.k==='single')return [t.v].concat(stk);return run(t.a,run(t.b,stk))}
+ const r=run(ht,[]);$('#hOut').textContent='['+r.join(', ')+']';$('#hTxt').innerHTML=`ToStack passed the empty stack to the root; ${steps} delegate calls ran, right subtree first, pushing items from the bottom up. That is the O(n) bill for all the cheap building.`});
+$('#hRe').addEventListener('click',hReset);hReset();
+cards('#hCards',[
+ {t:'Why not a cheap Pop too?',d:'A deferred Pop would make ToStack cost the total number of pushes and pops, not the result size, and IsEmpty could no longer be a reference check.',c:'d3'},
+ {t:'When to use it',d:'Building a big list from many pieces, appending at both ends and concatenating, before reading it once at the end.',c:'ok'},
+ {t:'Reverse in O(1)?',d:'Swap Concatenate for ReverseOnto in the factory and you get a Hughes list of the reversed stack instantly. The work is merely postponed; there is no free lunch.',c:'d4'}]);
+
+quiz('#quizBox','#score',[
+ {q:'In the two-stack queue, when is the back stack reversed?',o:['Every enqueue','When the front stack empties','Never'],a:1,why:'Only then; each item is reversed at most once, giving amortized O(1).'},
+ {q:'Why can IList<T> not be covariant?',o:['T is a value type','T appears as an input (Add)','Lists are sealed'],a:1,why:'Writing through an Animal-typed reference could put a Giraffe among Tigers.'},
+ {q:'In a mutable-over-immutable undo design, what does the undo stack hold?',o:['Inverse commands','Whole immutable values','Diffs'],a:1,why:'Old values are kept as-is; persistence makes that cheap.'},
+ {q:'Which Hughes list operation is O(n)?',o:['Push','Append','Peek'],a:2,why:'Peek must call ToStack, which runs every deferred concatenation.'},
+ {q:'What does the empty Hughes list contain?',o:['A null','The identity function','An empty array'],a:1,why:'Concatenating nothing onto s gives s.'}]);
+
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,549 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Scoped Values</title>
+<meta name="description" content="ThreadLocal variables carry context such as the current user without passing parameters, but they are mutable, leak easily and get copied into every child thread. Scoped values keep the convenience and drop the problems.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Virtual Threads companion. Blue ink = threads and structure, orange pencil = data and context, green = good outcome, red = bad outcome, amber = "changed since the book".
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code listings */
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;tab-size:4;max-width:100%}
+pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)} pre.code .c{color:var(--muted);font-style:italic} pre.code .a{color:var(--pencil)}
+pre.code .hl{background:var(--mid-soft);display:inline-block;min-width:100%;border-radius:3px}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+/* "changed since the book" note */
+.callout.now{border-color:var(--mid);background:var(--mid-soft)}
+.callout.now b.h::before{content:"JDK update · ";font-family:var(--mono);font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mid)}
+.callout.bad{border-color:var(--bad);background:var(--bad-soft)}
+.tabs{display:flex;flex-direction:column;gap:10px}
+.cons{font-family:var(--mono);font-size:.8rem;background:var(--ink);color:var(--paper);border-radius:8px;padding:10px 12px;min-height:3em;white-space:pre-wrap;overflow-wrap:anywhere}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:.85rem;color:var(--muted)}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.stats4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+@media (max-width:640px){.stats4{grid-template-columns:1fr 1fr}}
+.stat .big{font-size:clamp(1.5rem,5vw,2.1rem)}
+
+/* page */
+
+.chain{display:flex;flex-direction:column;gap:6px}
+.chain .m{font-family:var(--mono);font-size:.82rem;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);overflow-wrap:anywhere;transition:border-color .3s,background .3s}
+.chain .m .p{color:var(--pencil);font-weight:600}
+.chain .m.reads{border-color:var(--pencil);background:var(--pencil-soft)}
+.chain .ar{font-family:var(--mono);font-size:.75rem;color:var(--muted);padding-left:14px}
+.thr{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+@media (max-width:560px){.thr{grid-template-columns:1fr}}
+.thr .tc{border:1.5px solid var(--line);border-radius:10px;padding:10px;background:var(--surface);display:flex;flex-direction:column;gap:6px;min-width:0}
+.thr .tc h4{margin:0;font-family:var(--mono);font-size:.8rem}
+.thr .map{font-family:var(--mono);font-size:.75rem;background:var(--paper);border:1px dashed var(--line);border-radius:6px;padding:6px;min-height:2.6em;overflow-wrap:anywhere}
+.thr .tc.flash{border-color:var(--pencil)}
+.who{display:flex;flex-wrap:wrap;gap:6px}
+.frames{display:flex;flex-direction:column-reverse;gap:5px;min-height:220px;justify-content:flex-start}
+.fr{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;border:1px solid var(--line);border-radius:7px;padding:7px 10px;background:var(--surface);font-family:var(--mono);font-size:.8rem;transition:all .3s}
+.fr .bd{font-size:.75rem;padding:2px 8px;border-radius:999px;white-space:nowrap}
+.fr .bd.on{background:var(--pencil-soft);color:var(--pencil);border:1px solid var(--pencil)}
+.fr .bd.none{background:var(--paper);color:var(--muted);border:1px solid var(--line)}
+.fr.cur{border-color:var(--blue);box-shadow:0 0 0 2px var(--blue-soft)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Java Loom · visual companion</a><span class="tag">Chapter 3 of 4</span></div>
+  <h1>Scoped Values</h1>
+  <p class="lede">ThreadLocal variables carry context such as the current user without passing parameters, but they are mutable, leak easily and get copied into every child thread. Scoped values keep the convenience and drop the problems.</p>
+  <nav class="toc" aria-label="Sections"><a href="#tl">ThreadLocal recap</a><a href="#inside">How it works</a><a href="#cons">Three problems</a><a href="#sv">Scoped values</a><a href="#unbound">Unbound values</a><a href="#solves">What it fixes</a><a href="#check">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="tl" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>ThreadLocal: a hidden parameter</h2></div>
+  <p>A <code>ThreadLocal</code> holds one value per thread. Two threads reading the same variable each see their own copy, and neither can see the other's. In effect it is a hidden parameter that every method on the thread can read without anyone passing it.</p>
+  <p>The classic use is request context. A web request arrives, a thread picks it up, and somewhere deep in the call chain an audit log needs the user id. Threading it through every method signature is noisy, and adding a second value later (say, an audit comment) means editing every signature again. Try it.</p>
+  <div class="sheet">
+    <div class="row">
+      <div class="seg" role="group" aria-label="Approach" id="hpMode"><button data-m="p" aria-pressed="true">Pass as parameters</button><button data-m="t" aria-pressed="false">Use a ThreadLocal</button></div>
+      <button class="btn" id="hpAdd">Add another piece of context</button>
+    </div>
+    <div class="chain" id="hpChain"></div>
+    <p class="small" id="hpTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="inside" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Where the per-thread value really lives</h2></div>
+  <p>The value is not stored in the <code>ThreadLocal</code>. Every <code>Thread</code> object has a field holding a <code>ThreadLocalMap</code>, a purpose-built hash map keyed by the <code>ThreadLocal</code> instance. Oddly, the map is managed by <code>ThreadLocal</code>'s code, not by <code>Thread</code>: <code>set()</code> looks up the current thread's map, creates it if missing, and stores the entry. If you override <code>initialValue()</code>, the first <code>get()</code> on each thread fills it in. Below, a counter hands out 101, 102, 103 to each new thread.</p>
+  <div class="sheet">
+    <div class="thr" id="thr"></div>
+    <div class="row"><button class="btn" id="thNew">Start another thread</button><span class="small">Shared counter: <b class="mono" id="thCnt">100</b></span></div>
+  </div>
+  <div class="cardgrid" id="proCards"></div>
+</section>
+
+<section id="cons" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Three problems, made worse by virtual threads</h2></div>
+  <p>Thread locals have real drawbacks, and virtual threads amplify them, because you might now have a million threads instead of two hundred.</p>
+  <div class="tabs sheet">
+    <div class="seg" role="group" aria-label="Problem"><button data-t="mut" aria-pressed="true">1 · Mutable</button><button data-t="leak" aria-pressed="false">2 · Leaks</button><button data-t="copy" aria-pressed="false">3 · Copied everywhere</button></div>
+    <div data-p="mut" class="stack">
+      <p>Any code that can see the variable can call <code>set()</code>, and these variables are usually <code>public static</code>, so that is everywhere. It is global mutable state with extra steps. Click methods to let them "helpfully" overwrite the API key, then ask: which one set the value the database call used?</p>
+      <div class="who" id="mutBtns"></div>
+      <div class="cons" id="mutOut"></div>
+    </div>
+    <div data-p="leak" class="stack" hidden>
+      <p>Pooled threads live a long time. A value that isn't removed stays reachable from the thread for as long as the thread lives, even though the map uses weak keys, and the next task on that thread can read it (chapter 1 has an animation). The fix is a disciplined <code>finally</code> with <code>remove()</code>, or an <code>afterExecute</code> hook on <code>ThreadPoolExecutor</code>. Studies of large codebases show people forget.</p>
+      <pre class="code">API_KEY.set(key);
+try {
+    callService();
+} finally {
+!!    API_KEY.remove();    // easy to forget; nothing forces you
+}</pre>
+    </div>
+    <div data-p="copy" class="stack" hidden>
+      <p>With <code>InheritableThreadLocal</code>, each child thread gets its own copy of the parent's inheritable entries when it is created, because a mutable value may change later and the child must not see that. That is fine for a few hundred platform threads and costly for a million virtual threads. Scoped values are immutable, so children can share one reference.</p>
+      <label class="rng"><span>Child threads: <b id="cpN"></b></span><input type="range" id="cpSl" min="0" max="6" step=".01" value="4"></label>
+      <label class="rng"><span>Context entries per thread: <b id="cpE"></b></span><input type="range" id="cpEs" min="1" max="20" value="5"></label>
+      <div class="bars" id="cpBars"></div>
+      <p class="small">Toy model: about 64 bytes of map overhead plus 48 bytes per copied entry for each child, against one shared snapshot for scoped values. The shape matters, not the exact bytes.</p>
+    </div>
+  </div>
+</section>
+
+<section id="sv" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Scoped values: bind, run, unbind</h2></div>
+  <p>A <code>ScopedValue</code> is declared once, with no value. You <b>bind</b> a value for the duration of one call with <code>ScopedValue.where(KEY, value).run(...)</code> (or <code>.call(...)</code> to return a result). Everything that call reaches, directly or indirectly, can read it with <code>get()</code>. When the call returns, normally or by throwing, the binding is gone. There is no <code>set()</code>.</p>
+  <pre class="code">static final ScopedValue&lt;String&gt; USER = ScopedValue.newInstance();
+
+void handle(Request r) {
+!!    ScopedValue.where(USER, r.user()).run(this::process);
+}
+void process() { audit(); }
+void audit()   { log("changed by " + USER.get()); }   // no parameter needed</pre>
+  <p>Step through the book's binding example, including a <b>rebinding</b>: a method that already sees a value can bind a different one for the code it calls, and the outer value comes back afterwards. Scopes nest like blocks.</p>
+  <div class="sheet stepper" id="bStep">
+    <div class="two">
+      <div class="frames" id="bFrames" aria-label="Call stack, newest on top"></div>
+      <div class="cons" id="bOut" aria-live="polite"></div>
+    </div>
+    <div id="bCtl"></div>
+  </div>
+  <p>Several values bind by chaining: <code>ScopedValue.where(USER, u).where(TENANT, t).run(task)</code>. Keep the number small; a long chain is the same smell as a long parameter list.</p>
+</section>
+
+<section id="unbound" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>When nothing is bound</h2></div>
+  <p>Calling <code>get()</code> outside any binding throws <code>NoSuchElementException</code>. Code that may run without a binding should check. Choose a situation and an accessor.</p>
+  <div class="sheet">
+    <div class="row">
+      <div class="seg" role="group" aria-label="Binding" id="ubB"><button data-b="1" aria-pressed="true">USER bound to "Duke"</button><button data-b="0" aria-pressed="false">Nothing bound</button></div>
+    </div>
+    <div class="seg" role="group" aria-label="Accessor" id="ubA"><button data-a="0" aria-pressed="true">get()</button><button data-a="1" aria-pressed="false">isBound() ? get() : ...</button><button data-a="2" aria-pressed="false">orElse("guest")</button><button data-a="3" aria-pressed="false">orElseThrow(...)</button></div>
+    <pre class="code" id="ubCode"></pre>
+    <div class="cons" id="ubOut"></div>
+  </div>
+</section>
+
+<section id="solves" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>How the three problems go away</h2></div>
+  <div class="tbl"><table class="t">
+    <thead><tr><th>Problem</th><th>ThreadLocal</th><th>ScopedValue</th></tr></thead>
+    <tbody>
+      <tr><td><b>Mutable state</b></td><td>Anyone can <code>set()</code> at any time.</td><td class="okc">Immutable once bound. Code can only rebind for its own callees, and the outer value returns afterwards.</td></tr>
+      <tr><td><b>Leaks</b></td><td>Lives until <code>remove()</code> or the thread dies.</td><td class="okc">Unbound automatically when the call ends, even on an exception.</td></tr>
+      <tr><td><b>Copying</b></td><td>Inheritable entries copied into every child.</td><td class="okc">Immutable, so shared by reference with structured subtasks.</td></tr>
+      <tr><td><b>Lifetime visible in code?</b></td><td>No: set here, read anywhere, maybe never cleared.</td><td class="okc">Yes: the binding is exactly the extent of the <code>run</code> or <code>call</code>.</td></tr>
+    </tbody></table></div>
+  <div class="sheet">
+    <h3>Bindings flow into structured subtasks</h3>
+    <div class="svgbox fit"><svg id="inhSvg" viewBox="0 0 460 200" style="max-width:600px;margin:0 auto" role="img" aria-label="A scoped value bound in the owner thread is visible in every subtask forked inside a StructuredTaskScope"></svg></div>
+    <pre class="code">ScopedValue.where(USER, "Duke").run(() -> {
+    try (var scope = StructuredTaskScope.open()) {
+        scope.fork(() -> audit());     // sees USER = "Duke"
+        scope.fork(() -> notify());    // sees USER = "Duke"
+        scope.join();
+    }
+});</pre>
+    <p class="small">Subtasks forked in a scope inherit the owner's bindings without copying. This is safe because the scope guarantees the subtasks end before the binding does.</p>
+  </div>
+  <div class="callout now"><b class="h">Final in JDK 25, with a slimmer API</b><span>The book expected scoped values to be final in Java 23; it took until JDK 25 (JEP 506). Along the way the shortcut methods the book shows, <code>ScopedValue.runWhere(...)</code> and <code>callWhere(...)</code>, were removed in JDK 24: write <code>ScopedValue.where(K, v).run(...)</code> or <code>.call(...)</code>. <code>call</code> now takes a <code>ScopedValue.CallableOp</code>, which lets the lambda throw a specific checked exception, and <code>orElse(null)</code> is no longer allowed. No <code>--enable-preview</code> is needed from JDK 25 on. Thread locals are not going away; scoped values are the better default for new code that shares immutable context one way.</span></div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="quiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b>ThreadLocal = hidden parameter</b><span>Per-thread values stored in each thread's ThreadLocalMap.</span></div>
+    <div><b>Useful for context</b><span>Users, transactions, locale, per-thread copies of non-thread-safe objects.</span></div>
+    <div><b class="badc">But mutable, leaky, copied</b><span>Anyone can set, values outlive tasks on pooled threads, children copy entries.</span></div>
+    <div><b class="pencil">ScopedValue binds for one call</b><span>where(K, v).run(...) or .call(...); readable by everything the call reaches.</span></div>
+    <div><b>Rebind to nest</b><span>An inner where() shadows the value for its callees; the outer one returns afterwards.</span></div>
+    <div><b>Check unbound reads</b><span>isBound(), orElse() or orElseThrow() instead of a bare get().</span></div>
+    <div><b class="okc">Final in JDK 25</b><span>Inherited by structured subtasks without copying.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Virtual Threads, Structured Concurrency, and Scoped Values: Explore Java's New Threading Model</i> by Ron Veen and David Vlijmincx (Apress Pocket Guides, 2024). Explanations, code snippets, simulations and drawings are original; nothing is copied from the book. Notes marked "JDK update" describe changes in JDK 22 to 26 that came after the book was written.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch02-structured-concurrency.html"><span>Previous · Chapter 2</span><b>Structured Concurrency</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch04-concurrency-patterns.html"><span>Next · Chapter 4</span><b>Concurrency Patterns</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('vtsc:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('vtsc:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* tiny Java highlighter for <pre class="code"> blocks; a line starting with "!!" is highlighted */
+const KW='abstract|boolean|break|case|catch|class|default|do|else|extends|final|finally|for|if|implements|import|instanceof|int|interface|long|new|null|package|permits|private|protected|public|record|return|sealed|static|super|synchronized|this|throw|throws|true|false|try|var|void|while';
+function hl(){$$('pre.code').forEach(p=>{if(p.dataset.done)return;p.dataset.done=1;
+  const src=p.textContent.replace(/^\n/,'').replace(/\s+$/,'');
+  const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const re=new RegExp('(\\/\\/.*$)|("(?:[^"\\\\]|\\\\.)*")|(@\\w+)|\\b('+KW+')\\b','gm');
+  p.innerHTML=src.split('\n').map(line=>{let mark=false;if(line.startsWith('!!')){mark=true;line=line.slice(2)}
+    let out='',last=0;line.replace(re,(m,c,s,a,k,i)=>{out+=esc(line.slice(last,i));out+=c?`<span class="c">${esc(c)}</span>`:s?`<span class="s">${esc(s)}</span>`:a?`<span class="a">${esc(a)}</span>`:`<span class="k">${k}</span>`;last=i+m.length;return m});
+    out+=esc(line.slice(last));return mark?`<span class="hl">${out||' '}</span>`:out}).join('\n')})}
+/* code tabs: container .tabs with a .seg of buttons[data-t] and panels [data-p] */
+function tabs(sel){$$(sel).forEach(t=>{const bs=t.querySelectorAll(':scope > .seg button');bs.forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);t.querySelectorAll(':scope > [data-p]').forEach(p=>p.hidden=p.dataset.p!==b.dataset.t)}));if(bs[0]){press(bs[0].parentNode,bs[0]);t.querySelectorAll(':scope > [data-p]').forEach(p=>p.hidden=p.dataset.p!==bs[0].dataset.t)}})}
+const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+document.addEventListener('DOMContentLoaded',()=>{hl();tabs('.tabs')});
+
+
+/* 1. hidden parameter */
+let hpExtra=0,hpM='p';const ctxNames=['String comment','Locale locale','String traceId','Tenant tenant'];
+function hp(){const meths=['controller.update','service.apply','rules.check','repo.save','audit.record'];
+  const params=['String userId'].concat(ctxNames.slice(0,hpExtra));
+  $('#hpChain').innerHTML=meths.map((m,i)=>{const own=i===0?'Request req':'Order o';
+    const sig=hpM==='p'?`${m}(${own}, <span class="p">${params.join(', ')}</span>)`:`${m}(${own})`;
+    const reads=hpM==='t'&&i===4;return (i?'<div class="ar">calls</div>':'')+`<div class="m${reads?' reads':''}">${sig}${reads?' <span class="p">// CONTEXT.get()</span>':''}</div>`}).join('');
+  $('#hpTxt').textContent=hpM==='p'?`${params.length} context parameter${params.length>1?'s':''} threaded through ${meths.length} signatures. Only the last method actually uses them.`:'Signatures stay clean: the controller sets the ThreadLocal once, and the audit method reads it. The cost is that the dependency is now invisible.';
+  $('#hpAdd').disabled=hpExtra>=ctxNames.length}
+seg('#hpMode button',b=>{hpM=b.dataset.m;hp()});$('#hpAdd').addEventListener('click',()=>{hpExtra++;hp()});hp();
+
+/* 2. internals */
+let cnt=100,thN=0;const thrs=[];
+function addThr(){if(thrs.length>=6)return;thrs.push({n:thN++,v:null});drawThr()}
+function drawThr(){$('#thr').innerHTML=thrs.map((t,i)=>`<div class="tc" id="tc${i}"><h4>Thread ${t.n}</h4><div class="map">threadLocals: ${t.v==null?'{ }':`{ COUNTER → ${t.v} }`}</div><button class="btn" data-i="${i}">COUNTER.get()</button></div>`).join('');
+  $('#thCnt').textContent=cnt;$('#thNew').disabled=thrs.length>=6;
+  $$('#thr .tc button').forEach(b=>b.addEventListener('click',()=>{const t=thrs[+b.dataset.i];if(t.v==null){t.v=++cnt}drawThr();const c=$('#tc'+b.dataset.i);c.classList.add('flash')}))}
+$('#thNew').addEventListener('click',addThr);addThr();addThr();addThr();
+cards('#proCards',[
+ {t:'Thread safety without locks',d:'Each thread works on its own value, so there is nothing shared to synchronize.',c:'ok'},
+ {t:'Contextual information',d:'User sessions, credentials, transactions and connections, available anywhere on the thread without parameters.',c:'pencil'},
+ {t:'Per-thread configuration',d:'A locale or log level per user, or a private instance of something not thread-safe, such as SimpleDateFormat.',c:'blue'}]);
+
+/* 3a. mutable */
+const who=['loginFilter','tenantResolver','retryHelper','legacyUtil','testFixture'];
+const muts=[];
+$('#mutBtns').innerHTML=who.map(w=>`<button class="btn" data-w="${w}">${w}.set()</button>`).join('')+'<button class="btn primary" id="mutCall">db.call()</button><button class="btn" id="mutClr">reset</button>';
+function mutShow(){$('#mutOut').textContent=muts.length?muts.map(m=>`API_KEY.set("${m}-key")   // in ${m}`).join('\n'):'API_KEY is empty.'}
+$$('#mutBtns [data-w]').forEach(b=>b.addEventListener('click',()=>{muts.push(b.dataset.w);mutShow()}));
+$('#mutCall').addEventListener('click',()=>{mutShow();$('#mutOut').textContent+=`\n\ndb.call() used: ${muts.length?'"'+muts[muts.length-1]+'-key"':'nothing (null)'}\nWho set it? You need a debugger and luck: ${muts.length} writer${muts.length===1?'':'s'}, no trace of the order.`});
+$('#mutClr').addEventListener('click',()=>{muts.length=0;mutShow()});mutShow();
+
+/* 3c. copying */
+function fmtB(b){const u=['B','KB','MB','GB'];let i=0;while(b>=1024&&i<3){b/=1024;i++}return (b<10?b.toFixed(1):Math.round(b))+' '+u[i]}
+function cp(){const n=Math.round(Math.pow(10,+$('#cpSl').value)),e=+$('#cpEs').value;$('#cpN').textContent=n.toLocaleString('en-US');$('#cpE').textContent=e;
+  const tl=n*(64+48*e),sv=64+32*e;const max=Math.max(tl,1);
+  bars('#cpBars',[{l:'InheritableThreadLocal',v:tl,c:'bad',txt:fmtB(tl)},{l:'ScopedValue',v:Math.max(sv,max*.004),c:'ok',txt:fmtB(sv)}],max)}
+$('#cpSl').addEventListener('input',cp);$('#cpEs').addEventListener('input',cp);cp();
+
+/* 4. binding stepper */
+$('#bCtl').innerHTML=stepHTML();
+const BS=[
+ {f:[['main()',null],['execute()',null]],o:'Before: USER bound=false'},
+ {f:[['main()',null],['execute()',null],['where(USER,"Duke").run',  'Duke']],o:'Before: USER bound=false\n// binding created for this run() only'},
+ {f:[['main()',null],['execute()',null],['where(USER,"Duke").run','Duke'],['runnable.run()','Duke']],o:'Before: USER bound=false\nInside runnable: USER bound=true => Duke'},
+ {f:[['main()',null],['execute()',null],['where(USER,"Duke").run','Duke'],['runnable.run()','Duke'],['where(USER,"Duchess").run','Duchess']],o:'Before: USER bound=false\nInside runnable: USER bound=true => Duke\n// rebinding for the inner call only'},
+ {f:[['main()',null],['execute()',null],['where(USER,"Duke").run','Duke'],['runnable.run()','Duke'],['where(USER,"Duchess").run','Duchess'],['otherMethod()','Duchess']],o:'Before: USER bound=false\nInside runnable: USER bound=true => Duke\nInside otherMethod: USER bound=true => Duchess'},
+ {f:[['main()',null],['execute()',null],['where(USER,"Duke").run','Duke'],['runnable.run()','Duke']],o:'Before: USER bound=false\nInside runnable: USER bound=true => Duke\nInside otherMethod: USER bound=true => Duchess\n// back in runnable: USER.get() is "Duke" again'},
+ {f:[['main()',null],['execute()',null]],o:'Before: USER bound=false\nInside runnable: USER bound=true => Duke\nInside otherMethod: USER bound=true => Duchess\nAfter: USER bound=false'}];
+function bDraw(i){const s=BS[i];$('#bFrames').innerHTML=s.f.map((f,k)=>`<div class="fr${k===s.f.length-1?' cur':''}"><span>${f[0]}</span><span class="bd ${f[1]?'on':'none'}">${f[1]?'USER = '+f[1]:'unbound'}</span></div>`).join('');$('#bOut').textContent=s.o}
+stepper('#bStep',['execute() checks USER before binding anything: not bound.',
+ 'ScopedValue.where(USER, "Duke").run(runnable) creates a binding that exists only while run() is on the stack.',
+ 'Inside the runnable, USER is bound and get() returns Duke.',
+ 'The runnable rebinds USER to Duchess, but only for the call it is about to make.',
+ 'otherMethod() sees the innermost binding: Duchess.',
+ 'otherMethod() returns, the inner binding disappears and Duke is visible again. Nothing had to be restored by hand.',
+ 'run() returns and the outer binding is gone too. Back in execute(), USER is unbound, even if an exception had been thrown.'],bDraw);
+
+/* 5. unbound */
+let ubB='1',ubA=0;
+const ubC=['String u = USER.get();','String u = USER.isBound() ? USER.get() : "guest";','String u = USER.orElse("guest");','String u = USER.orElseThrow(() -> new NotLoggedInException());'];
+function ub(){const p=$('#ubCode');p.textContent=ubC[ubA];delete p.dataset.done;hl();const b=ubB==='1';const o=$('#ubOut');
+  if(b)o.textContent='u = "Duke"';
+  else o.textContent=['java.util.NoSuchElementException: ScopedValue not bound','u = "guest"   // the check took the fallback','u = "guest"','NotLoggedInException   // your own business exception instead of NoSuchElementException'][ubA]}
+seg('#ubB button',b=>{ubB=b.dataset.b;ub()});seg('#ubA button',b=>{ubA=+b.dataset.a;ub()});ub();
+
+/* inheritance svg */
+(function(){const s=$('#inhSvg');
+ s.appendChild(el('rect',{x:10,y:10,width:440,height:180,rx:12,class:'s-pencilsoft st-pencil','stroke-width':1.5}));
+ s.appendChild(el('text',{x:22,y:30,'font-size':11.5,class:'s-ink t-mono'},'where(USER, "Duke").run(...)'));
+ s.appendChild(el('rect',{x:40,y:44,width:380,height:136,rx:10,class:'s-surface st-blue','stroke-width':1.5,'stroke-dasharray':'5 4'}));
+ s.appendChild(el('text',{x:52,y:62,'font-size':11,class:'s-muted t-mono'},'StructuredTaskScope'));
+ s.appendChild(el('rect',{x:175,y:70,width:110,height:30,rx:7,class:'s-bluesoft st-blue'}));
+ s.appendChild(el('text',{x:230,y:90,'text-anchor':'middle','font-size':12,class:'s-ink'},'owner'));
+ [['audit()',80],['notify()',180],['bill()',280]].forEach(([n,x])=>{s.appendChild(el('line',{x1:230,y1:100,x2:x+50,y2:130,class:'st-line','stroke-width':1.5}));
+   s.appendChild(el('rect',{x:x,y:130,width:100,height:36,rx:7,class:'s-surface st-blue'}));
+   s.appendChild(el('text',{x:x+50,y:146,'text-anchor':'middle','font-size':11.5,class:'s-ink'},n));
+   s.appendChild(el('text',{x:x+50,y:160,'text-anchor':'middle','font-size':10,fill:'var(--pencil)',class:'t-mono'},'USER = Duke'))})})();
+
+quiz('#quiz','#qScore',[
+ {q:'Where is a thread-local value physically stored?',o:['In the ThreadLocal object','In the thread\'s ThreadLocalMap','In a global static map'],a:1,why:'Each Thread has a threadLocals map keyed by the ThreadLocal instance.'},
+ {q:'How do you change a scoped value for code you call?',o:['USER.set(v)','Rebind with where(USER, v).run(...)','You can\'t'],a:1,why:'There is no set(). A nested binding shadows the outer value for its callees only.'},
+ {q:'A method calls USER.get() with nothing bound. What happens?',o:['Returns null','Throws NoSuchElementException','Returns ""'],a:1,why:'Use isBound(), orElse() or orElseThrow() where a binding may be missing.'},
+ {q:'Why can scoped values be shared with child threads without copying?',o:['They are immutable','They are weak references','They live off-heap'],a:0,why:'An immutable value can be passed by reference safely.'},
+ {q:'On JDK 25, what replaced ScopedValue.runWhere(K, v, task)?',o:['ScopedValue.where(K, v).run(task)','K.set(v); task.run()','ScopedValue.bind(K, v, task)'],a:0,why:'runWhere and callWhere were removed in JDK 24 in favour of the where(...) carrier.'}]);
+
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cloud-Native Storage: Data Placement</title>
+<meta name="description" content="Stateless applications push their state into databases, so the databases have to be as scalable and reliable as the cloud itself. The first half of the chapter covers how data is hosted and owned.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Cloud Application Architecture Patterns companion. Blueprint grid paper; blue ink = structure, orange pencil = people and process, green = good, red = bad. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:540px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:minmax(0,1fr)}}
+.two>*,.three>*{min-width:0}
+.stat b{overflow-wrap:anywhere}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+.themebtn{cursor:pointer}
+
+/* page */
+
+.nd{cursor:pointer}
+.nd rect{transition:fill .3s,stroke .3s}
+.scores{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.scores .stat b{font-family:var(--mono)}
+@media (max-width:520px){.scores{grid-template-columns:minmax(0,1fr)}}
+.who{display:grid;grid-template-columns:minmax(0,1fr) 110px 110px;gap:0;border-top:1px solid var(--line);font-size:.92rem}
+.who>div{padding:7px 8px;border-bottom:1px solid var(--line)}
+.who .h{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.who .you{background:var(--pencil-soft)} .who .svc{background:var(--blue-soft)}
+@media (max-width:520px){.who{grid-template-columns:minmax(0,1fr) 80px 80px;font-size:.85rem}}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Cloud Application Architecture Patterns · visual companion</a><span class="tag">Chapter 7a of 10</span></div>
+  <h1>Cloud-Native Storage: Data Placement</h1>
+  <p class="lede">Stateless applications push their state into databases, so the databases have to be as scalable and reliable as the cloud itself. The first half of the chapter covers how data is hosted and owned.</p>
+  <nav class="toc" aria-label="Sections"><a href="#where">Where state goes</a><a href="#topology">Topologies</a><a href="#cap">CAP</a><a href="#clouddb">Cloud Database</a><a href="#replicated">Replicated Database</a><a href="#config">Configuration Database</a><a href="#appdb">Application Database</a><a href="#dbaas">Database-as-a-Service</a><a href="#check">Quick check</a></nav>
+</header>
+
+<section id="where" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>If the app is stateless, where does the state go?</h2></div>
+  <p>Chapter 3 asked applications to be stateless and replicable. Most applications still have state, so it moves to databases, and those databases now have to be as available, scalable and quick to provision as the applications themselves. The chapter asks three questions: how to represent the data when each microservice manages its own; how the database helps meet availability, redundancy and consistency goals for a replicated app; and how to host and manage all those databases. This page covers hosting and quality of service; the <a href="ch07b-database-types.html">next page</a> covers choosing database types.</p>
+  <div class="callout blue"><b class="h">Patterns on this page</b><span><b>Cloud Database</b> (root), <b>Replicated Database</b>, <b>Configuration Database</b>, <b>Application Database</b> and <b>Database-as-a-Service</b>.</span></div>
+</section>
+
+<section id="topology" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>How database topologies evolved</h2></div>
+  <p>To see why cloud databases look the way they do, the authors walk through five topologies. Each fixes a weakness of the one before. Pick one, then click a server to fail it.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Topology"><button data-t="0" aria-pressed="true">Single server</button><button data-t="1" aria-pressed="false">Leader–follower</button><button data-t="2" aria-pressed="false">+ read replicas</button><button data-t="3" aria-pressed="false">Shared storage</button><button data-t="4" aria-pressed="false">Partitioned + replicated</button></div>
+    <div class="svgbox"><svg id="topoSvg" viewBox="0 0 680 250" role="img" aria-label="Database servers and storage"></svg></div>
+    <div class="scores" id="topoScore"></div>
+    <p id="topoTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="cap" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>CAP: what gives when the network splits</h2></div>
+  <p>Once data is copied across machines, the <b>CAP theorem</b> applies: when a network partition separates the copies, a database must choose between staying <b>consistent</b> (refuse some requests) and staying <b>available</b> (answer, possibly with stale data). The book groups databases as <b>CA</b> (classic relational, synchronous replication), <b>AP</b> (CouchDB, Cassandra, ScyllaDB: eventual or tunable consistency) and <b>CP</b> (MongoDB, Redis: consistent, may refuse during a split). Most products let you tune this, so choose the database <i>type</i> by data shape first, then its topology and settings. Cut the network and try it.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Choice"><button data-c="cp" aria-pressed="true">Favour consistency (CP)</button><button data-c="ap" aria-pressed="false">Favour availability (AP)</button></div>
+    <div class="svgbox"><svg id="capSvg" viewBox="0 0 680 200" role="img" aria-label="Two database nodes and a network partition"></svg></div>
+    <div class="row"><button class="btn" id="cut">Cut the network</button><button class="btn" id="wr">Write balance = 80 on node 1</button><button class="btn" id="rd">Read balance from node 2</button><button class="btn" id="heal">Heal</button></div>
+    <div class="detail" id="capTxt" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="clouddb" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Root pattern: Cloud Database</h2></div>
+  <div class="callout"><b class="h">Problem</b><span>How should a cloud-native application store data persistently in a cloud environment?</span></div>
+  <div class="callout ok"><b class="h">Solution</b><span>Persist it in a Cloud Database: one that scales horizontally the way cloud applications do and gives the application flexibility in how it stores and accesses data.</span></div>
+  <p>Traditional enterprise databases were designed around assumptions that made sense on one big, expensive box. Flip between the two to see how each concern is handled.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Database"><button data-d="trad" aria-pressed="true">Traditional database</button><button data-d="cloud" aria-pressed="false">Cloud Database</button></div>
+    <div class="tbl"><table class="t" id="cdbT"></table></div>
+  </div>
+  <p>Cloud Databases come in two broad categories, each its own pattern below: <b>Configuration Databases</b> for small, critical, shared platform state and <b>Application Databases</b> for an application's domain data. Every major cloud offers both, from etcd under Kubernetes to managed document, key-value, graph and relational services.</p>
+</section>
+
+<section id="replicated" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Replicated Database</h2></div>
+  <div class="callout"><b class="h">Problem</b><span>How can a Cloud Database give the same availability, scalability and performance as the cloud-native application using it?</span></div>
+  <div class="callout ok"><b class="h">Solution</b><span>Use a Replicated Database: many active server processes, each with its own storage, holding several copies of the same data and applying updates consistently across them.</span></div>
+  <p>Data is split into partitions (shards) and each partition is stored on several nodes. Any node can serve requests for the partitions it holds, so throughput grows with the cluster, and losing a node loses no data as long as another copy survives. MongoDB, Redis Cluster and Apache CouchDB work this way. Set the replication factor and start failing nodes.</p>
+  <div class="sheet">
+    <label class="rng"><span>Copies of each partition (replication factor): <b id="rfV">2</b></span><input type="range" id="rf" min="1" max="3" step="1" value="2"></label>
+    <div class="svgbox"><svg id="repSvg" viewBox="0 0 680 210" role="img" aria-label="Six partitions spread across five nodes"></svg></div>
+    <div class="row"><span class="small">Click nodes to fail or restore them.</span><button class="btn" id="repReset">Restore all</button></div>
+    <p id="repTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="config" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Configuration Database</h2></div>
+  <div class="callout"><b class="h">Problem</b><span>How can a cloud service store its service state so that every node of the service can share and access it?</span></div>
+  <div class="callout ok"><b class="h">Solution</b><span>Store it in a Configuration Database: a replicated database that is reliably consistent and notifies all nodes whenever data changes.</span></div>
+  <p>Think etcd (the brain of Kubernetes), Apache ZooKeeper and HashiCorp Consul. They do what other replicated databases avoid: every write is a coordinated transaction that is not complete until a <b>majority</b> of nodes have it, so every read anywhere sees the latest value, and clients can watch keys for changes. The trade-offs: in a partition they become read-only or unavailable rather than inconsistent, and they are built for small amounts of data such as configuration, leader election and service discovery, not for your orders table.</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="cfgSvg" viewBox="0 0 680 200" role="img" aria-label="Five-node consensus cluster"></svg></div>
+    <div class="row"><button class="btn primary" id="cfgW">Write feature-flag = on</button><span class="small">Click nodes to fail them.</span></div>
+    <p id="cfgTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="appdb" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Application Database</h2></div>
+  <div class="callout"><b class="h">Problem</b><span>How should a cloud-native application store its data so it can run as a stateless application?</span></div>
+  <div class="callout ok"><b class="h">Solution</b><span>Use an Application Database that, like the application, is highly available, holds large amounts of data, scales to many concurrent users and makes data access simple.</span></div>
+  <p>Application databases tend to be replicated and come in three families. Tap each.</p>
+  <div class="cardgrid" id="fam"></div>
+  <p>Within those families sit the five database types the book treats as patterns of their own: relational, document, key-value, graph and columnar. They are explored on the <a href="ch07b-database-types.html">next page</a>.</p>
+</section>
+
+<section id="dbaas" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Database-as-a-Service</h2></div>
+  <div class="callout"><b class="h">Problem</b><span>How does an application get access to an Application Database?</span></div>
+  <div class="callout ok"><b class="h">Solution</b><span>Create it with a Database-as-a-Service: a cloud service that does most of the work of installing and managing the database.</span></div>
+  <p>A DBaaS can be built into the platform (RDS, Cosmos DB, Bigtable, Cloudant), installed from a marketplace as a Kubernetes operator, or hosted remotely by the vendor. Each DBaaS serves one product, so an app using PostgreSQL and MongoDB uses two. Developers rarely have DBA skills, so the book suggests a shared team of DBAs who no longer spend time installing and patching and can focus on tuning: normalization and indexes, document granularity, partitioning policies.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Hosting"><button data-h="self" aria-pressed="true">Install it yourself</button><button data-h="svc" aria-pressed="false">DBaaS</button></div>
+    <div class="who" id="who"></div>
+    <div class="bars" id="whoBar"></div>
+  </div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="quiz"></div></div>
+  <div class="recap">
+    <div><b>Scale like the app</b><span>Partition and replicate so no node is a bottleneck or a single point of failure.</span></div>
+    <div><b>Pick your CAP</b><span>Configuration databases choose consistency; many application databases lean to availability.</span></div>
+    <div><b>Let the platform run it</b><span>DBaaS takes installation, patching and backups off the team's plate.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Cloud Application Architecture Patterns: Designing, Building, and Modernizing for the Cloud</i> by Kyle Brown, Bobby Woolf and Joseph Yoder (O'Reilly, 2025). Explanations, examples, code snippets and drawings are original summaries, not text or figures from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch06-event-driven-architecture.html"><span>Previous · Chapter 6</span><b>Event-Driven Architecture</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch07b-database-types.html"><span>Next · Chapter 7b</span><b>Cloud-Native Storage: Choosing Databases</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('caap:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('acc:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: injects a button into .stamp; remembers choice per browser */
+(function(){const r=document.documentElement;const saved=store.get('theme',null);if(saved)r.setAttribute('data-theme',saved);
+  const host=document.querySelector('.stamp');if(!host)return;const b=document.createElement('button');b.className='tag themebtn';b.type='button';
+  const cur=()=>r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+  const lab=()=>{b.textContent=cur()==='dark'?'Light theme':'Dark theme';b.setAttribute('aria-label','Switch to '+b.textContent.toLowerCase())};
+  b.addEventListener('click',()=>{const n=cur()==='dark'?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n);lab()});lab();host.appendChild(b)})();
+
+
+// topologies
+const TOP=[
+ {n:[['RW',0]],st:[[0]],s:['none','none','none'],t:'Simple and cheap, ideal for an MVP. But one process and one disk: a single point of failure with no way to scale.'},
+ {n:[['RW',0],['standby',1]],st:[[0],[1]],s:['yes','none','none'],t:'All reads and writes go to the leader; log shipping keeps a follower\'s separate storage up to date. If the leader dies the follower takes over (fail-over). Redundant, but still one server\'s worth of throughput.'},
+ {n:[['RW',0],['R',1],['R',2],['R',3]],st:[[0],[1],[2],[3]],s:['yes','reads','none'],t:'Let followers serve reads. Great when reads dominate, as in retail browsing. But writes still funnel through one leader, and replicating to followers is either slow (synchronous) or briefly inconsistent (asynchronous).'},
+ {n:[['RW',0],['RW',0],['RW',0],['RW',0]],st:[[0]],shared:1,s:['processes only','yes','yes'],t:'Every process reads and writes one shared networked file system: near-linear scale, and a process can fail harmlessly. But the shared storage is complex, costly special hardware and becomes the thing that must never fail. This is the Oracle RAC and Db2 pureScale approach.'},
+ {n:[['RW: A,B',0],['RW: B,C',1],['RW: C,D',2],['RW: D,A',3]],st:[[0],[1],[2],[3]],part:1,s:['yes','yes','yes'],t:'Split data into partitions, store each partition on more than one node with plain local disks. Any node fails and its partitions are still served elsewhere; add nodes to add capacity. This is the shape of most cloud databases.'}];
+let tk=0,dead=new Set();
+function drawTopo(){const T=TOP[tk],s=$('#topoSvg');s.innerHTML='';const n=T.n.length;const xs=T.n.map((_,i)=>n===1?340:80+i*(520/(n-1)));
+ s.appendChild(el('rect',{x:240,y:10,width:200,height:34,rx:8,fill:'var(--pencil-soft)',stroke:'var(--pencil)'}));s.appendChild(el('text',{x:340,y:32,'text-anchor':'middle','font-size':12,fill:'var(--ink)'},'clients'));
+ T.n.forEach(([lab,stI],i)=>{const x=xs[i],down=dead.has(i);const g=el('g',{class:'nd',tabindex:0,role:'button'});
+  s.appendChild(el('line',{x1:340,y1:44,x2:x,y2:90,stroke:down?'var(--bad-soft)':'var(--line)','stroke-width':1.5}));
+  g.appendChild(el('rect',{x:x-55,y:90,width:110,height:44,rx:8,fill:down?'var(--bad-soft)':'var(--blue-soft)',stroke:down?'var(--bad)':'var(--blue)','stroke-width':1.6}));g.appendChild(el('text',{x,y:117,'text-anchor':'middle','font-size':11.5,'font-weight':600,fill:'var(--ink)'},down?'✗ down':lab));
+  g.addEventListener('click',()=>{dead.has(i)?dead.delete(i):dead.add(i);drawTopo()});s.appendChild(g);
+  if(!T.shared){s.appendChild(el('line',{x1:x,y1:134,x2:x,y2:175,stroke:'var(--d2)','stroke-width':1.5}));s.appendChild(el('ellipse',{cx:x,cy:195,rx:40,ry:20,fill:'var(--paper)',stroke:'var(--d2)','stroke-width':1.5}));s.appendChild(el('text',{x,y:199,'text-anchor':'middle','font-size':10.5,fill:'var(--ink)'},T.part?lab.split(': ')[1]:'all data'))}
+  else s.appendChild(el('line',{x1:x,y1:134,x2:340,y2:180,stroke:'var(--d2)','stroke-width':1.5}))});
+ if(T.shared){s.appendChild(el('rect',{x:220,y:180,width:240,height:40,rx:10,fill:'var(--mid-soft)',stroke:'var(--mid)','stroke-width':1.6}));s.appendChild(el('text',{x:340,y:205,'text-anchor':'middle','font-size':11.5,fill:'var(--ink)'},'shared networked file system'))}
+ if(tk===1||tk===2){for(let i=1;i<n;i++)s.appendChild(el('line',{x1:xs[0]+40,y1:195,x2:xs[i]-40,y2:195,stroke:'var(--d2)','stroke-width':1.2,'stroke-dasharray':'4 3',class:'flow'}))}
+ // availability
+ let up;if(tk===0)up=!dead.has(0);else if(tk===1||tk===2)up=dead.size<n;else if(tk===3)up=dead.size<n;else{const parts=['A','B','C','D'];up=parts.every(p=>T.n.some(([l],i)=>!dead.has(i)&&l.includes(p)))}
+ $('#topoScore').innerHTML=[['Redundancy',T.s[0]],['Read scale',T.s[1]],['Write scale',T.s[2]]].map(([k,v])=>`<div class="stat"><span>${k}</span><b class="${v==='none'?'badc':'okc'}">${v}</b></div>`).join('');
+ $('#topoTxt').innerHTML=(dead.size?(up?'<b class="okc">Still serving all data.</b> ':'<b class="badc">Data unavailable.</b> '):'')+T.t}
+seg('[data-t]',b=>{tk=+b.dataset.t;dead.clear();drawTopo()});drawTopo();
+
+// CAP
+let cmode='cp',cut=false,v1=100,v2=100,msg='Both nodes agree: balance = 100.';
+function drawCap(){const s=$('#capSvg');s.innerHTML='';[[150,'Node 1',v1],[530,'Node 2',v2]].forEach(([x,n,v])=>{s.appendChild(el('rect',{x:x-80,y:50,width:160,height:90,rx:10,fill:'var(--surface)',stroke:'var(--d2)','stroke-width':1.6}));s.appendChild(el('text',{x,y:80,'text-anchor':'middle','font-size':12.5,'font-weight':700,fill:'var(--ink)'},n));s.appendChild(el('text',{x,y:110,'text-anchor':'middle','font-size':13,fill:v1!==v2?'var(--bad)':'var(--ink)','class':'t-mono'},'balance = '+v))});
+ s.appendChild(el('line',{x1:230,y1:95,x2:450,y2:95,stroke:cut?'var(--bad)':'var(--ok)','stroke-width':3,'stroke-dasharray':cut?'4 6':'',class:cut?'':'flow'}));
+ if(cut){s.appendChild(el('text',{x:340,y:85,'text-anchor':'middle','font-size':22,fill:'var(--bad)'},'✂'));s.appendChild(el('text',{x:340,y:125,'text-anchor':'middle','font-size':11,fill:'var(--bad)'},'partition'))}
+ $('#capTxt').innerHTML=msg}
+seg('[data-c]',b=>{cmode=b.dataset.c;cut=false;v1=v2=100;msg='Both nodes agree: balance = 100.';drawCap()});
+$('#cut').onclick=()=>{cut=true;msg='The nodes can no longer talk to each other.';drawCap()};
+$('#heal').onclick=()=>{cut=false;if(v1!==v2){msg='Network healed; replication brings node 2 up to date. Consistent again, eventually.';v2=v1}else msg='Network healed.';drawCap()};
+$('#wr').onclick=()=>{if(!cut){v1=v2=80;msg='Written and replicated to both nodes.'}else if(cmode==='cp'){msg='<b class="badc">Write refused.</b> Node 1 cannot confirm the write with node 2, so a CP database rejects it rather than risk divergence.'}else{v1=80;msg='<b class="okc">Write accepted</b> on node 1 only. Node 2 will catch up when the network heals.'}drawCap()};
+$('#rd').onclick=()=>{if(!cut){msg=`Node 2 returns ${v2}.`}else if(cmode==='cp'){msg='<b class="badc">Read refused</b> (or answered only by the side holding the majority). Never stale, sometimes unavailable.'}else{msg=v1!==v2?`<b class="midc">Node 2 answers ${v2}: stale.</b> Always available, sometimes out of date.`:`Node 2 answers ${v2}.`}drawCap()};
+drawCap();
+
+// cloud db compare
+const CDB=[['Concurrency','Locks and ACID transactions in one server process.','Many processes; simple transactions, often eventual consistency.'],['Querying','Rich ad hoc SQL over everything.','Data access shaped by how the app actually reads; some products still offer SQL.'],['Schema','One enterprise-wide schema everybody must fit.','Flexible or schemaless; each data module chooses its own structure.'],['Storage','Minimize storage: it was expensive, so normalize.','Storage is cheap: duplicate data when it simplifies access.'],['Processes','A single server process, scaled vertically.','Multiple horizontally scalable processes.'],['Copies','One copy, protected by expensive hardware and backups.','Replication: redundant copies on commodity machines.']];
+function cdb(m){$('#cdbT').innerHTML='<tr><th>Concern</th><th>'+(m==='trad'?'Traditional':'Cloud Database')+'</th></tr>'+CDB.map(r=>`<tr><td><b>${r[0]}</b></td><td>${m==='trad'?r[1]:r[2]}</td></tr>`).join('')}
+seg('[data-d]',b=>cdb(b.dataset.d));cdb('trad');
+
+// replicated
+const RN=5,PN=6;let rdead=new Set();
+function place(rf){const m=[];for(let p=0;p<PN;p++){const a=[];for(let r=0;r<rf;r++)a.push((p+r*2)%RN);m.push([...new Set(a)])}return m}
+function drawRep(){const rf=+$('#rf').value;$('#rfV').textContent=rf;const M=place(rf);const s=$('#repSvg');s.innerHTML='';
+ for(let n=0;n<RN;n++){const x=20+n*132,down=rdead.has(n);const g=el('g',{class:'nd',tabindex:0,role:'button'});g.appendChild(el('rect',{x,y:20,width:118,height:170,rx:10,fill:down?'var(--bad-soft)':'var(--surface)',stroke:down?'var(--bad)':'var(--blue)','stroke-width':1.6}));
+  g.appendChild(el('text',{x:x+59,y:40,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--ink)'},'node '+(n+1)+(down?' ✗':'')));
+  let k=0;M.forEach((holders,p)=>{if(holders.includes(n)){const ok=holders.some(h=>!rdead.has(h));g.appendChild(el('rect',{x:x+14,y:52+k*30,width:90,height:24,rx:5,fill:down?'var(--paper)':`var(--d${p%5+1})`,opacity:down?.4:.85}));g.appendChild(el('text',{x:x+59,y:68+k*30,'text-anchor':'middle','font-size':11,fill:down?'var(--muted)':'var(--surface)','font-weight':700},'P'+(p+1)+(holders[0]===n?' ★':'')));k++}});
+  g.addEventListener('click',()=>{rdead.has(n)?rdead.delete(n):rdead.add(n);drawRep()});s.appendChild(g)}
+ const lost=M.map((h,p)=>h.every(x=>rdead.has(x))?p+1:0).filter(Boolean);
+ $('#repTxt').innerHTML=(rdead.size===0?`Each partition lives on ${rf} node${rf>1?'s':''}. ★ marks a partition's primary copy.`:lost.length?`<b class="badc">Partition${lost.length>1?'s':''} ${lost.map(p=>'P'+p).join(', ')} unavailable</b>: every copy was on a failed node.`:`<b class="okc">All data still available</b> with ${rdead.size} node${rdead.size>1?'s':''} down; surviving copies take over.`)+(rf===1?' With one copy, any node failure loses data.':'')}
+$('#rf').addEventListener('input',drawRep);$('#repReset').onclick=()=>{rdead.clear();drawRep()};drawRep();
+
+// config db
+let cdead=new Set(),cval='off',cmsg='Five nodes; one is the leader. A write needs 3 of 5.';
+function drawCfg(){const s=$('#cfgSvg');s.innerHTML='';const live=[0,1,2,3,4].filter(i=>!cdead.has(i));const leader=live[0];
+ for(let i=0;i<5;i++){const x=70+i*135,down=cdead.has(i);const g=el('g',{class:'nd',tabindex:0,role:'button'});g.appendChild(el('circle',{cx:x,cy:80,r:40,fill:down?'var(--bad-soft)':i===leader?'var(--blue-soft)':'var(--surface)',stroke:down?'var(--bad)':'var(--blue)','stroke-width':i===leader?3:1.6}));
+  g.appendChild(el('text',{x,y:76,'text-anchor':'middle','font-size':11.5,'font-weight':700,fill:'var(--ink)'},down?'down':i===leader?'leader':'follower'));g.appendChild(el('text',{x,y:94,'text-anchor':'middle','font-size':10.5,fill:'var(--muted)','class':'t-mono'},down?'':'flag='+cval));
+  g.addEventListener('click',()=>{cdead.has(i)?cdead.delete(i):cdead.add(i);cmsg=`${5-cdead.size} of 5 nodes up. ${5-cdead.size>=3?'A majority remains, so writes still succeed.':'No majority: the cluster turns read-only or unavailable rather than risk inconsistency.'}`;drawCfg()});s.appendChild(g)}
+ s.appendChild(el('text',{x:340,y:160,'text-anchor':'middle','font-size':11.5,fill:'var(--muted)'},'watchers: 40 service replicas subscribed to "flag"'));
+ $('#cfgTxt').innerHTML=cmsg}
+$('#cfgW').onclick=()=>{const up=5-cdead.size;if(up>=3){cval=cval==='on'?'off':'on';cmsg=`<b class="okc">Committed</b> once a majority acknowledged it. Every live node now returns flag=${cval}, and all 40 watchers are notified at once.`;$('#cfgW').textContent='Write feature-flag = '+(cval==='on'?'off':'on')}else cmsg='<b class="badc">Write rejected.</b> Only '+up+' of 5 nodes can be reached; without a majority the cluster will not accept changes.';drawCfg()};drawCfg();
+
+cards('#fam',[{t:'SQL',d:'Classic relational databases: tables, SQL, transactions and referential integrity. Strong for complex queries; harder to scale out.',c:'d1'},{t:'NoSQL',d:'Non-relational databases for large volumes of unstructured and semi-structured data, built for scale and availability. Less efficient at SQL-style ad hoc queries.',c:'d2'},{t:'NewSQL',d:'Relational databases rebuilt to scale like NoSQL while keeping SQL and transactional consistency, for finance and ecommerce. CockroachDB is an example.',c:'d3'}]);
+
+// dbaas
+const WHO=[['Provision servers and storage',0],['Install and license the database',0],['Patch and upgrade',0],['Replication and fail-over',0],['Backups and restore',0],['Scaling capacity',0],['Schema, indexes, partition keys',1],['Data and queries',1]];
+function who(m){$('#who').innerHTML='<div class="h">Task</div><div class="h">Your team</div><div class="h">Service</div>'+WHO.map(([t,app])=>{const you=m==='self'||app;return `<div>${t}</div><div class="${you?'you':''}">${you?'●':''}</div><div class="${you?'':'svc'}">${you?'':'●'}</div>`}).join('');
+ const n=WHO.filter(([_,a])=>m==='self'||a).length;bars('#whoBar',[{l:'Tasks on your team',v:n,c:n>4?'bad':'ok',txt:n+' of 8'}],8)}
+seg('[data-h]',b=>who(b.dataset.h));who('self');
+
+quiz('#quiz','#qScore',[
+ {q:'Which topology most cloud databases use?',o:['Shared storage','Partitioning with replication','Single leader'],a:1,why:'Partitions copied across nodes with local disks: scale and redundancy without special hardware.'},
+ {q:'During a partition, an AP database…',o:['Refuses writes','Answers, possibly with stale data'],a:1,why:'It stays available and becomes consistent once the network heals.'},
+ {q:'A Configuration Database commits a write when…',o:['The leader has it','A majority of nodes have it'],a:1,why:'Majority commit is what makes it reliably consistent.'},
+ {q:'Which would you store in etcd or ZooKeeper?',o:['Product catalog','Feature flags and leader election','Order history'],a:1,why:'Small, critical, shared state; not large domain data.'},
+ {q:'An app that needs PostgreSQL and MongoDB uses how many DBaaS offerings?',o:['One','Two'],a:1,why:'Each DBaaS manages one database product.'}]);
+
+})();
+</script>
+</body>
+</html>

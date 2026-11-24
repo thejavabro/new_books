@@ -1,0 +1,472 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Containerization, Orchestration and Deployment</title>
+<meta name="description" content="Containers package an app with everything it needs; orchestrators run thousands of them; deployment strategies and pipelines get new versions out without drama.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the System Design on AWS companion. Layout: a drafting-table reading column on blueprint grid paper.
+   Blue ink = structure and data paths, orange pencil = clients and requests, green = healthy, red = failure.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:minmax(14rem,1fr) minmax(0,auto);gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* additions */
+button.tag.theme{cursor:pointer;margin-left:auto}
+button.tag.theme:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;max-width:100%;white-space:pre}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:5em;max-height:14em;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.pill{display:inline-block;font-family:var(--mono);font-size:.75rem;padding:2px 8px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.pill.ok{border-color:var(--ok);color:var(--ok);background:var(--ok-soft)} .pill.bad{border-color:var(--bad);color:var(--bad);background:var(--bad-soft)}
+input[type=number],input[type=text]{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+.sheet>.seg,.stack>.seg{align-self:flex-start}
+
+/* page */
+
+.layers2{display:flex;flex-direction:column-reverse;gap:4px}
+.layers2 div{border:1px solid var(--line);border-radius:6px;padding:7px 10px;font-family:var(--mono);font-size:.8rem;display:flex;justify-content:space-between;gap:10px;transition:background .3s}
+.layers2 div.cached{background:var(--ok-soft);border-color:var(--ok)}
+.layers2 div.rebuild{background:var(--pencil-soft);border-color:var(--pencil)}
+.df button{display:block;width:100%;text-align:left;font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:6px 10px;margin-bottom:4px}
+.df button[aria-pressed="true"]{border-color:var(--pencil);background:var(--pencil-soft)}
+.pods{display:flex;flex-wrap:wrap;gap:8px;min-height:60px}
+.pods i{font-style:normal;width:62px;height:50px;border-radius:8px;display:grid;place-items:center;font-family:var(--mono);font-size:.75rem;border:2px solid var(--blue);background:var(--blue-soft);transition:all .3s}
+.pods i.v2{border-color:var(--ok);background:var(--ok-soft)}
+.pods i.start{border-style:dashed;opacity:.6}
+.pods i.dead{border-color:var(--bad);background:var(--bad-soft);opacity:.5}
+.envs{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.envs>div{border:1px solid var(--line);border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:8px}
+.envs>div.live{border-color:var(--ok);box-shadow:0 0 0 2px var(--ok-soft)}
+.states{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.states span{font-family:var(--mono);font-size:.8rem;padding:6px 10px;border-radius:999px;border:1px solid var(--line)}
+.states span.on{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">System Design on AWS · visual companion</a><span class="tag">Part I · Chapter 7 of 21</span><button class="tag theme" type="button" id="themeBtn" aria-label="Toggle light or dark theme">Theme</button></div>
+  <h1>Containerization, Orchestration and Deployment</h1>
+  <p class="lede">Containers package an app with everything it needs; orchestrators run thousands of them; deployment strategies and pipelines get new versions out without drama.</p>
+  <nav class="toc" aria-label="Sections"><a href="#evolution">VMs vs containers</a><a href="#images">Images & layers</a><a href="#lifecycle">Lifecycle</a><a href="#k8s">Kubernetes</a><a href="#reconcile">Desired state</a><a href="#rollouts">Deployments</a><a href="#cicd">Gitflow & CI/CD</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="evolution" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>From servers to VMs to containers</h2></div>
+  <p>First, one app per physical server: wasteful and slow to provision. Then <b>virtual machines</b>: a hypervisor slices a server into VMs, each with a full guest OS. Then <b>containers</b>: apps share the host kernel and are isolated by OS features (namespaces, cgroups), so they start in seconds, weigh megabytes and run the same on a laptop or in production.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Model"><button data-ev="bm" aria-pressed="false">Bare metal</button><button data-ev="vm" aria-pressed="true">Virtual machines</button><button data-ev="ct" aria-pressed="false">Containers</button></div>
+    <div class="svgbox"><svg id="evSvg" viewBox="0 0 640 230" role="img" aria-label="Stack diagram"></svg></div>
+    <p id="evTxt" class="small" aria-live="polite"></p>
+  </div>
+  <div class="tbl"><table class="t"><tr><th></th><th>Virtual machines</th><th>Containers</th></tr>
+    <tr><td><b>Isolation</b></td><td>Strong: separate kernels</td><td>Process-level: shared kernel, needs care against escapes</td></tr>
+    <tr><td><b>Size and boot</b></td><td>Gigabytes, minutes</td><td>Megabytes, seconds</td></tr>
+    <tr><td><b>Density</b></td><td>Tens per host</td><td>Hundreds per host</td></tr>
+    <tr><td><b>Portability</b></td><td>Image formats tied to hypervisors</td><td>Same image runs anywhere with a container runtime</td></tr></table></div>
+</section>
+
+<section id="images" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Dockerfiles, images and layer caching</h2></div>
+  <p>A <b>Dockerfile</b> is a recipe; building it produces an <b>image</b>, a stack of read-only layers (base OS, runtime, dependencies, your code). Layers are cached and shared, so a rebuild only redoes the layers from the first changed instruction upward. Click the line you changed.</p>
+  <div class="sheet">
+    <div class="two"><div class="df" id="df"></div><div><div class="layers2" id="lay"></div><p class="small" id="layTxt" style="margin-top:8px" aria-live="polite"></p></div></div>
+  </div>
+  <div class="callout blue"><b class="h">Ordering tip</b><span>Copy the dependency list and install packages <i>before</i> copying source code. Code changes daily, dependencies rarely, so most builds reuse the slow install layer.</span></div>
+</section>
+
+<section id="lifecycle" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Registry, engine and container lifecycle</h2></div>
+  <p>Images live in a <b>registry</b> (Docker Hub, or a private one such as Amazon ECR) organised by repository and tag. The Docker CLI talks to the <b>daemon</b>, which pulls images and asks the runtime (containerd, runc) to create containers: a thin writable layer on top of the image plus isolated process, network and filesystem. Drive one through its lifecycle.</p>
+  <div class="sheet">
+    <div class="states" id="states"></div>
+    <div class="row" id="lcBtns"></div>
+    <pre class="code" id="lcCmd"></pre>
+  </div>
+</section>
+
+<section id="k8s" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Kubernetes architecture</h2></div>
+  <p>One host is easy; a thousand containers across a hundred hosts need an orchestrator. Kubernetes runs a <b>control plane</b> that holds the desired state and <b>worker nodes</b> that run the work. Click a component.</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="kSvg" viewBox="0 0 680 330" role="img" aria-label="Kubernetes components"></svg></div>
+    <div class="detail" id="kInfo" aria-live="polite"></div>
+  </div>
+  <div class="cardgrid" id="kCards"></div>
+</section>
+
+<section id="reconcile" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Declare it, and Kubernetes keeps it true</h2></div>
+  <p>You never say "start three containers". You declare "I want three replicas" and controllers keep comparing reality with that wish, fixing any drift. Change the replica count or kill a pod.</p>
+  <div class="sheet">
+    <div class="row between"><label class="rng" style="flex:1;min-width:200px"><span>replicas: <b id="repV"></b></span><input type="range" id="rep" min="1" max="8" value="3"></label><button class="btn" id="killPod">Kill a pod</button></div>
+    <div class="pods" id="rpods"></div>
+    <div class="log" id="rlog"></div>
+  </div>
+  <pre class="code" id="yaml"></pre>
+</section>
+
+<section id="rollouts" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Rolling out a new version</h2></div>
+  <p>A <b>rolling update</b> replaces pods a few at a time; <code>maxSurge</code> allows extra pods during the rollout and <code>maxUnavailable</code> caps how many may be missing. <b>Readiness probes</b> keep traffic away from pods that are not ready yet; liveness probes restart stuck ones. <b>Blue-green</b> runs a full second environment and flips traffic at once, with instant rollback. <b>StatefulSets</b> roll pods one at a time in order, each keeping a stable name and its own volume, for databases and similar.</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Strategy"><button data-ro="roll" aria-pressed="true">Rolling</button><button data-ro="bg" aria-pressed="false">Blue-green</button><button data-ro="sts" aria-pressed="false">StatefulSet</button></div><button class="btn primary" id="roGo">Deploy v2</button></div>
+    <div id="roStage"></div>
+    <p class="small" id="roTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="cicd" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Gitflow and the CI/CD pipeline</h2></div>
+  <p>Gitflow organises branches: <b>main</b> holds released code, <b>develop</b> integrates finished features, <b>feature/*</b> branches hold work in progress, <b>release/*</b> branches stabilise a version and <b>hotfix/*</b> branches patch production. Every change flows through continuous integration (build, test, scan on each push) and continuous deployment (test, staging, production), with infrastructure defined as code. Follow one feature.</p>
+  <div class="sheet stepper" id="gStep"><div class="svgbox"><svg id="gSvg" viewBox="0 0 660 240" role="img" aria-label="Gitflow branches"></svg></div></div>
+  <div class="callout ok"><b class="h">After deploy: watch it</b><span>Metrics, logs and traces with alerts on what users feel (error rate, latency), clear on-call ownership, runbooks and blameless post-incident reviews close the loop.</span></div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qs"></span></div><div class="quiz" id="qq"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>System Design on AWS: Building and Scaling Enterprise Solutions</i> by Jayanth Kumar and Mandeep Singh (O'Reilly, 2025). Explanations, examples, code snippets and drawings are original summaries, not copied from the book. AWS limits and prices change; check current AWS documentation before relying on a number.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch06-networks.html"><span>Previous · Chapter 6</span><b>Communication Networks and Protocols</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch08-architecture.html"><span>Next · Chapter 8</span><b>Architectural Designs and Patterns</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('sda:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('sda:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle */
+(function(){const b=document.getElementById('themeBtn');if(!b)return;const r=document.documentElement;
+ const cur=store.get('theme',null);if(cur)r.setAttribute('data-theme',cur);
+ b.addEventListener('click',()=>{const dark=r.getAttribute('data-theme')?r.getAttribute('data-theme')==='dark':matchMedia('(prefers-color-scheme: dark)').matches;const n=dark?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n)});})();
+/* code blocks */
+
+
+/* evolution */
+function drawEv(m){const s=$('#evSvg');s.innerHTML='';const R=(x,y,w,h,t,c,f)=>{s.appendChild(el('rect',{x,y,width:w,height:h,rx:5,fill:f||'var(--surface)',stroke:`var(--${c})`,'stroke-width':1.4}));s.appendChild(el('text',{x:x+w/2,y:y+h/2+4,'text-anchor':'middle','font-size':11.5,class:'s-ink'},t))};
+ R(20,190,600,30,'Hardware','muted','var(--paper)');
+ if(m==='bm'){R(20,155,600,30,'Host OS','d3');R(20,40,600,110,'One app + its libraries (CPU mostly idle)','pencil','var(--pencil-soft)')}
+ if(m==='vm'){R(20,155,600,30,'Hypervisor','d5');[0,1,2].forEach(i=>{const x=20+i*204;R(x,115,192,35,'Guest OS (GBs)','d3');R(x,78,192,32,'Libraries','d2');R(x,40,192,33,'App '+'ABC'[i],'pencil','var(--pencil-soft)')})}
+ if(m==='ct'){R(20,155,600,30,'Host OS (shared kernel)','d3');R(20,120,600,30,'Container runtime','d5');[0,1,2,3,4].forEach(i=>{const x=20+i*122;R(x,82,114,33,'Libs','d2');R(x,40,114,37,'App '+'ABCDE'[i],'pencil','var(--pencil-soft)')})}
+ $('#evTxt').textContent={bm:'One app per server: simple, but utilization is often low and new servers take weeks.',vm:'Three VMs share one server, each with its own OS. Strong isolation, but each guest OS costs memory, disk and boot time.',ct:'Five containers share the host kernel. Only the app and its libraries are packaged, so far more fit on the same hardware.'}[m]}
+seg('[data-ev]',b=>drawEv(b.dataset.ev));drawEv('vm');
+
+/* layers */
+const DF=[['FROM python:3.12-slim','base image','45 MB'],['WORKDIR /app','set dir','0 B'],['COPY requirements.txt .','dependency list','1 KB'],['RUN pip install -r requirements.txt','installed packages','120 MB'],['COPY . .','your source code','2 MB'],['CMD ["python","app.py"]','start command','0 B']];
+$('#df').innerHTML=DF.map((d,i)=>`<button data-d="${i}" aria-pressed="${i===4}">${d[0]}</button>`).join('');
+function showDf(ch){$('#lay').innerHTML=DF.map((d,i)=>`<div class="${i<ch?'cached':'rebuild'}"><span>${d[1]}</span><span>${i<ch?'cached':'rebuild'} · ${d[2]}</span></div>`).join('');$('#layTxt').textContent=ch>=4?'Only the code layer and above rebuild: seconds.':ch===3||ch===2?'Dependencies changed: the 120 MB install reruns, then everything above it.':'Base image changed: every layer rebuilds and every host must pull the new image.'}
+seg('#df button',b=>showDf(+b.dataset.d));showDf(4);
+
+/* lifecycle */
+const ST=['image','created','running','paused','stopped','removed'];let st='image';
+const TR={image:[['docker create','created'],['docker run','running']],created:[['docker start','running'],['docker rm','removed']],running:[['docker pause','paused'],['docker stop','stopped'],['docker kill','stopped']],paused:[['docker unpause','running']],stopped:[['docker start','running'],['docker rm','removed']],removed:[['docker run (new)','running']]};
+const NOTE={image:'docker pull nginx:1.27   # from the registry\n# an image is inert until you create a container from it',created:'# writable layer and config exist, no process yet',running:'# main process runs as PID 1 inside its namespaces;\n# cgroups cap its CPU and memory\ndocker logs -f web    docker exec -it web sh',paused:'# processes frozen (cgroup freezer), memory kept',stopped:'# SIGTERM, then SIGKILL after a grace period;\n# writable layer still on disk',removed:'# writable layer deleted; anything not in a volume is gone'};
+function drawLc(){$('#states').innerHTML=ST.map(s=>`<span class="${s===st?'on':''}">${s}</span>`).join('<span style="border:0">→</span>');$('#lcBtns').innerHTML=TR[st].map(t=>`<button class="btn" data-to="${t[1]}" data-c="${t[0]}">${t[0]}</button>`).join('');$$('#lcBtns button').forEach(b=>b.addEventListener('click',()=>{st=b.dataset.to;drawLc();$('#lcCmd').textContent='$ '+b.dataset.c+' web\n'+NOTE[st]}));if(st==='image')$('#lcCmd').textContent=NOTE.image}
+drawLc();
+
+/* k8s graph */
+graph('#kSvg',{kind:'Component',start:'api',nodes:[
+ {id:'kubectl',x:80,y:40,w:120,t:'kubectl / CI',c:'pencil'},
+ {id:'api',x:280,y:40,w:140,t:'API server',c:'blue'},{id:'etcd',x:500,y:40,w:120,t:'etcd',c:'blue'},
+ {id:'sched',x:200,y:125,w:130,t:'Scheduler',c:'blue'},{id:'cm',x:420,y:125,w:160,t:'Controller manager',c:'blue'},
+ {id:'kubelet',x:150,y:230,w:120,t:'kubelet',c:'d2'},{id:'proxy',x:330,y:230,w:120,t:'kube-proxy',c:'d2'},{id:'rt',x:510,y:230,w:150,t:'Container runtime',c:'d2'},
+ {id:'pods',x:330,y:300,w:200,h:40,t:'Pods',c:'ok'}],
+ edges:[['kubectl','api'],['api','etcd'],['sched','api'],['cm','api'],['kubelet','api'],['kubelet','rt'],['rt','pods'],['proxy','pods']],
+ info:{kubectl:'You (or a pipeline) submit manifests describing the desired state.',api:'The front door of the control plane. Every component reads and writes cluster state through it, with authentication and validation.',etcd:'A consistent, replicated key-value store holding all cluster state. Back it up.',sched:'Watches for unscheduled pods and picks a node for each, based on resource requests, affinity and constraints.',cm:'Runs control loops (Deployment, ReplicaSet, Node, Job controllers…) that drive actual state toward desired state.',kubelet:'The agent on each worker node. Ensures the containers for pods assigned to its node are running and healthy, and reports status.',proxy:'Maintains network rules on each node so traffic to a Service reaches one of its pods.',rt:'containerd or similar actually pulls images and runs containers.',pods:'The smallest deployable unit: one or more containers sharing a network namespace and volumes.'}},'#kInfo');
+cards('#kCards',[{t:'Pod',d:'One or more tightly coupled containers sharing an IP and storage. Pods are disposable; do not rely on their addresses.'},{t:'Service',d:'A stable name and virtual IP that load-balances across matching pods, giving service discovery.'},{t:'Deployment',d:'Declares replicas and a pod template; manages ReplicaSets to roll out and roll back versions.'},{t:'Volume',d:'Storage that outlives a container restart; persistent volumes outlive the pod too.'},{t:'ConfigMap and Secret',d:'Configuration and credentials injected as env vars or files, kept out of the image.'},{t:'Job and CronJob',d:'Run-to-completion work, once or on a schedule.'},{t:'Requests and limits',d:'CPU and memory a container is guaranteed and capped at. The scheduler packs nodes using requests.'},{t:'Namespace',d:'Virtual clusters for teams or environments, with their own quotas and permissions.'}]);
+
+/* reconcile */
+let pods=[{n:1,s:'run'},{n:2,s:'run'},{n:3,s:'run'}],pn=3,rT=null;
+function rlog(m){const l=$('#rlog');l.textContent+=m+'\n';l.scrollTop=1e6}
+function drawPods(){const want=+$('#rep').value;$('#repV').textContent=want;$('#rpods').innerHTML=pods.map(p=>`<i class="${p.s==='start'?'start':p.s==='dead'?'dead':''}">pod-${p.n}</i>`).join('');
+ $('#yaml').innerHTML=`<span class="k">apiVersion</span>: apps/v1\n<span class="k">kind</span>: Deployment\n<span class="k">metadata</span>: { name: web }\n<span class="k">spec</span>:\n  replicas: ${want}\n  selector: { matchLabels: { app: web } }\n  template:\n    metadata: { labels: { app: web } }\n    spec:\n      containers:\n      - name: web\n        image: registry.example/web:1.4\n        resources: { requests: { cpu: 250m, memory: 256Mi } }\n        readinessProbe: { httpGet: { path: /healthz, port: 8080 } }`}
+function reconcile(){clearTimeout(rT);rT=setTimeout(()=>{const want=+$('#rep').value;pods=pods.filter(p=>p.s!=='dead');pods.forEach(p=>{if(p.s==='start')p.s='run'});const have=pods.length;
+ if(have<want){for(let i=have;i<want;i++){pods.push({n:++pn,s:'start'})}rlog(`controller: want ${want}, have ${have} → create ${want-have} pod(s)`);drawPods();reconcile()}
+ else if(have>want){const gone=pods.splice(want);rlog(`controller: want ${want}, have ${have} → delete ${gone.map(p=>'pod-'+p.n).join(', ')}`);drawPods()}
+ else{drawPods()}},700)}
+$('#rep').addEventListener('input',()=>{drawPods();reconcile()});
+$('#killPod').addEventListener('click',()=>{const p=pods.find(p=>p.s==='run');if(!p)return;p.s='dead';rlog(`node: pod-${p.n} crashed`);drawPods();reconcile()});drawPods();rlog('desired 3, running 3: nothing to do');
+
+/* rollouts */
+let ro='roll',roT=[];
+function roDraw(state){const st=$('#roStage');
+ if(ro==='bg'){st.innerHTML=`<div class="envs"><div class="${state.live==='blue'?'live':''}"><b>Blue · v1</b><div class="pods">${'<i>v1</i>'.repeat(4)}</div></div><div class="${state.live==='green'?'live':''}"><b>Green · v2</b><div class="pods">${state.g?Array(4).fill(`<i class="v2 ${state.g==='start'?'start':''}">v2</i>`).join(''):''}</div></div></div>`}
+ else st.innerHTML=`<div class="pods">${state.p.map(p=>`<i class="${p==='v2'?'v2':p==='s'?'v2 start':p==='x'?'dead':''}">${p==='v1'?'v1':p==='x'?'v1 ✕':(ro==='sts'?'db-':'')+'v2'}</i>`).join('')}</div>`}
+function roGo(){roT.forEach(clearTimeout);roT=[];const seq=[];
+ if(ro==='roll'){let p=['v1','v1','v1','v1'];seq.push([{p:[...p]},'Starting: 4 × v1, maxSurge 1, maxUnavailable 1.']);for(let i=0;i<4;i++){p=[...p.slice(0,i),'s',...p.slice(i+1)];seq.push([{p:[...p]},`New v2 pod ${i+1} starting; readiness probe not passing yet, so it gets no traffic.`]);p=p.map(x=>x==='s'?'v2':x);seq.push([{p:[...p]},`v2 pod ${i+1} ready; one v1 pod terminated. Capacity never drops below 3.`])}seq.push([{p:['v2','v2','v2','v2']},'Done: all v2, zero downtime. A failing readiness probe would have paused the rollout.'])}
+ if(ro==='bg'){seq.push([{live:'blue'},'Blue (v1) serves all traffic.']);seq.push([{live:'blue',g:'start'},'Green (v2) is deployed alongside and tested privately.']);seq.push([{live:'blue',g:'run'},'Green passes smoke tests.']);seq.push([{live:'green',g:'run'},'The router or LB flips all traffic to green at once. Blue stays up: rollback is one flip back. Costs double capacity during the switch.'])}
+ if(ro==='sts'){let p=['v1','v1','v1'];seq.push([{p:[...p]},'db-0, db-1, db-2 each own a persistent volume and a stable name.']);for(let i=2;i>=0;i--){p[i]='s';seq.push([{p:[...p]},`db-${i} is stopped and recreated as v2 with the same name and volume…`]);p[i]='v2';seq.push([{p:[...p]},`db-${i} ready. Next, in reverse ordinal order.`])}}
+ seq.forEach(([s,t],i)=>roT.push(setTimeout(()=>{roDraw(s);$('#roTxt').textContent=t},i*800)))}
+seg('[data-ro]',b=>{ro=b.dataset.ro;roT.forEach(clearTimeout);roDraw(ro==='bg'?{live:'blue'}:{p:ro==='sts'?['v1','v1','v1']:['v1','v1','v1','v1']});$('#roTxt').textContent='Press Deploy v2.'});$('#roGo').addEventListener('click',roGo);roDraw({p:['v1','v1','v1','v1']});$('#roTxt').textContent='Press Deploy v2.';
+
+/* gitflow */
+const gS=$('#gSvg');const BR=[['main',40,'d4'],['hotfix',80,'bad'],['release',120,'d3'],['develop',160,'blue'],['feature',200,'ok']];
+BR.forEach(([n,y,c])=>{gS.appendChild(el('text',{x:8,y:y+4,'font-size':11,class:'s-muted t-mono'},n));gS.appendChild(el('line',{x1:70,y1:y,x2:650,y2:y,stroke:`var(--${c})`,'stroke-width':2,opacity:.3}))});
+const gEls=[];const dot=(x,y,c)=>{const d=el('circle',{cx:x,cy:y,r:7,fill:`var(--${c})`});gS.appendChild(d);return d};const seg2=(x1,y1,x2,y2,c)=>{const l=el('line',{x1,y1,x2,y2,stroke:`var(--${c})`,'stroke-width':2.5});gS.insertBefore(l,gS.firstChild.nextSibling);return l};
+const G=[[seg2(100,160,150,200,'ok'),dot(150,200,'ok')],[dot(210,200,'ok'),dot(270,200,'ok')],[seg2(270,200,320,160,'blue'),dot(320,160,'blue')],[seg2(320,160,380,120,'d3'),dot(380,120,'d3'),dot(440,120,'d3')],[seg2(440,120,500,40,'d4'),dot(500,40,'d4'),seg2(440,120,500,160,'blue'),dot(500,160,'blue')],[seg2(500,40,560,80,'bad'),dot(560,80,'bad'),seg2(560,80,620,40,'d4'),dot(620,40,'d4'),seg2(560,80,620,160,'blue'),dot(620,160,'blue')]];
+dot(100,160,'blue');dot(80,40,'d4');
+const gSteps=['Branch <code>feature/coupon-codes</code> off develop.','Commit and push. CI runs on every push: build, unit tests, linting, security and dependency scans. A pull request needs green checks and a review.','Merge into <b>develop</b>. The integration build deploys automatically to a test environment.','Cut <b>release/2.4</b>. Only fixes land here; CD deploys it to staging for integration and acceptance tests.','Merge release into <b>main</b> and tag v2.4; the pipeline deploys to production (rolling or blue-green). Merge back into develop.','A production bug: <b>hotfix/2.4.1</b> branches from main, is merged into both main and develop, and ships the same way.'];
+$('#gStep').insertAdjacentHTML('beforeend',stepHTML());stepper('#gStep',gSteps,i=>G.forEach((g,k)=>g.forEach(e=>e.style.opacity=k<=i?1:.1)));
+
+quiz('#qq','#qs',[
+ {q:'Why do containers start faster than VMs?',o:['They use faster disks','They share the host kernel instead of booting a guest OS','They skip networking'],a:1,why:'No OS boot, just a new isolated process.'},
+ {q:'You change one line of source code. Which image layers rebuild?',o:['All of them','The code layer and those above it','Only the base'],a:1,why:'Layers below the first changed instruction come from cache.'},
+ {q:'Which component picks the node a new pod runs on?',o:['kubelet','Scheduler','etcd'],a:1,why:'The scheduler assigns pods; the kubelet then runs them.'},
+ {q:'Instant rollback by switching traffic back describes…',o:['Rolling update','Blue-green','StatefulSet'],a:1,why:'The old environment stays live until you are sure.'},
+ {q:'In Gitflow, finished features are merged into…',o:['main','develop','hotfix'],a:1,why:'develop integrates features; main holds released code.'}]);
+
+})();
+</script>
+</body>
+</html>

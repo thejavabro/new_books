@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Designing a Hotel Reservation System</title>
+<meta name="description" content="Search is read-heavy and forgiving; booking is write-critical and must never double-sell a room. One product, several very different subsystems.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the System Design on AWS companion. Layout: a drafting-table reading column on blueprint grid paper.
+   Blue ink = structure and data paths, orange pencil = clients and requests, green = healthy, red = failure.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:minmax(14rem,1fr) minmax(0,auto);gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* additions */
+button.tag.theme{cursor:pointer;margin-left:auto}
+button.tag.theme:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;max-width:100%;white-space:pre}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:5em;max-height:14em;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.pill{display:inline-block;font-family:var(--mono);font-size:.75rem;padding:2px 8px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.pill.ok{border-color:var(--ok);color:var(--ok);background:var(--ok-soft)} .pill.bad{border-color:var(--bad);color:var(--bad);background:var(--bad-soft)}
+input[type=number],input[type=text]{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+.sheet>.seg,.stack>.seg{align-self:flex-start}
+
+/* page */
+
+.rooms{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.lane{border:1px solid var(--line);border-radius:8px;padding:10px;background:var(--paper);font-family:var(--mono);font-size:.78rem;min-height:9rem;display:flex;flex-direction:column;gap:3px}
+.lane b{font-family:var(--sans,inherit);font-size:.85rem}
+.lane .okc{color:var(--ok)}.lane .badc{color:var(--bad)}
+.roomBox{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px dashed var(--line);border-radius:8px;font-size:.9rem;flex-wrap:wrap}
+.roomBox .st{font-family:var(--mono);padding:2px 8px;border-radius:6px;background:var(--blue-soft)}
+.geo{display:grid;grid-template-columns:repeat(4,1fr);gap:2px;aspect-ratio:1/1;max-width:300px;width:100%;background:var(--line);border:2px solid var(--line);border-radius:6px;overflow:hidden}
+.geo button{background:var(--surface);border:0;font-family:var(--mono);font-size:.72rem;color:var(--muted);position:relative;padding:0}
+.geo button.near{background:var(--ok-soft);color:var(--ink)}
+.geo button.me{background:var(--pencil-soft);color:var(--ink);font-weight:700}
+.geo button i{position:absolute;width:6px;height:6px;border-radius:50%;background:var(--blue)}
+.bstates{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.bstates span{font-family:var(--mono);font-size:.75rem;padding:4px 8px;border-radius:6px;border:1px solid var(--line);background:var(--paper)}
+.bstates span.on{background:var(--blue-soft);border-color:var(--blue);font-weight:700}
+.bstates span.end{background:var(--ok-soft);border-color:var(--ok)}
+.bstates span.x{background:var(--bad-soft);border-color:var(--bad)}
+@media (max-width:600px){.rooms{grid-template-columns:1fr}}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">System Design on AWS · visual companion</a><span class="tag">Part III · Chapter 18 of 21</span><button class="tag theme" type="button" id="themeBtn" aria-label="Toggle light or dark theme">Theme</button></div>
+  <h1>Designing a Hotel Reservation System</h1>
+  <p class="lede">Search is read-heavy and forgiving; booking is write-critical and must never double-sell a room. One product, several very different subsystems.</p>
+  <nav class="toc" aria-label="Sections"><a href="#reqs">Requirements</a><a href="#parts">Subsystems</a><a href="#search">Search</a><a href="#states">Booking states</a><a href="#lock">Double bookings</a><a href="#pay">Payments</a><a href="#aws">Day 0 on AWS</a><a href="#dayn">Scaling and Day N</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="reqs" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Two kinds of users, one hard rule</h2></div>
+  <p><b>Property owners</b> onboard, list properties and rooms, set prices and availability, confirm bookings and get paid out. <b>Customers</b> search by location and dates, filter, book, pay, cancel and review. The nonnegotiable nonfunctional requirement: <b>no double bookings and no double charges</b>, while search stays fast and highly available. The book's assumptions:</p>
+  <div class="sheet">
+    <div class="three"><label class="rng"><span>Properties: <b id="pV"></b></span><input type="range" id="pP" min="1" max="20" value="10"></label><label class="rng"><span>Searches per day: <b id="sV"></b></span><input type="range" id="sS" min="5" max="100" step="5" value="20"></label><label class="rng"><span>Bookings as % of searches: <b id="bV"></b></span><input type="range" id="bB" min="1" max="30" value="10"></label></div>
+    <div class="kpis" id="rK"></div>
+    <p class="small">Per property: 500 B details + 100 rooms × 500 B + 50 reviews × 500 B ≈ 75 KB. The read side (search) is ten times the write side (booking), so they are designed and scaled separately.</p>
+  </div>
+</section>
+
+<section id="parts" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Four subsystems</h2></div>
+  <p>Like the crawler and search engine of Chapter 15, the platform is really several systems: <b>onboarding</b> writes property data, <b>search</b> reads a denormalized copy of it, <b>booking</b> owns strongly consistent availability and payments, and <b>reviews</b> hang off completed stays. Click one.</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="arch" viewBox="0 0 680 280" role="img" aria-label="Reservation subsystems"></svg></div>
+    <div class="detail" id="archInfo" aria-live="polite"></div>
+  </div>
+  <div class="tbl"><table class="t"><tr><th>Sort key (PK = property ID)</th><th>Item</th></tr><tr><td class="mono">PY</td><td>The property: address, facilities, policies</td></tr><tr><td class="mono">PY#IMG#{imageId}</td><td>Image metadata with its S3 link</td></tr><tr><td class="mono">PY#R#{roomId}</td><td>One room</td></tr><tr><td class="mono">PY#R#{roomType}</td><td>Shared attributes of a room type</td></tr><tr><td class="mono">PY#R#{roomType}#{imageId}</td><td>Images for a room type</td></tr></table></div>
+  <p class="small">A single-table DynamoDB design for onboarding: one query on the property ID with a sort-key prefix fetches the property, its rooms or its images. Aurora works too; onboarding writes are rare.</p>
+</section>
+
+<section id="search" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Search: Elasticsearch plus an availability check</h2></div>
+  <p>Search runs in two steps: (1) Elasticsearch (OpenSearch) finds properties matching location, filters and text, kept fresh from the database via change data capture; (2) a strongly consistent store confirms which of those have rooms free for the dates. Results are cached. Getting the shard count right matters more than node count.</p>
+  <div class="sheet">
+    <div class="three"><label class="rng"><span>Source data: <b id="eV"></b></span><input type="range" id="eD" min="50" max="3000" step="5" value="715"></label><label class="rng"><span>Growth room: <b id="gV"></b></span><input type="range" id="eG" min="0" max="3" step="0.5" value="1"></label><label class="rng"><span>Target shard size: <b id="zV"></b></span><input type="range" id="eZ" min="10" max="50" value="30"></label></div>
+    <div class="kpis" id="eK"></div>
+    <p class="small">Shards = (source + growth) × (1 + 10% indexing overhead) ÷ target size. Aim for 10–30 GB per shard for latency-sensitive search, up to ~50 GB for logs. Too many tiny shards waste heap and coordination; one huge shard is slow to query and to rebalance.</p>
+  </div>
+</section>
+
+<section id="nearby"data-toc="Nearby places" data-h="Geohash: proximity as a shared prefix">
+  <p>To show properties near a point of interest, encode latitude and longitude as a <b>geohash</b>: the world is split into a grid, each cell split again, and each split appends a character. Longer hash means smaller cell; a <b>shared prefix</b> means nearby. To widen a search, drop the last character, or check the 8 neighbor cells too (a place just across a cell edge has a different prefix). A <b>quadtree</b> does the same adaptively: dense cities split into smaller cells, oceans do not.</p>
+  <div class="sheet">
+    <div class="two">
+      <div class="geo" id="geo" role="group" aria-label="Geohash grid"></div>
+      <div><p id="geoTxt" class="small" aria-live="polite">Tap a cell to search from it.</p><div class="row"><button class="btn" id="geoNb" aria-pressed="true">Include 8 neighbors</button></div></div>
+    </div>
+  </div>
+</section>
+
+<section id="states" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>A booking is a state machine</h2></div>
+  <p>A booking moves through explicit states, persisted with history so support can see what happened and so retries resume from the right place. Some properties confirm instantly; others confirm only after payment or a human check.</p>
+  <div class="sheet">
+    <div class="bstates" id="bs"></div>
+    <div class="row"><button class="btn primary" id="bOk">Happy path step</button><button class="btn" id="bFail">Payment fails</button><button class="btn" id="bCancel">Guest cancels</button><button class="btn" id="bRst">Reset</button></div>
+    <p class="small" id="bTxt" aria-live="polite"></p>
+  </div>
+  <p>Store choice: bookings need strong consistency, so a relational database (Aurora) fits. Most traffic touches current bookings, so partition the bookings table by time (<code>PARTITION BY RANGE(created_at)</code>) and archive old partitions; drop whole partitions rather than deleting rows.</p>
+</section>
+
+<section id="lock" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Two guests, one last room</h2></div>
+  <p>Booking is read-then-write: check availability, then decrement it. Two requests interleaving between those steps both see "1 left." Compare the options.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Strategy"><button data-m="none" aria-pressed="true">No control</button><button data-m="pess" aria-pressed="false">Pessimistic lock</button><button data-m="opt" aria-pressed="false">Optimistic (version)</button><button data-m="hold" aria-pressed="false">Redis hold (SET NX EX)</button></div>
+    <div class="roomBox"><span>Deluxe room, 12 to 14 June</span><span class="st" id="rmSt"></span></div>
+    <div class="rooms"><div class="lane" id="lA"></div><div class="lane" id="lB"></div></div>
+    <div class="row"><button class="btn primary" id="lkRun">Race them</button></div>
+    <p class="small" id="lkTxt" aria-live="polite"></p>
+  </div>
+  <p class="small">Real platforms also accept some ambiguity: the same room can be sold on several platforms, so the owner's confirmation is the final word, and some hotels deliberately overbook based on cancellation history.</p>
+</section>
+
+<section id="pay" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Charge exactly once</h2></div>
+  <p>A payment orchestrator handles pay-in (the guest pays through gateways such as cards, PayPal or UPI) and pay-out (the owner is paid minus commission), plus a wallet and a ledger. Networks fail mid-call, so each payment is split into three phases around an <b>idempotency key</b>: <b>pre-RPC</b> records the intent and key, <b>RPC</b> calls the gateway, <b>post-RPC</b> records the result. A retry with the same key returns the stored result instead of charging again.</p>
+  <div class="sheet">
+    <div class="row"><label class="row" style="gap:6px"><input type="checkbox" id="idem" checked> Use idempotency key</label><button class="btn primary" id="payGo">Pay $240 (the response gets lost, client retries)</button></div>
+    <pre class="log" id="payLog"></pre>
+  </div>
+  <div class="cardgrid" id="payCards"></div>
+</section>
+
+<section id="aws" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Day 0 on AWS, mostly serverless</h2></div>
+  <div class="sheet stepper" id="awsStep"><div class="svgbox"><svg id="awsSvg" viewBox="0 0 660 250" role="img" aria-label="Day 0 AWS architecture"></svg></div></div>
+</section>
+
+<section id="dayn" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Scaling to millions</h2></div>
+  <p>Aurora's shared storage grows in 10 GB segments to 128 TB, with up to 15 read replicas and a bigger writer instance. Past that, <b>Aurora Limitless Database</b> shards writes across data-access shards behind distributed transaction routers. Compare where each option tops out.</p>
+  <div class="sheet"><div class="bars" id="auBars"></div></div>
+  <div class="cardgrid" id="dnCards"></div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qs"></span></div><div class="quiz" id="qq"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>System Design on AWS: Building and Scaling Enterprise Solutions</i> by Jayanth Kumar and Mandeep Singh (O'Reilly, 2025). Explanations, examples, code snippets and drawings are original summaries, not copied from the book. AWS limits and prices change; check current AWS documentation before relying on a number.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch17-game-leaderboard.html"><span>Previous · Chapter 17</span><b>Designing an Online Game Leaderboard</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch19-chat.html"><span>Next · Chapter 19</span><b>Designing a Chat Application</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('sda:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('sda:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle */
+(function(){const b=document.getElementById('themeBtn');if(!b)return;const r=document.documentElement;
+ const cur=store.get('theme',null);if(cur)r.setAttribute('data-theme',cur);
+ b.addEventListener('click',()=>{const dark=r.getAttribute('data-theme')?r.getAttribute('data-theme')==='dark':matchMedia('(prefers-color-scheme: dark)').matches;const n=dark?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n)});})();
+/* code blocks */
+
+
+function drawR(){const p=+$('#pP').value*1e6,s=+$('#sS').value*1e6,b=+$('#bB').value/100;$('#pV').textContent=(p/1e6)+' million';$('#sV').textContent=(s/1e6)+' million';$('#bV').textContent=Math.round(b*100)+'%';
+ const gb=p*75e3/1073741824;$('#rK').innerHTML=`<div class="stat"><span class="big blue" style="font-size:1.4rem">${(p*100/1e9).toFixed(1)} B</span><span>rooms (100 per property)</span></div><div class="stat"><span class="big" style="font-size:1.4rem">${Math.round(gb)} GB</span><span>property data (75 KB each)</span></div><div class="stat"><span class="big pencil" style="font-size:1.4rem">${Math.round(s/86400)}/s</span><span>average searches</span></div><div class="stat"><span class="big okc" style="font-size:1.4rem">${Math.round(s*b/86400)}/s</span><span>average bookings</span></div>`}
+['pP','sS','bB'].forEach(i=>$('#'+i).addEventListener('input',drawR));drawR();
+
+graph('#arch',{kind:'Subsystem',start:'book',nodes:[
+ {id:'own',x:70,y:60,w:110,t:'Owners',c:'pencil'},{id:'cus',x:70,y:200,w:110,t:'Customers',c:'pencil'},
+ {id:'onb',x:240,y:60,w:130,t:'Onboarding',c:'blue'},{id:'srch',x:240,y:200,w:130,t:'Search',c:'blue'},{id:'book',x:420,y:200,w:130,t:'Booking',c:'blue'},
+ {id:'rev',x:420,y:60,w:130,t:'Reviews',c:'blue'},{id:'pay',x:600,y:200,w:110,t:'Payments',c:'d3'},{id:'price',x:600,y:60,w:110,t:'Pricing',c:'d4'},{id:'es',x:240,y:130,w:120,h:36,t:'Elasticsearch',c:'d2'}],
+ edges:[['own','onb'],['cus','srch'],['cus','book'],['onb','es'],['es','srch'],['srch','book'],['book','pay'],['book','rev'],['cus','rev'],['price','srch'],['book','price']],
+ info:{own:'Hotels and hosts: register, list properties and rooms, update prices and availability, confirm bookings.',cus:'Search, book, pay, cancel, review. Ten times more searching than booking.',onb:'A state machine per property (draft, details added, rooms added, images added, submitted, approved, live). Writes are rare; DynamoDB single-table or Aurora.',es:'Denormalized property documents fed by CDC from the onboarding store; inverted index for location and text.',srch:'Location + dates + filters → candidate properties from Elasticsearch, then an availability check against the booking store, then pricing. A GraphQL federation layer stitches property, price, reviews and images into one response.',book:'Strongly consistent: room holds, booking state machine, history. Aurora with time-partitioned tables.',pay:'Pay-in and pay-out orchestration with idempotency keys, gateway callbacks (webhooks) and reconciliation.',rev:'One review per user per stay; reads can be eventually consistent and cached.',price:'Dynamic pricing: events from search and booking feed ML models; the price shown is locked for the guest for ~10 minutes.'}},'#archInfo');
+
+function drawE(){const d=+$('#eD').value,g=+$('#eG').value,z=+$('#eZ').value;$('#eV').textContent=d+' GB';$('#gV').textContent=g+'× extra';$('#zV').textContent=z+' GB';
+ const n=Math.ceil(d*(1+g)*1.1/z);const now=d*1.1/n;$('#eK').innerHTML=`<div class="stat"><span class="big blue" style="font-size:1.5rem">${n}</span><span>primary shards</span></div><div class="stat"><span class="big ${now<10?'badc':'okc'}" style="font-size:1.5rem">${now.toFixed(0)} GB</span><span>per shard today${now<10?' (small: many segments)':''}</span></div><div class="stat"><span class="big" style="font-size:1.5rem">${n*2}</span><span>shards with 1 replica each</span></div>`}
+['eD','eG','eZ'].forEach(i=>$('#'+i).addEventListener('input',drawE));drawE();
+
+/* geohash */
+const CH='0123456789bcdefg'.split('');const PL=[[0,1],[1,1],[1,2],[2,1],[2,2],[2,2],[3,0],[0,3],[1,1],[2,3]];let gSel=5,gNb=true;
+function drawG(){const r=Math.floor(gSel/4),c=gSel%4;$('#geo').innerHTML=CH.map((h,i)=>{const rr=Math.floor(i/4),cc=i%4;const near=gNb&&Math.abs(rr-r)<=1&&Math.abs(cc-c)<=1&&i!==gSel;const dots=PL.filter(p=>p[0]===rr&&p[1]===cc).map((p,k)=>`<i style="left:${20+k*18}%;top:${30+k*15}%"></i>`).join('');return`<button data-i="${i}" class="${i===gSel?'me':near?'near':''}" aria-label="cell u${h}">u${h}${dots}</button>`}).join('');
+ const cells=[...Array(16).keys()].filter(i=>i===gSel||(gNb&&Math.abs(Math.floor(i/4)-r)<=1&&Math.abs(i%4-c)<=1));const hits=PL.filter(p=>cells.includes(p[0]*4+p[1])).length;
+ $('#geoTxt').innerHTML=`Query prefix <b class="mono">u${CH[gSel]}</b>${gNb?` plus ${cells.length-1} neighbors`:''}: ${hits} properties found. Every cell here shares the prefix <b class="mono">u</b>; one more character would split each cell into 32 smaller ones.`;
+ $$('#geo button').forEach(b=>b.addEventListener('click',()=>{gSel=+b.dataset.i;drawG()}))}
+$('#geoNb').addEventListener('click',e=>{gNb=!gNb;e.currentTarget.setAttribute('aria-pressed',gNb);drawG()});drawG();
+
+/* booking states */
+const BS=['INITIATED','ROOM_HELD','PAYMENT_PENDING','PENDING_CONFIRMATION','CONFIRMED','CHECKED_IN','COMPLETED'];let bi=0,bx=null;
+const BT=['Guest picked a room and dates.','A hold is placed on the room (TTL ~10 to 20 min); price locked.','Payment orchestrator called with an idempotency key.','Waiting for the property: instant for some, manual for others.','Owner confirmed. Notifications via SNS/SES.','Guest arrived.','Stay over: review request sent, payout to owner.'];
+function drawB(){$('#bs').innerHTML=BS.map((s,i)=>`<span class="${i===bi&&!bx?'on':''}${i===BS.length-1&&bi===i?' end':''}">${s}</span>`).join('<span style="border:0;background:none">→</span>')+(bx?`<span class="x">${bx}</span>`:'');$('#bTxt').textContent=bx?(bx==='FAILED'?'Payment failed: hold released, room back in inventory, guest asked to retry.':'Cancelled: refund per policy, inventory released, history row written.'):BT[bi]}
+$('#bOk').addEventListener('click',()=>{if(!bx&&bi<BS.length-1)bi++;drawB()});$('#bFail').addEventListener('click',()=>{if(bi>=1&&bi<=2&&!bx)bx='FAILED';else $('#bTxt').textContent='Payment can only fail while the room is held or payment is pending.';if(bx)drawB()});
+$('#bCancel').addEventListener('click',()=>{if(bi<5&&!bx){bx='CANCELLED';drawB()}});$('#bRst').addEventListener('click',()=>{bi=0;bx=null;drawB()});drawB();
+
+/* locking */
+let lm='none';seg('.seg[aria-label="Strategy"] button',b=>{lm=b.dataset.m;lkReset()});
+function lkReset(){$('#lA').innerHTML='<b>Ana</b>';$('#lB').innerHTML='<b>Ben</b>';$('#rmSt').textContent='available: 1 · version 7';$('#lkTxt').textContent=''}
+$('#lkRun').addEventListener('click',()=>{const A=[],B=[];let st;
+ if(lm==='none'){A.push('read → 1 left');B.push('read → 1 left');A.push('<span class="okc">write available=0 ✓</span>');B.push('<span class="okc">write available=0 ✓</span>');st='available: 0 · 2 bookings!';$('#lkTxt').innerHTML='<b class="badc">Double booking.</b> Both read before either wrote.'}
+ if(lm==='pess'){A.push('SELECT … FOR UPDATE → lock');B.push('SELECT … FOR UPDATE → waiting…');A.push('<span class="okc">write available=0, commit ✓</span>');B.push('lock granted → 0 left');B.push('<span class="badc">sold out</span>');st='available: 0 · 1 booking';$('#lkTxt').innerHTML='<b class="okc">Correct</b>, but Ben waited. Under heavy contention lock queues become the bottleneck.'}
+ if(lm==='opt'){A.push('read → 1 left, v7');B.push('read → 1 left, v7');A.push('<span class="okc">UPDATE … WHERE version=7 → v8 ✓</span>');B.push('<span class="badc">UPDATE … WHERE version=7 → 0 rows</span>');B.push('retry: re-read → 0 left');st='available: 0 · version 8';$('#lkTxt').innerHTML='<b class="okc">Correct</b> and lock-free. Losers retry, which is cheap when conflicts are rare (DynamoDB conditional writes work the same way).'}
+ if(lm==='hold'){A.push('SET room_42_0612 ana NX EX 600 → OK');B.push('<span class="badc">SET room_42_0612 ben NX EX 600 → nil</span>');B.push('"someone is booking this room"');A.push('pays → booking saved, DEL key');st='available: 0 · 1 booking';$('#lkTxt').innerHTML='<b class="okc">Correct</b>, with a hold that expires by itself if Ana abandons checkout, so the room is never stuck. Good for seat- or room-picking flows.'}
+ $('#lA').innerHTML='<b>Ana</b>'+A.map(x=>`<span>${x}</span>`).join('');$('#lB').innerHTML='<b>Ben</b>'+B.map(x=>`<span>${x}</span>`).join('');$('#rmSt').textContent=st});lkReset();
+
+/* payments */
+$('#payGo').addEventListener('click',()=>{const k=$('#idem').checked;const L=['pre-RPC   create payment row  status=CREATED'+(k?'  key=bk-8812-pay-1':''),'RPC       call gateway: charge $240','          gateway charged the card ✓ … response lost (timeout)','client    retry the same request'];
+ if(k)L.push('pre-RPC   key bk-8812-pay-1 already exists → status PROCESSING','          ask gateway by key → already charged','post-RPC  status=SUCCESS, return the stored result','RESULT    guest charged once: $240 ✓');else L.push('pre-RPC   new payment row (no way to tell it is a retry)','RPC       call gateway: charge $240 ✓','post-RPC  status=SUCCESS','RESULT    guest charged twice: $480 ✕');$('#payLog').textContent=L.join('\n')});
+cards('#payCards',[{t:'Retryable vs not',d:'Errors are classified so clients know whether a retry is safe, and retries happen only inside a window to avoid storms.'},{t:'Callbacks and reconciliation',d:'Gateways report asynchronously via webhooks; a reconciliation job compares the ledger with gateway reports daily.'},{t:'Queues, but not blindly',d:'Events between booking and payment decouple the systems, but the booking flow must still work if a callback is missed, by polling payment status.'},{t:'Price lock',d:'Dynamic prices change constantly; the price quoted is held for the guest for a fixed window so the charge matches what they saw.'}]);
+
+/* AWS stepper */
+const aS=$('#awsSvg');const AN={};const ab=(id,x,y,t,c,w)=>{w=w||104;const g=el('g');g.appendChild(el('rect',{x:x-w/2,y:y-18,width:w,height:36,rx:6,fill:'var(--surface)',stroke:`var(--${c})`,'stroke-width':1.6}));t.split('\n').forEach((l,i,a)=>g.appendChild(el('text',{x,y:y+4+(i-(a.length-1)/2)*12,'text-anchor':'middle','font-size':11,class:'s-ink'},l)));aS.appendChild(g);AN[id]=g};
+[[60,125,170,125],[170,125,290,45],[170,125,290,125],[170,125,290,205],[290,45,420,45],[420,45,560,45],[420,45,420,125],[290,125,420,125],[420,125,560,125],[290,205,420,205],[420,205,560,205],[560,205,560,125]].forEach(([a,b,c,d])=>aS.appendChild(el('line',{x1:a,y1:b,x2:c,y2:d,stroke:'var(--line)','stroke-width':2})));
+ab('u',60,125,'Route 53 +\nCognito','pencil',100);ab('api',170,125,'API Gateway','d5');ab('lo',290,45,'λ onboarding','blue');ab('ls',290,125,'λ search','blue');ab('lb',290,205,'Step Functions\nbooking','blue',112);
+ab('ddb',420,45,'DynamoDB\nproperties','d3');ab('s3',560,45,'S3 media +\nconfig','d2');ab('os',420,125,'OpenSearch','d2');ab('rc',560,125,'ElastiCache\n(cache, holds)','d4',112);ab('au',420,205,'Aurora\nbookings','d3');ab('ntf',560,205,'Payments,\nSNS + SES','ok',108);
+const AST=[[['u','api','lo','ddb','s3'],'Onboarding: owners sign in with Cognito; Lambda writes properties to DynamoDB, images to one S3 bucket, and publishes a static config of each property to another.'],[['s3','os'],'The search side consumes published configs (rather than raw DynamoDB streams) and models them its own way in OpenSearch.'],[['u','api','ls','os','rc'],'Search: Lambda queries OpenSearch, checks availability and prices, caches hot results in ElastiCache.'],[['ls','au'],'Availability is checked against the strongly consistent booking store before results are shown as bookable.'],[['u','api','lb','rc','au'],'Booking: a Step Functions workflow places a hold, writes the booking to Aurora and advances its state.'],[['lb','ntf','au'],'It calls the payment service, waits for owner confirmation and notifies the guest through SNS and SES.']];
+$('#awsStep').insertAdjacentHTML('beforeend',stepHTML());stepper('#awsStep',AST.map(s=>s[1]),i=>{const on=new Set(AST[i][0]);Object.entries(AN).forEach(([k,g])=>g.style.opacity=on.has(k)?1:.25)});
+
+bars('#auBars',[{l:'Aurora cluster storage',v:128,c:'blue',txt:'128 TB'},{l:'Read replicas per cluster',v:15,c:'d3',txt:'15'},{l:'Aurora Limitless (sharded)',v:1000,c:'ok',txt:'petabytes, millions of writes/s'}],1000);
+cards('#dnCards',[{t:'Serverless is not the enemy',d:'Lambda and DynamoDB scale; the question is cost per request at steady high traffic. Hot paths can move to ECS/EKS behind load balancers.'},{t:'Independent scaling',d:'Search, booking, pricing and notifications each scale on their own signals; pricing has a write layer (events, ML) and a read layer.'},{t:'Notification service',d:'A dedicated service fans out to email, SMS, push and chat apps, and handles marketing campaigns too.'},{t:'Accounts and regions',d:'Split subsystems into separate AWS accounts for blast radius and billing, with cross-account networking.'}]);
+
+quiz('#qq','#qs',[
+ {q:'Two guests read "1 room left" at the same time. Optimistic concurrency…',o:['Lets both succeed','Lets one write succeed; the other fails on the version check','Makes both wait'],a:1,why:'The conditional write includes the version that was read; only the first matches.'},
+ {q:'Redis SET key val NX EX 600 means…',o:['Set only if absent, expire in 600 s','Set and never expire','Delete after 600 reads'],a:0,why:'NX = only if not exists; EX = TTL in seconds. A natural expiring hold.'},
+ {q:'Two geohashes share a long prefix. This suggests the places are…',o:['Far apart','Close to each other','In the same country only'],a:1,why:'Each character narrows the cell; shared prefixes mean shared cells. (Edges need neighbor checks.)'},
+ {q:'The idempotency key prevents…',o:['Fraud','Charging twice when a request is retried','Slow gateways'],a:1,why:'A retried request finds the existing payment record and returns its result.'},
+ {q:'With 715 GB of data, 2× growth room, 10% overhead and 30 GB shards, roughly how many shards?',o:['5','53','500'],a:1,why:'(715+715) × 1.1 / 30 ≈ 53.'}]);
+
+})();
+</script>
+</body>
+</html>

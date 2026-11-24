@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Memoizing Quadtrees for a Better Life</title>
+<meta name="description" content="Optimizing Conway&#x27;s Game of Life the usual way buys constant factors. Re-imagining the grid as an immutable, memoized quadtree buys astronomical speedups: Gosper&#x27;s HashLife.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Fabulous Adventures companion: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:4px;flex-wrap:wrap;flex:1 1 80px;min-width:0}
+.dots i{width:clamp(6px,3vw,22px);height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code + data-structure helpers */
+pre.code{margin:0;font-family:var(--mono);font-size:.84rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .k{color:var(--blue);font-weight:600} pre.code .c{color:var(--muted);font-style:italic} pre.code .s{color:var(--d2)}
+code{font-family:var(--mono);font-size:.88em;background:var(--blue-soft);padding:1px 5px;border-radius:4px}
+.cells{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.cell{font-family:var(--mono);font-size:.9rem;min-width:2.2em;padding:4px 8px;border:1.5px solid var(--blue);border-radius:6px;background:var(--surface);text-align:center;transition:all .3s}
+.cell.hl{background:var(--blue);color:var(--surface)} .cell.pc{border-color:var(--pencil);background:var(--pencil-soft)} .cell.ok{border-color:var(--ok);background:var(--ok-soft)} .cell.bad{border-color:var(--bad);background:var(--bad-soft)} .cell.dim{opacity:.35}
+.log{font-family:var(--mono);font-size:.82rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+input[type=text],input[type=number]{font:inherit;font-size:.92rem;padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+canvas{max-width:100%;display:block}
+
+/* page */
+
+.lifebox{display:flex;justify-content:center}
+.lifebox canvas{border:1px solid var(--line);border-radius:6px;background:var(--surface);touch-action:none;width:100%;max-width:420px;height:auto;image-rendering:pixelated}
+.qgrid{display:grid;grid-template-columns:repeat(16,1fr);gap:1px;max-width:340px;width:100%;margin:0 auto;background:var(--line);border:1px solid var(--line)}
+.qgrid button{aspect-ratio:1;border:0;padding:0;background:var(--surface);min-width:0}
+.qgrid button.on{background:var(--ink)}
+.mini4{display:grid;grid-template-columns:repeat(8,1fr);gap:2px;max-width:280px;width:100%;margin:0 auto}
+.mini4 i{aspect-ratio:1;border-radius:2px;background:var(--paper);border:1px solid var(--line);transition:all .3s}
+.mini4 i.on{background:var(--ink)}
+.mini4 i.hl{outline:2px solid var(--pencil);outline-offset:-2px}
+.mini4 i.res{background:var(--ok-soft)} .mini4 i.res.on{background:var(--ok)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Fabulous Adventures in DS&A · visual companion</a><span class="tag">Part 1 · Chapter 4 of 16</span></div>
+  <h1>Memoizing Quadtrees for a Better Life</h1>
+  <p class="lede">Optimizing Conway's Game of Life the usual way buys constant factors. Re-imagining the grid as an immutable, memoized quadtree buys astronomical speedups: Gosper's HashLife.</p>
+  <nav class="toc" aria-label="Sections"><a href="#rules">Rules of Life</a><a href="#naive">The usual approach</a><a href="#quad">Quadtrees</a><a href="#base">The key insight</a><a href="#jump">Bigger steps</a><a href="#run">Run HashLife</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="rules" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Conway's Game of Life</h2></div>
+  <p>An infinite grid of cells, each alive or dead, ticks forward in lockstep. A cell with <b>three</b> live neighbours is alive next tick; with <b>two</b> it stays as it is; anything else, it dies. No players, just a starting pattern. Out of these rules come still lifes, oscillators, spaceships, guns that fire spaceships, and even full Turing-complete computers. Click cells to draw, or pick a pattern.</p>
+  <div class="sheet">
+    <div class="row"><select id="pat" aria-label="Pattern"><option value="glider">Glider</option><option value="blinker">Blinker</option><option value="still">Still lifes</option><option value="r">R-pentomino</option><option value="gun">Gosper glider gun</option><option value="lonely">Lonely cells</option></select>
+      <button class="btn primary" id="play">Play</button><button class="btn" id="step1">Step</button><button class="btn" id="clr">Clear</button>
+      <label class="row small"><input type="checkbox" id="track"> show change tracking</label></div>
+    <div class="lifebox"><canvas id="lc" width="384" height="288" aria-label="Life grid, click to toggle cells"></canvas></div>
+    <p class="small mono" id="lStat"></p>
+  </div>
+</section>
+
+<section id="naive" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Two arrays and a profiler</h2></div>
+  <p>The standard first attempt: a fixed array with a ring of permanently dead cells around it (so no bounds checks), a second array to write the next tick into, swap, repeat. Every tick examines every cell: <b>O(n) per tick</b>. Bytes turned out slightly faster than bools; measurement beats guessing.</p>
+  <p>From there, two ways to go faster. You can <b>tune the same algorithm</b>, or you can <b>challenge the frame</b> and exploit something special about the problem. Compare the options.</p>
+  <div class="sheet"><div class="bars" id="spBars"></div><p class="small">Relative speed, log scale. The first three only shrink the constant; HashLife changes what the cost depends on.</p></div>
+  <div class="callout blue"><b class="h">Change tracking</b><span>A region whose cells are all dead or still, with a dead border, will not change next tick. Track where the grid is active and skip the rest, and the cost becomes proportional to the <i>active</i> region. Tick the "show change tracking" box above: only cells near a change (orange) need looking at.</span></div>
+</section>
+
+<section id="quad" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>An immutable quadtree, deduplicated</h2></div>
+  <p>An <b>n-quad</b> is a square of side 2ⁿ. A 0-quad is a single cell; an n-quad is four (n−1)-quads, NW, NE, SW, SE. At first this looks absurd: a reference per cell is far bigger than a bit. But there are only <b>two</b> possible 0-quads, sixteen 1-quads, and of the 65,536 possible 2-quads a real pattern uses few. If the factory is <b>memoized</b> so that equal quads are always the same object, a huge grid shrinks to the size of its <i>irregularity</i>. Draw on this 4-quad and compare object counts.</p>
+  <div class="sheet">
+    <div class="two">
+      <div class="qgrid" id="qg" role="group" aria-label="16 by 16 grid"></div>
+      <div class="stack"><div class="bars" id="qBars"></div><p class="small" id="qTxt"></p><div class="row"><button class="btn" id="qClr">Clear</button><button class="btn" id="qRnd">Random</button><button class="btn" id="qGl">A few gliders</button></div></div>
+    </div>
+  </div>
+  <div class="three">
+    <div class="stat"><b>61 objects</b><span>an empty 60-quad: 2¹²⁰ cells, one object per level</span></div>
+    <div class="stat"><b>Reference equality</b><span>"is this quad empty?" is one pointer comparison</span></div>
+    <div class="stat"><b>Persistent</b><span>setting a cell rebuilds one path of n quads; the rest is shared</span></div>
+  </div>
+  <div class="callout"><b class="h">"A cache with a bad policy is another name for a memory leak"</b><span>The memoizer is a dictionary from arguments to results, which works for any pure function. A function of several arguments can take one tuple. But the dictionary grows forever unless something evicts entries, so the book's memoizer can report its size and be cleared.</span></div>
+</section>
+
+<section id="base" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>A 2-quad knows its center's future</h2></div>
+  <p>A 4×4 square has exactly enough information to compute its central 2×2 one tick later; the outer ring's own future depends on cells we can't see. That is the base case. For a bigger square, take <b>nine overlapping</b> half-size sub-squares, step each, regroup the nine results into four, and take their centers: you get the center half of the original, one tick later. Step through it on an 8×8 example.</p>
+  <div class="sheet stepper" id="bStep">
+    <div class="mini4" id="b8"></div>
+  </div>
+</section>
+
+<section id="jump" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Don't take the centers: step them again</h2></div>
+  <p>In that last stage, instead of just taking the centers of the four regrouped squares, <b>step them</b> too. Now an 8×8 gives its center 4×4 <b>two</b> ticks ahead. Apply the same trick at every level: an n-quad yields its central (n−1)-quad <b>2ⁿ⁻² ticks</b> in the future, using 13 recursive calls. Memoize that Step function and the futures of common patterns are computed once and reused everywhere.</p>
+  <div class="sheet">
+    <label class="rng"><span>Quad level n: <b id="lvV">12</b></span><input type="range" id="lv" min="2" max="60" value="12"></label>
+    <p id="lvTxt"></p>
+  </div>
+  <div class="callout blue"><b class="h">The grid never shrinks</b><span>Stepping returns a smaller quad, so before each step the grid is "embiggened": placed at the center of a larger, otherwise-empty quad. Empty space is nearly free (all those empty quads are the same object), so we can always add more, and spaceships never hit the edge.</span></div>
+</section>
+
+<section id="run" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>HashLife, running in your browser</h2></div>
+  <p>A complete memoized HashLife engine. Pick a pattern and jump ahead by powers of two. Watch the generation count explode while the work stays small, then look at the cache sizes: millions of possible quads, only thousands actually built.</p>
+  <div class="sheet">
+    <div class="row"><select id="hp" aria-label="Pattern"><option value="gun">Gosper glider gun</option><option value="r">R-pentomino</option><option value="acorn">Acorn</option><option value="glider">Glider</option></select><button class="btn" id="hReset">Reset</button></div>
+    <div class="row"><button class="btn" data-j="0">+1</button><button class="btn" data-j="4">+16</button><button class="btn" data-j="8">+256</button><button class="btn" data-j="12">+4,096</button><button class="btn primary" data-j="16">+65,536</button><button class="btn" data-j="20">+1,048,576</button></div>
+    <div class="lifebox"><canvas id="hc" width="256" height="256" aria-label="HashLife universe overview"></canvas></div>
+    <div class="three"><div class="stat"><span>generation</span><b class="mono" id="hGen">0</b></div><div class="stat"><span>live cells</span><b class="mono" id="hPop">0</b></div><div class="stat"><span>root level / cache</span><b class="mono" id="hCache">0</b></div></div>
+    <p class="small" id="hTxt"></p>
+  </div>
+  <div class="cardgrid" id="hlCards"></div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="score"></span></div><div class="quiz" id="quizBox"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Fabulous Adventures in Data Structures and Algorithms</i> by Eric Lippert (Manning, 2026). Explanations, code snippets, simulations and drawings are original summaries written for study; they are not taken from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch03-deque.html"><span>Previous · Chapter 3</span><b>An Immutable Deque</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch05-dawg.html"><span>Next · Chapter 5</span><b>The Directed Acyclic Word Graph</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('fadsa:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('fadsa:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+
+const PAT={glider:[[1,0],[2,1],[0,2],[1,2],[2,2]],blinker:[[0,1],[1,1],[2,1]],r:[[1,0],[2,0],[0,1],[1,1],[1,2]],acorn:[[1,0],[3,1],[0,2],[1,2],[4,2],[5,2],[6,2]],
+ gun:[[24,0],[22,1],[24,1],[12,2],[13,2],[20,2],[21,2],[34,2],[35,2],[11,3],[15,3],[20,3],[21,3],[34,3],[35,3],[0,4],[1,4],[10,4],[16,4],[20,4],[21,4],[0,5],[1,5],[10,5],[14,5],[16,5],[17,5],[22,5],[24,5],[10,6],[16,6],[24,6],[11,7],[15,7],[12,8],[13,8]],
+ still:[[0,0],[1,0],[0,1],[1,1],[5,0],[6,0],[4,1],[7,1],[5,2],[6,2],[11,0],[12,0],[10,1],[13,1],[10,2],[13,2],[11,3],[12,3],[0,6],[1,6],[0,7],[2,7],[1,8],[6,6],[5,7],[7,7],[6,8]],
+ lonely:[[0,0],[3,1],[6,0],[1,4],[5,4],[3,3]]};
+/* simple array Life */
+const W=48,H=36,cv=$('#lc'),cx=cv.getContext('2d');let g=new Uint8Array(W*H),prev=new Uint8Array(W*H),gen=0,timer=null;
+function put(p,ox,oy){g.fill(0);prev.fill(0);gen=0;p.forEach(([x,y])=>{if(x+ox<W&&y+oy<H)g[(y+oy)*W+x+ox]=1});drawL()}
+function stepL(){const n=new Uint8Array(W*H);prev=g;for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){const i=y*W+x;const c=g[i-W-1]+g[i-W]+g[i-W+1]+g[i-1]+g[i+1]+g[i+W-1]+g[i+W]+g[i+W+1];n[i]=c===3||(g[i]&&c===2)?1:0}g=n;gen++;drawL()}
+function col(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim()||'#000'}
+function drawL(){const s=8;cx.fillStyle=col('--surface');cx.fillRect(0,0,W*s,H*s);let act=0,pop=0;
+ if($('#track').checked&&gen>0){cx.fillStyle=col('--pencil-soft');for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){let ch=0;for(let dy=-1;dy<=1&&!ch;dy++)for(let dx=-1;dx<=1;dx++){const j=(y+dy)*W+x+dx;if(g[j]!==prev[j]){ch=1;break}}if(ch){act++;cx.fillRect(x*s,y*s,s,s)}}}
+ cx.fillStyle=col('--ink');for(let i=0;i<W*H;i++)if(g[i]){pop++;cx.fillRect((i%W)*s+1,Math.floor(i/W)*s+1,s-2,s-2)}
+ cx.strokeStyle=col('--bad');cx.lineWidth=1;cx.strokeRect(s+.5,s+.5,(W-2)*s-1,(H-2)*s-1);
+ $('#lStat').textContent=`tick ${gen} · live ${pop} · cells examined by naive algorithm: ${(W-2)*(H-2)}`+($('#track').checked&&gen>0?` · by change tracking: ~${act}`:'')}
+function load(){const p=$('#pat').value;const o={glider:[3,3],blinker:[20,15],still:[6,6],r:[22,15],gun:[4,4],lonely:[18,12]}[p];put(PAT[p],o[0],o[1])}
+$('#pat').addEventListener('change',load);$('#step1').addEventListener('click',stepL);$('#clr').addEventListener('click',()=>{g.fill(0);prev.fill(0);gen=0;drawL()});$('#track').addEventListener('change',drawL);
+$('#play').addEventListener('click',()=>{if(timer){clearInterval(timer);timer=null;$('#play').textContent='Play'}else{timer=setInterval(stepL,110);$('#play').textContent='Pause'}});
+cv.addEventListener('pointerdown',e=>{const r=cv.getBoundingClientRect();const x=Math.floor((e.clientX-r.left)/r.width*W),y=Math.floor((e.clientY-r.top)/r.height*H);if(x>0&&y>0&&x<W-1&&y<H-1){g[y*W+x]^=1;drawL()}});
+load();
+bars('#spBars',[{l:'Naive arrays',v:Math.log10(1)+.3,c:'muted',txt:'1×'},{l:'Profile & tweak',v:Math.log10(1.5)+.3,c:'muted',txt:'~1.2k ticks/s'},{l:'SIMD bit vectors',v:Math.log10(10)+.3,c:'blue',txt:'~10×'},{l:'GPU',v:Math.log10(200)+.3,c:'blue',txt:'~200×'},{l:'Change tracking',v:Math.log10(400)+.3,c:'d2',txt:'∝ active cells'},{l:'HashLife (settled)',v:9,c:'ok',txt:'≈ O(1) per jump'}],9);
+
+/* quadtree dedup */
+const qg=new Uint8Array(256);$('#qg').innerHTML=Array.from({length:256},(_,i)=>`<button data-i="${i}" aria-label="cell ${i%16},${i>>4}"></button>`).join('');
+function qDraw(){$$('#qg button').forEach((b,i)=>b.classList.toggle('on',!!qg[i]));const sets=[new Set(),new Set(),new Set(),new Set(),new Set()];
+ function key(x,y,s,l){if(l===0){const k=String(qg[y*16+x]);sets[0].add(k);return k}const h=s/2;const k='('+[key(x,y,h,l-1),key(x+h,y,h,l-1),key(x,y+h,h,l-1),key(x+h,y+h,h,l-1)].join(',')+')';sets[l].add(k);return k}
+ key(0,0,16,4);const nav=[256,64,16,4,1];const tot=sets.reduce((a,s)=>a+s.size,0);
+ bars('#qBars',[0,1,2,3,4].map(l=>({l:`${l}-quads`,v:sets[l].size,c:'ok',txt:`${sets[l].size} of ${nav[l]}`})),64);
+ $('#qTxt').innerHTML=`Without sharing: <b>341</b> objects. Memoized: <b class="okc">${tot}</b>. More regular patterns compress better.`}
+$('#qg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;qg[+b.dataset.i]^=1;qDraw()});
+$('#qClr').addEventListener('click',()=>{qg.fill(0);qDraw()});$('#qRnd').addEventListener('click',()=>{for(let i=0;i<256;i++)qg[i]=Math.random()<.3?1:0;qDraw()});
+$('#qGl').addEventListener('click',()=>{qg.fill(0);[[1,1],[9,1],[1,9],[9,9]].forEach(([ox,oy])=>PAT.glider.forEach(([x,y])=>qg[(y+oy)*16+x+ox]=1));qDraw()});
+$('#qGl').click();
+
+/* base case stepper on 8x8 */
+const B8=[0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,1,0,0,0,0, 0,0,0,0,1,0,0,0, 0,0,1,1,1,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0];
+function lifeAt(a,w,x,y){let c=0;for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){if(!dx&&!dy)continue;const X=x+dx,Y=y+dy;if(X>=0&&Y>=0&&X<w&&Y<w)c+=a[Y*w+X]}return c===3||(a[y*w+x]&&c===2)?1:0}
+const next1=B8.map((_,i)=>lifeAt(B8,8,i%8,i>>3)),next2=next1.map((_,i)=>lifeAt(next1,8,i%8,i>>3));
+$('#b8').innerHTML=B8.map(()=>'<i></i>').join('');$('#bStep').insertAdjacentHTML('beforeend',stepHTML());
+const subs=[[0,0],[2,0],[4,0],[0,2],[2,2],[4,2],[0,4],[2,4],[4,4]];
+const bcaps=['An 8×8 grid (a 3-quad) holding a glider. We want its center 4×4, one tick from now.','Base case: any 4×4 square (a 2-quad) determines its center 2×2 one tick ahead. Here is the top-left one.'].concat(['north','north-east','west','center','east','south-west','south','south-east'].map(n=>`Next, the ${n} 4×4 sub-square. The nine sub-squares overlap; each gives a 2×2 result.`))
+ .concat(['All nine 2×2 results together cover the central 6×6, one tick ahead (green).','Regroup the nine into four 4×4 squares and take each one\'s center 2×2: that is the center 4×4, one tick ahead. Recursion generalizes this to any size.','The HashLife twist: instead of taking those centers, step the four regrouped squares again. The center 4×4 is now two ticks ahead.']);
+stepper('#bStep',bcaps,i=>{const cells=$$('#b8 i');cells.forEach((c,k)=>{c.className='';const x=k%8,y=k>>3;
+ if(i===0){if(B8[k])c.classList.add('on');return}
+ if(i>=1&&i<=9){const si=i-1;const [sx,sy]=subs[Math.min(si,8)];if(B8[k])c.classList.add('on');if(x>=sx&&x<sx+4&&y>=sy&&y<sy+4)c.classList.add('hl');
+  for(let t=0;t<=Math.min(si,8);t++){const [ax,ay]=subs[t];if(x>=ax+1&&x<ax+3&&y>=ay+1&&y<ay+3){c.className='res'+(next1[k]?' on':'');}}return}
+ if(i===10){if(x>=1&&x<7&&y>=1&&y<7)c.className='res'+(next1[k]?' on':'');else if(B8[k])c.classList.add('on');return}
+ if(i===11){if(x>=2&&x<6&&y>=2&&y<6)c.className='res'+(next1[k]?' on':'');return}
+ if(i===12){if(x>=2&&x<6&&y>=2&&y<6)c.className='res'+(next2[k]?' on':'');return}});});
+
+/* level slider */
+function lvT(){const n=+$('#lv').value;$('#lvV').textContent=n;const ticks=n>=2?Math.pow(2,n-2):1;const side=Math.pow(2,n);
+ $('#lvTxt').innerHTML=`A ${n}-quad is ${side>1e15?'2^'+n:side.toLocaleString()} cells on a side. One call to Step returns its center ${n-1}-quad <b>${ticks>1e15?'2^'+(n-2):ticks.toLocaleString()}</b> tick${ticks===1?'':'s'} in the future, via 13 recursive calls on ${n-1}-quads (9 at the top level when stepping slower). That is why the book's <code>Step(speed)</code> moves 2<sup>speed</sup> ticks.`}
+$('#lv').addEventListener('input',lvT);lvT();
+
+/* HashLife engine */
+let memo,nid,LEAF,emptyM,stepCalls;
+function init(){memo=new Map();nid=2;emptyM=[];stepCalls=0;LEAF=[{level:0,pop:0,id:0},{level:0,pop:1,id:1}];}
+function join(nw,ne,sw,se){const k=nw.id+','+ne.id+','+sw.id+','+se.id;let n=memo.get(k);if(n)return n;n={level:nw.level+1,nw,ne,sw,se,pop:nw.pop+ne.pop+sw.pop+se.pop,id:nid++,res:new Map()};memo.set(k,n);return n}
+function empty(l){if(l===0)return LEAF[0];if(!emptyM[l]){const e=empty(l-1);emptyM[l]=join(e,e,e,e)}return emptyM[l]}
+function embig(q){const e=empty(q.level-1);return join(join(e,e,e,q.nw),join(e,e,q.ne,e),join(e,q.sw,e,e),join(q.se,e,e,e))}
+function center(q){return join(q.nw.se,q.ne.sw,q.sw.ne,q.se.nw)}
+function cell(q,x,y){if(q.level===0)return q.pop;const h=1<<(q.level-1);return cell(x<h?(y<h?q.nw:q.sw):(y<h?q.ne:q.se),x%h,y%h)}
+function base(q){const a=[];for(let y=0;y<4;y++)for(let x=0;x<4;x++)a.push(cell(q,x,y));const r=(x,y)=>LEAF[lifeAt(a,4,x,y)];return join(r(1,1),r(2,1),r(1,2),r(2,2))}
+function step(q,j){if(q.pop===0)return empty(q.level-1);const c=q.res.get(j);if(c)return c;stepCalls++;let r;
+ if(q.level===2)r=base(q);else{const nine=j===q.level-2?j-1:j;
+  const n00=q.nw,n01=join(q.nw.ne,q.ne.nw,q.nw.se,q.ne.sw),n02=q.ne,n10=join(q.nw.sw,q.nw.se,q.sw.nw,q.sw.ne),n11=center(q),n12=join(q.ne.sw,q.ne.se,q.se.nw,q.se.ne),n20=q.sw,n21=join(q.sw.ne,q.se.nw,q.sw.se,q.se.sw),n22=q.se;
+  const s=[n00,n01,n02,n10,n11,n12,n20,n21,n22].map(n=>step(n,nine));
+  const f=[join(s[0],s[1],s[3],s[4]),join(s[1],s[2],s[4],s[5]),join(s[3],s[4],s[6],s[7]),join(s[4],s[5],s[7],s[8])];
+  const g4=j===q.level-2?f.map(x=>step(x,j-1)):f.map(center);r=join(g4[0],g4[1],g4[2],g4[3])}
+ q.res.set(j,r);return r}
+let root,hGen=0;
+function setCells(list){init();let q=empty(6);list.forEach(([x,y])=>{q=setc(q,x+20,y+20)});root=q;hGen=0}
+function setc(q,x,y){if(q.level===0)return LEAF[1];const h=1<<(q.level-1);if(x<h){if(y<h)return join(setc(q.nw,x,y),q.ne,q.sw,q.se);return join(q.nw,q.ne,setc(q.sw,x,y-h),q.se)}if(y<h)return join(q.nw,setc(q.ne,x-h,y),q.sw,q.se);return join(q.nw,q.ne,q.sw,setc(q.se,x-h,y-h))}
+function adv(j){while(root.level<j+3)root=embig(root);
+ // ensure two rings of empty space so live cells stay inside the central region
+ while(center(center(root)).pop!==root.pop)root=embig(root);root=embig(root);
+ root=step(root,j);hGen+=Math.pow(2,j)}
+function hDraw(){const c=$('#hc'),x=c.getContext('2d');const N=256;x.fillStyle=col('--surface');x.fillRect(0,0,N,N);x.fillStyle=col('--ink');
+ const stop=Math.max(0,root.level-9);let bx0=1e18,by0=1e18,bx1=-1e18,by1=-1e18;
+ (function bb(q,x0,y0){if(q.pop===0)return;const s=Math.pow(2,q.level);if(q.level<=stop){bx0=Math.min(bx0,x0);by0=Math.min(by0,y0);bx1=Math.max(bx1,x0+s);by1=Math.max(by1,y0+s);return}const h=s/2;bb(q.nw,x0,y0);bb(q.ne,x0+h,y0);bb(q.sw,x0,y0+h);bb(q.se,x0+h,y0+h)})(root,0,0);
+ if(bx1<bx0){bx0=by0=0;bx1=by1=16}const span=Math.max(bx1-bx0,by1-by0,16)*1.15,sc=N/span,ox=(bx0+bx1)/2-span/2,oy=(by0+by1)/2-span/2;
+ function draw(q,X,Y){if(q.pop===0)return;const s=Math.pow(2,q.level),px=(X-ox)*sc,py=(Y-oy)*sc,ps=s*sc;if(px>N||py>N||px+ps<0||py+ps<0)return;
+  if(ps<=1.5||q.level===0){x.fillRect(px,py,Math.max(1,ps),Math.max(1,ps));return}const h=s/2;draw(q.nw,X,Y);draw(q.ne,X+h,Y);draw(q.sw,X,Y+h);draw(q.se,X+h,Y+h)}
+ draw(root,0,0);
+$('#hGen').textContent=hGen.toLocaleString();$('#hPop').textContent=root.pop.toLocaleString();$('#hCache').textContent=`${root.level} / ${memo.size.toLocaleString()}`}
+function hLoad(){setCells(PAT[$('#hp').value]);hDraw();$('#hTxt').textContent='Loaded. The overview is cropped to the live region, so it zooms out as the pattern grows.'}
+$('#hp').addEventListener('change',hLoad);$('#hReset').addEventListener('click',hLoad);
+$$('[data-j]').forEach(b=>b.addEventListener('click',()=>{const j=+b.dataset.j;const t0=performance.now();const c0=stepCalls;adv(j);const ms=performance.now()-t0;hDraw();
+ $('#hTxt').innerHTML=`Jumped ${Math.pow(2,j).toLocaleString()} generation${j?'s':''} in <b>${ms.toFixed(1)} ms</b> with ${(stepCalls-c0).toLocaleString()} new (unmemoized) Step computations. Jump again by the same amount and it is usually cheaper still: the futures of repeating pieces are already cached.`}));
+hLoad();
+cards('#hlCards',[
+ {t:'Power-law caches',d:'In the book\'s measurements a mere 20 cache entries served 40% of calls, yet half of all entries were never hit again. Hot entries are gold; the cold tail is wasted memory.',c:'d3'},
+ {t:'Self-tuning eviction',d:'Every few hundred steps, if the caches exceed their previous high-water mark, throw cached state away and record the new size. An LRU cache would be more refined.',c:'d2'},
+ {t:'Chaos first, then speed',d:'During the early chaotic phase HashLife is no faster than arrays. Once a pattern settles into still lifes, oscillators and gliders, its cost approaches O(1) per jump regardless of grid size.',c:'ok'}]);
+
+quiz('#quizBox','#score',[
+ {q:'A dead cell with exactly three live neighbours…',o:['stays dead','is born','depends on itself'],a:1,why:'Three neighbours means alive next tick, whatever the cell was.'},
+ {q:'Profiling, SIMD and GPUs improve the naive algorithm by…',o:['Changing its complexity','A constant factor only','Nothing'],a:1,why:'It still examines every cell each tick: O(n).'},
+ {q:'Why can a memoized quadtree be far smaller than the grid?',o:['It compresses bits','Equal sub-squares are one shared object','It drops dead cells'],a:1,why:'Memory grows with the variety of patterns, not the number of cells.'},
+ {q:'Stepping an n-quad at full speed returns…',o:['The whole n-quad one tick ahead','Its center (n−1)-quad 2ⁿ⁻² ticks ahead','Its center one tick ahead'],a:1,why:'Thirteen recursive calls, each stepping half as far.'},
+ {q:'Why must HashLife manage its caches?',o:['They become stale','Most entries are never reused and memory grows without bound','Hash collisions'],a:1,why:'A cache with a bad policy is a memory leak.'}]);
+
+})();
+</script>
+</body>
+</html>

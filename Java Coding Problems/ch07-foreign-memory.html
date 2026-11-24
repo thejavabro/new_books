@@ -1,0 +1,519 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Foreign (Function) Memory API</title>
+<meta name="description" content="Project Panama replaces JNI&#x27;s glue code with plain Java. Allocate native memory with an arena, describe C structs with layouts, and call C functions through a method handle.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Java Coding Problems companion. Layout: a workbench reading column on blueprint grid paper.
+   Blue ink = structure and the JVM, orange pencil = your code, green = works, red = breaks.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code */
+:root{--codebg:#f7f9fc}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--codebg:#0e1a28}}
+:root[data-theme="dark"]{--codebg:#0e1a28}
+pre.code{font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--codebg);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:0;overflow-x:auto;white-space:pre;tab-size:4;min-width:0;max-width:100%}
+code{font-family:var(--mono);font-size:.88em;background:var(--codebg);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+pre.code .tk{color:var(--d4);font-weight:600} pre.code .ts{color:var(--d2)} pre.code .tc{color:var(--muted);font-style:italic}
+pre.code .tn{color:var(--d3)} pre.code .tt{color:var(--blue)} pre.code .ta{color:var(--d5)}
+pre.code mark,.hl{background:var(--mid-soft);color:inherit;border-radius:3px;outline:1px solid var(--mid)}
+.out{font-family:var(--mono);font-size:.82rem;background:var(--ink);color:var(--paper);border-radius:8px;padding:10px 14px;white-space:pre-wrap;overflow-wrap:anywhere;min-height:2.6em}
+.out .err{color:#ff9b8f}
+.theme-btn{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted)}
+.theme-btn:hover{border-color:var(--blue);color:var(--blue)}
+.pnum{font-family:var(--mono);font-size:.72rem;color:var(--pencil);border:1px solid var(--pencil);border-radius:4px;padding:1px 6px;white-space:nowrap}
+.cells{display:flex;flex-wrap:wrap;gap:4px}
+.cell{min-width:34px;height:34px;padding:0 6px;display:inline-grid;place-items:center;border:1px solid var(--line);border-radius:6px;background:var(--paper);font-family:var(--mono);font-size:.8rem;transition:background .3s,border-color .3s}
+.cell.on{background:var(--blue-soft);border-color:var(--blue)}
+.cell.hot{background:var(--pencil-soft);border-color:var(--pencil)}
+.cell.ok{background:var(--ok-soft);border-color:var(--ok)}
+.cell.bad{background:var(--bad-soft);border-color:var(--bad)}
+input[type=text],input[type=number]{font:inherit;font-family:var(--mono);font-size:.9rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+.sheet>.seg,.stack>.seg{align-self:flex-start}
+
+/* page */
+
+.cmp3{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+@media (max-width:720px){.cmp3{grid-template-columns:1fr 1fr}}
+.cmp3 div{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--paper);display:flex;flex-direction:column;gap:4px}
+.cmp3 div[aria-pressed="true"]{border-color:var(--blue);background:var(--blue-soft)}
+.cmp3 b{font-family:var(--display)}
+.steps{margin:0;padding-left:1.4em;display:flex;flex-direction:column;gap:6px}
+.steps li.native{color:var(--pencil)}
+.fields{display:flex;flex-wrap:wrap;gap:6px}
+.fields .chip{display:inline-flex;gap:6px;align-items:center;font-family:var(--mono)}
+.fields .chip button{border:0;background:none;color:var(--bad);padding:0 2px}
+.bytes8{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:3px}
+.bytes8 span{height:30px;border-radius:4px;font-family:var(--mono);font-size:.68rem;display:grid;place-items:center;border:1px solid var(--line);overflow:hidden;white-space:nowrap}
+.bytes8 span.pad{background:repeating-linear-gradient(45deg,var(--paper),var(--paper) 4px,var(--line) 4px,var(--line) 6px);color:var(--muted)}
+.arena{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+@media (max-width:640px){.arena{grid-template-columns:1fr 1fr}}
+.arena button{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:8px;text-align:left;display:flex;flex-direction:column;gap:2px}
+.arena button b{font-family:var(--mono);font-size:.85rem}
+.arena button span{font-size:.8rem;color:var(--muted)}
+.arena button[aria-pressed="true"]{border-color:var(--blue);background:var(--blue-soft)}
+.mem{display:flex;flex-wrap:wrap;gap:6px;min-height:40px}
+.mem .cell.freed{background:var(--bad-soft);border-color:var(--bad);text-decoration:line-through;color:var(--bad)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Java Coding Problems · visual companion</a><span class="tag">Chapter 7 of 13 · Problems 144–171</span><button class="theme-btn" id="themeBtn" type="button">Dark theme</button></div>
+  <h1>Foreign (Function) Memory API</h1>
+  <p class="lede">Project Panama replaces JNI's glue code with plain Java. Allocate native memory with an arena, describe C structs with layouts, and call C functions through a method handle.</p>
+  <nav class="toc" aria-label="Sections"><a href="#why">JNI to Panama</a><a href="#terms">Vocabulary</a><a href="#arena">Arenas</a><a href="#struct">Structs & padding</a><a href="#slice">Slices & sequences</a><a href="#linker">Calling C</a><a href="#check">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="why" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>From JNI glue to plain Java</h2></div>
+  <p>Calling C from Java used to mean JNI: declare a <code>native</code> method, generate a header, write C glue that converts types, compile a library per platform, then load it (<span class="pnum">P144</span>). JNA and JNR remove the glue with reflection-like magic, at a performance cost (<span class="pnum">P145–P146</span>). <b>Project Panama</b>'s Foreign Function &amp; Memory API (preview in JDK 21, final in JDK 22) does it in pure Java, as fast as JNI (<span class="pnum">P147</span>). Compare what you write to call <code>long sumTwoInt(int x, int y)</code>:</p>
+  <div class="sheet">
+    <div class="cmp3" id="cmp" role="group" aria-label="Technology"></div>
+    <ol class="steps" id="cmpSteps"></ol>
+    <pre class="code" id="cmpCode"></pre>
+  </div>
+</section>
+
+<section id="terms" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Six types to learn</h2></div>
+  <p>The API is small (<span class="pnum">P148</span>). Memory is a <b>MemorySegment</b> that lives as long as its <b>Arena</b>, described by a <b>MemoryLayout</b>. Functions are found with a <b>SymbolLookup</b>, described by a <b>FunctionDescriptor</b> and turned into a <code>MethodHandle</code> by the <b>Linker</b>.</p>
+  <div class="cardgrid" id="termCards"></div>
+</section>
+
+<section id="arena" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Arenas decide when memory dies</h2></div>
+  <p>Native memory has no garbage collector, and JNI-era code leaked or double-freed it. An <code>Arena</code> ties a group of segments to one lifetime, and every access is checked: touching a segment after its arena closes throws <code>IllegalStateException</code> instead of crashing the JVM (<span class="pnum">P149</span>). Pick an arena, allocate, close, then try to read.</p>
+  <div class="sheet">
+    <div class="arena" id="arenaSeg" role="group" aria-label="Arena kind"></div>
+    <div class="row"><button class="btn primary" id="aAlloc">allocate(JAVA_INT)</button><button class="btn" id="aClose">arena.close()</button><button class="btn" id="aRead">segment.get(JAVA_INT, 0)</button><button class="btn" id="aThread">read from another thread</button></div>
+    <div class="mem" id="aMem"></div>
+    <div class="out" id="aOut"></div>
+  </div>
+  <pre class="code">try (Arena arena = Arena.ofConfined()) {
+    MemorySegment one  = arena.allocate(ValueLayout.JAVA_INT);
+    MemorySegment many = arena.allocateFrom(ValueLayout.JAVA_INT, 1, 2, 3, 4);  // P150 (JDK 21: allocateArray)
+    one.set(ValueLayout.JAVA_INT, 0, 42);
+}   // all freed here, deterministically</pre>
+</section>
+
+<section id="struct" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>C structs, alignment and PaddingLayout</h2></div>
+  <p>A C compiler aligns each field to a multiple of its size and pads the struct to the largest alignment. When you describe the same struct in Java with <code>MemoryLayout.structLayout</code>, you must add those gaps yourself with <code>MemoryLayout.paddingLayout(n)</code>, or the API rejects the misaligned layout (<span class="pnum">P153</span>, <span class="pnum">P155</span>). A union overlays all fields at offset 0 and takes the size of the largest (<span class="pnum">P154</span>). Build a struct and reorder it to save bytes.</p>
+  <div class="sheet">
+    <div class="row"><span class="small">Add field:</span><button class="btn" data-f="char">char</button><button class="btn" data-f="short">short</button><button class="btn" data-f="int">int</button><button class="btn" data-f="double">double</button><button class="btn" data-f="long">long</button><button class="btn" data-f="ptr">pointer</button><button class="btn" id="sSort">sort largest first</button><button class="btn" id="sUnion">struct / union</button></div>
+    <div class="fields" id="sFields"></div>
+    <div class="bytes8" id="sBytes"></div>
+    <p id="sTxt"></p>
+    <pre class="code" id="sCode"></pre>
+  </div>
+</section>
+
+<section id="slice" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Slicing, sequence layouts, flattening and reshaping</h2></div>
+  <p>A <b>sequence layout</b> is an array type: <code>sequenceLayout(10, JAVA_INT)</code> (<span class="pnum">P152</span>). <code>asSlice(offset, size)</code> gives a view of part of a segment without copying, and <code>MemorySegment.copy</code> moves bytes between segments (<span class="pnum">P156</span>). A <b>slicing allocator</b> hands out consecutive slices of one big segment (<span class="pnum">P157</span>). Nested sequences can be <b>flattened</b> into one dimension or <b>reshaped</b> into another (<span class="pnum">P159–P160</span>); the bytes never move, only the view changes.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Shape" id="shpSeg"><button data-s="3x4" aria-pressed="true">[3][4]</button><button data-s="12" aria-pressed="false">flatten() → [12]</button><button data-s="2x6" aria-pressed="false">reshape(2, 6)</button><button data-s="6x2" aria-pressed="false">reshape(-1, 2)</button></div>
+    <div class="svgbox"><svg id="shpSvg" viewBox="0 0 640 170" role="img" aria-label="Twelve ints viewed in different shapes"></svg></div>
+    <label class="rng"><span>asSlice(<b id="slO"></b> bytes, <b id="slL"></b> bytes) on the flat view</span><input type="range" id="slR" min="0" max="8" value="2"></label>
+    <p class="small" id="shpTxt"></p>
+  </div>
+  <pre class="code">SequenceLayout grid = MemoryLayout.sequenceLayout(3, MemoryLayout.sequenceLayout(4, JAVA_INT));
+VarHandle cell = grid.varHandle(PathElement.sequenceElement(), PathElement.sequenceElement());
+cell.set(segment, 0L, 1L, 2L, 99);                // grid[1][2] = 99   (P162 memory-segment view VarHandle)
+SequenceLayout flat = grid.flatten();             // [12 x int]
+MethodHandle offsets = grid.byteOffsetHandle(PathElement.sequenceElement(), PathElement.sequenceElement());</pre>
+  <div class="cardgrid" id="slCards"></div>
+</section>
+
+<section id="linker" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Calling C functions with the Linker</h2></div>
+  <p>A <b>downcall</b> calls C from Java: find the symbol, describe its signature with a <code>FunctionDescriptor</code>, ask the <code>Linker</code> for a <code>MethodHandle</code>, and invoke it (<span class="pnum">P165–P168</span>). An <b>upcall</b> goes the other way: a Java method wrapped as a C function pointer, which is what <code>bsearch</code> needs for its comparator (<span class="pnum">P169</span>). Step through a call to <code>strcat</code>.</p>
+  <div class="two">
+    <pre class="code">Linker linker = Linker.nativeLinker();
+SymbolLookup libc = linker.defaultLookup();
+MethodHandle strcat = linker.downcallHandle(
+    libc.find("strcat").orElseThrow(),
+    FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS));
+
+try (Arena arena = Arena.ofConfined()) {
+    MemorySegment dst = arena.allocate(64);
+    dst.setString(0, "Hello ");
+    MemorySegment src = arena.allocateFrom("Panama!");
+    MemorySegment r = (MemorySegment) strcat.invokeExact(dst, src);
+    String s = r.reinterpret(64).getString(0);   // "Hello Panama!"
+}</pre>
+    <div class="sheet stepper" id="lStp"><div class="svgbox fit"><svg id="lSvg" viewBox="0 0 320 210" role="img" aria-label="Java heap, native memory and the C function"></svg></div></div>
+  </div>
+  <div class="callout"><b class="h">jextract (P170–P171)</b><span>Writing descriptors by hand for a big C library is tedious. <code>jextract</code> reads a C header and generates Java classes with ready-made method handles and layouts, for example <code>jextract --output src -t c.lib.math /usr/include/math.h</code>, after which <code>modf</code> is just a static Java method.</span></div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Test yourself</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b class="blue">Pure Java</b><span>No C glue, no javac -h; final in JDK 22.</span></div>
+    <div><b>Arena</b><span>global, auto, confined, shared: lifetime and thread rules.</span></div>
+    <div><b class="pencil">Layouts</b><span>Value, struct, union, sequence, padding; you match C's alignment.</span></div>
+    <div><b>Views, not copies</b><span>asSlice, flatten, reshape, VarHandles.</span></div>
+    <div><b class="okc">Linker</b><span>downcallHandle for C calls, upcallStub for callbacks.</span></div>
+    <div><b>jextract</b><span>Generates bindings from headers.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Java Coding Problems, Second Edition</i> by Anghel Leonard (Packt, 2024). Explanations, code snippets, diagrams and simulations are original summaries written for this companion; problem numbers refer to the book so you can look up the full solutions there.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch06-deserialization-filters.html"><span>Previous · Chapter 6</span><b>Java I/O: Deserialization Filters</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch08-sealed-hidden.html"><span>Next · Chapter 8</span><b>Sealed and Hidden Classes</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('jcp:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('jcp:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* tiny Java highlighter for every pre.code (write plain escaped code; use ⟦...⟧ to mark a highlight) */
+const JKW=new Set('abstract assert boolean break byte case catch char class const continue default do double else enum extends final finally float for goto if implements import instanceof int interface long native new package private protected public return short static strictfp super switch synchronized this throw throws transient try void volatile while var record sealed permits non-sealed yield when true false null'.split(' '));
+function hiJava(src){const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const re=/(\/\/[^\n]*|\/\*[\s\S]*?\*\/)|("""[\s\S]*?"""|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*')|(@[A-Za-z]\w*)|(\b\d[\d_]*(?:\.\d+)?[LlFfDd]?\b|\b0x[0-9a-fA-F_]+\b)|(\b[A-Za-z_]\w*(?:-sealed)?\b)|(⟦|⟧)/g;
+  let out='',last=0,m;while((m=re.exec(src))){out+=esc(src.slice(last,m.index));last=re.lastIndex;
+    if(m[1])out+=`<span class="tc">${esc(m[1])}</span>`;else if(m[2])out+=`<span class="ts">${esc(m[2])}</span>`;else if(m[3])out+=`<span class="ta">${m[3]}</span>`;
+    else if(m[4])out+=`<span class="tn">${m[4]}</span>`;else if(m[5]){const w=m[5];out+=JKW.has(w)?`<span class="tk">${w}</span>`:/^[A-Z]/.test(w)?`<span class="tt">${w}</span>`:w}
+    else if(m[6])out+=m[6]==='⟦'?'<mark>':'</mark>';}
+  return out+esc(src.slice(last));}
+function hiAll(root){(root||document).querySelectorAll('pre.code:not([data-hi])').forEach(p=>{p.innerHTML=hiJava(p.textContent.replace(/^\n/,''));p.dataset.hi=1})}
+function setCode(elOrSel,src){const p=typeof elOrSel==='string'?$(elOrSel):elOrSel;p.innerHTML=hiJava(src.replace(/^\n/,''));p.dataset.hi=1}
+/* theme toggle */
+(function(){const r=document.documentElement;const t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+  const b=document.getElementById('themeBtn');if(!b)return;const cur=()=>r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+  const lab=()=>{b.textContent=cur()==='dark'?'Light theme':'Dark theme'};lab();
+  b.addEventListener('click',()=>{const n=cur()==='dark'?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n);lab()});})();
+document.addEventListener('DOMContentLoaded',()=>hiAll());
+
+
+/* comparison */
+const CMP=[
+ {k:'JNI',sub:'JDK 1.1',s:[['Declare private native long sumTwoInt(int x, int y)',0],['javac -h . generates a C header',0],['Write C glue Java_pkg_Main_sumTwoInt(JNIEnv*, jobject, jint, jint)',1],['Compile a .so / .dll / .dylib for each platform',1],['System.loadLibrary("math") and call it',0]],c:'private native long sumTwoInt(int x, int y);\nstatic { System.loadLibrary("math"); }'},
+ {k:'JNA',sub:'library',s:[['Declare a Java interface mirroring the C functions',0],['Native.load("math", SimpleMath.class)',0],['C++ name mangling? map sumTwoInt to _Z9sumTwoIntii yourself',1],['Calls go through reflection and libffi: convenient, slower',0]],c:'interface SimpleMath extends Library { long sumTwoInt(int x, int y); }\nSimpleMath m = Native.load(Platform.isWindows() ? "math" : "libmath", SimpleMath.class);'},
+ {k:'JNR',sub:'library',s:[['Declare an interface',0],['LibraryLoader.create(SimpleMath.class).load("math")',0],['Generates bytecode stubs: faster than JNA, still a third-party dependency',0]],c:'SimpleMath m = LibraryLoader.create(SimpleMath.class).load("math");\nlong r = m.sumTwoInt(3, 9);'},
+ {k:'Panama',sub:'JDK 22 final',s:[['SymbolLookup.libraryLookup(path, arena).find("sumTwoInt")',0],['FunctionDescriptor.of(JAVA_LONG, JAVA_INT, JAVA_INT)',0],['linker.downcallHandle(symbol, descriptor) and invokeExact',0]],c:'MethodHandle h = Linker.nativeLinker().downcallHandle(\n    SymbolLookup.libraryLookup(Path.of("libmath.so"), arena).find("sumTwoInt").orElseThrow(),\n    FunctionDescriptor.of(JAVA_LONG, JAVA_INT, JAVA_INT));\nlong r = (long) h.invokeExact(3, 9);   // 12'}];
+$('#cmp').innerHTML=CMP.map((c,i)=>`<div role="button" tabindex="0" data-i="${i}" aria-pressed="${i===0}"><b>${c.k}</b><span class="small">${c.sub}</span><span class="small">${c.s.filter(x=>x[1]).length} native-side steps</span></div>`).join('');
+function cmp(i){$$('#cmp div').forEach(d=>d.setAttribute('aria-pressed',d.dataset.i==i));$('#cmpSteps').innerHTML=CMP[i].s.map(([t,n])=>`<li class="${n?'native':''}">${t}${n?' (outside Java)':''}</li>`).join('');setCode('#cmpCode',CMP[i].c)}
+$$('#cmp div').forEach(d=>{d.addEventListener('click',()=>cmp(+d.dataset.i));d.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();cmp(+d.dataset.i)}})});cmp(0);
+cards('#termCards',[{t:'Arena',d:'Owns the lifetime of segments. Closing it frees them all at once.'},{t:'MemorySegment',d:'A bounded, checked view of contiguous memory: native, heap array or mapped file. Out-of-bounds access throws.',c:'blue'},{t:'MemoryLayout',d:'Describes the shape: ValueLayout (JAVA_INT, ADDRESS…), struct, union, sequence and padding layouts.',c:'pencil'},{t:'SymbolLookup',d:'Finds functions by name in a library, or the standard C library via linker.defaultLookup().',c:'d2'},{t:'FunctionDescriptor',d:'The C signature as layouts: return layout plus argument layouts.',c:'d2'},{t:'Linker',d:'Produces downcall MethodHandles and upcall stubs for the platform ABI.',c:'d5'}]);
+
+/* arenas */
+const AR=[['global','Arena.global()','never freed; any thread'],['auto','Arena.ofAuto()','freed by GC; any thread'],['confined','Arena.ofConfined()','close() frees; owner thread only'],['shared','Arena.ofShared()','close() frees; any thread']];
+let ak=2,segs=[],closed=false;
+$('#arenaSeg').innerHTML=AR.map((a,i)=>`<button data-a="${i}" aria-pressed="${i===2}"><b>${a[1]}</b><span>${a[2]}</span></button>`).join('');
+function aDraw(msg){$('#aMem').innerHTML=segs.map((s,i)=>`<span class="cell ${closed?'freed':'on'}">seg${i}</span>`).join('')||'<span class="small">no segments yet</span>';if(msg!=null)$('#aOut').innerHTML=msg}
+seg('#arenaSeg button',b=>{ak=+b.dataset.a;segs=[];closed=false;aDraw(`Arena arena = ${AR[ak][1]};`)});
+$('#aAlloc').addEventListener('click',()=>{if(closed)return aDraw('<span class="err">IllegalStateException: Already closed</span>');segs.push(1);aDraw(`MemorySegment seg${segs.length-1} = arena.allocate(JAVA_INT);  // 4 bytes, zeroed`)});
+$('#aClose').addEventListener('click',()=>{if(ak<2)return aDraw(`<span class="err">UnsupportedOperationException</span>: ${AR[ak][1]} cannot be closed. ${ak===0?'Its memory lives until the JVM exits.':'Its memory is freed once the GC finds the segments unreachable.'}`);if(closed)return aDraw('already closed');closed=true;aDraw(`arena.close();  // ${segs.length} segment(s) freed at once`)});
+$('#aRead').addEventListener('click',()=>{if(!segs.length)return aDraw('allocate something first');aDraw(closed?'<span class="err">IllegalStateException: Already closed</span>\n(the JVM checked the lifetime: no use-after-free, no crash)':'seg0.get(JAVA_INT, 0) → 0')});
+$('#aThread').addEventListener('click',()=>{if(!segs.length)return aDraw('allocate something first');aDraw(closed?'<span class="err">IllegalStateException: Already closed</span>':ak===2?'<span class="err">WrongThreadException: Attempted access outside owning thread</span>\n(confined arenas are cheap because only one thread may touch them)':'another thread reads 0: this arena allows shared access')});aDraw('Arena arena = Arena.ofConfined();');
+
+/* struct builder */
+const FT={char:[1,'JAVA_BYTE','char'],short:[2,'JAVA_SHORT','short'],int:[4,'JAVA_INT','int'],double:[8,'JAVA_DOUBLE','double'],long:[8,'JAVA_LONG','long'],ptr:[8,'ADDRESS','void*']};
+let F=['char','int','char','double'],union=false;
+const COLS=['blue','pencil','d2','d5','d3','d4'];
+function sDraw(){let off=0,max=1,cells=[],code=[],cdecl=[];
+  F.forEach((f,i)=>{const[sz,lay,c]=FT[f];max=Math.max(max,sz);cdecl.push(`    ${c} f${i};`);
+    if(union){return}const al=Math.ceil(off/sz)*sz;if(al>off){for(let k=off;k<al;k++)cells.push(['pad',null]);code.push(`    MemoryLayout.paddingLayout(${al-off}),`);off=al}
+    for(let k=0;k<sz;k++)cells.push([`f${i}`,i]);code.push(`    ValueLayout.${lay}.withName("f${i}"),`);off+=sz});
+  let total;
+  if(union){total=F.reduce((m,f)=>Math.max(m,FT[f][0]),1);total=Math.ceil(total/max)*max;cells=Array.from({length:total},(_,k)=>{const who=F.map((f,i)=>FT[f][0]>k?i:-1).filter(x=>x>=0);return [who.map(i=>'f'+i).join('/'),who[0]]});code=F.map((f,i)=>`    ValueLayout.${FT[f][1]}.withName("f${i}"),`)}
+  else{total=Math.ceil(off/max)*max;if(total>off){for(let k=off;k<total;k++)cells.push(['pad',null]);code.push(`    MemoryLayout.paddingLayout(${total-off}),`)}}
+  const data=F.reduce((s,f)=>s+FT[f][0],0);
+  $('#sFields').innerHTML=F.map((f,i)=>`<span class="chip" style="border-color:var(--${COLS[i%6]})">f${i}: ${FT[f][2]}<button data-rm="${i}" aria-label="remove">×</button></span>`).join('');
+  $$('[data-rm]').forEach(b=>b.addEventListener('click',()=>{F.splice(+b.dataset.rm,1);if(!F.length)F=['int'];sDraw()}));
+  $('#sBytes').innerHTML=cells.map(([t,i])=>i==null?`<span class="pad">pad</span>`:`<span style="background:var(--${COLS[i%6]});color:var(--surface);border-color:var(--${COLS[i%6]})">${t}</span>`).join('');
+  const pad=cells.filter(c=>c[1]==null).length;
+  $('#sTxt').innerHTML=union?`Union: all fields start at offset 0; size = largest field = <b>${total}</b> bytes.`:`Size <b>${total}</b> bytes: ${data} of data and <b class="${pad?'badc':'okc'}">${pad}</b> of padding.${pad?' Try "sort largest first".':''} Each row of the grid is 8 bytes.`;
+  setCode('#sCode',`// C: ${union?'union':'struct'} S {\n${cdecl.map(x=>'//'+x).join('\n')}\n// };\nMemoryLayout s = MemoryLayout.${union?'unionLayout':'structLayout'}(\n${code.join('\n').replace(/,$/,'')});\n// s.byteSize() == ${total}`)}
+$$('[data-f]').forEach(b=>b.addEventListener('click',()=>{if(F.length<8)F.push(b.dataset.f);sDraw()}));
+$('#sSort').addEventListener('click',()=>{F.sort((a,b)=>FT[b][0]-FT[a][0]);sDraw()});$('#sUnion').addEventListener('click',()=>{union=!union;sDraw()});sDraw();
+
+/* shapes */
+let shp='3x4';
+function shpDraw(){const s=$('#shpSvg');s.innerHTML='';const [r,c]=shp==='12'?[1,12]:shp.split('x').map(Number);const o=+$('#slR').value;const len=4;$('#slO').textContent=o*4;$('#slL').textContent=len*4;
+  const w=Math.min(48,560/c),h=Math.min(36,130/r);const x0=(640-c*w)/2;
+  for(let k=0;k<12;k++){const i=Math.floor(k/c),j=k%c;const inS=k>=o&&k<o+len;s.appendChild(el('rect',{x:x0+j*w,y:10+i*(h+6),width:w-3,height:h,rx:4,fill:inS?'var(--pencil-soft)':'var(--blue-soft)',stroke:inS?'var(--pencil)':'var(--blue)','stroke-width':inS?2:1}));
+    s.appendChild(el('text',{x:x0+j*w+w/2-1.5,y:10+i*(h+6)+h/2+4,'text-anchor':'middle','font-size':11,class:'t-mono s-ink'},k))}
+  s.appendChild(el('text',{x:320,y:160,'text-anchor':'middle','font-size':12,class:'s-muted'},`same 48 bytes viewed as ${shp==='12'?'[12]':'['+r+']['+c+']'}; orange = the slice`));
+  $('#shpTxt').innerHTML=`<code>segment.asSlice(${o*4}, ${len*4})</code> is a 16-byte view over ints ${o}..${o+3}; writes through it change the parent segment. ${shp==='6x2'?'<code>reshape(-1, 2)</code> lets the API infer the first dimension: 12 / 2 = 6.':''}`}
+seg('#shpSeg button',b=>{shp=b.dataset.s;shpDraw()});$('#slR').addEventListener('input',shpDraw);shpDraw();
+cards('#slCards',[{t:'Slicing allocator (P157)',d:'SegmentAllocator.slicingAllocator(big) returns consecutive slices of one pre-allocated segment: allocation becomes a pointer bump.'},{t:'Slice handle (P158)',d:'layout.sliceHandle(path) gives a MethodHandle that returns the sub-segment for a path, e.g. one row of a 2D sequence.',c:'pencil'},{t:'Layout spreader (P161)',d:'A MethodHandle.asSpreader turns "pass the indexes as an array" into separate arguments, handy for VarHandle coordinates of nested sequences.',c:'d2'},{t:'Streaming segments (P163)',d:'segment.elements(layout) streams fixed-size slices; with parallel() each element can be processed on a different thread (use a shared arena).',c:'d5'},{t:'Mapped segments (P164)',d:'FileChannel.map(mode, offset, size, arena) maps a file into a MemorySegment: bigger than 2 GB, and unmapped deterministically when the arena closes, unlike MappedByteBuffer.',c:'d3'}]);
+
+/* linker stepper */
+const LS=['Look up strcat in the C standard library and build a MethodHandle from a FunctionDescriptor: returns an ADDRESS, takes two ADDRESSes.','Allocate a 64-byte native buffer and write "Hello " plus a NUL terminator. C strings live off-heap, in the arena.','allocateFrom("Panama!") copies the Java String into native memory as a NUL-terminated UTF-8 string.','invokeExact transitions to native code; strcat appends src to dst in place and returns dst.','The returned pointer is a zero-length segment: the API cannot know its size. reinterpret(64) asserts the size so getString can read it. Closing the arena frees both buffers.'];
+function lDraw(i){const s=$('#lSvg');s.innerHTML='';const zone=(x,y,w,h,t,c)=>{s.appendChild(el('rect',{x,y,width:w,height:h,rx:8,fill:'var(--paper)',stroke:`var(--${c})`,'stroke-dasharray':'4 3'}));s.appendChild(el('text',{x:x+8,y:y+15,'font-size':11,fill:`var(--${c})`,'font-weight':700},t))};
+  zone(5,5,145,200,'Java heap','blue');zone(165,5,150,200,'native (arena)','pencil');
+  const box=(x,y,t,c,on)=>{s.appendChild(el('rect',{x,y,width:130,height:28,rx:5,fill:on?'var(--surface)':'none',stroke:on?`var(--${c})`:'none'}));if(on)s.appendChild(el('text',{x:x+65,y:y+18,'text-anchor':'middle','font-size':10.5,class:'t-mono s-ink'},t))};
+  box(12,30,'MethodHandle strcat','blue',true);box(12,70,'"Panama!" (String)','blue',i>=2);box(12,160,i>=4?'"Hello Panama!"':'','ok',i>=4);
+  box(175,30,i>=3?'dst: Hello Panama!\\0':'dst: Hello \\0','pencil',i>=1);box(175,70,'src: Panama!\\0','pencil',i>=2);box(175,115,'strcat(dst, src)','d4',i>=3);
+  if(i>=2){s.appendChild(el('line',{x1:142,y1:84,x2:173,y2:84,stroke:'var(--muted)','stroke-width':1.5}))}if(i>=4){s.appendChild(el('line',{x1:240,y1:58,x2:142,y2:172,stroke:'var(--ok)','stroke-width':1.5,'stroke-dasharray':'3 2'}))}}
+$('#lStp').insertAdjacentHTML('beforeend',stepHTML());stepper('#lStp',LS,lDraw);
+
+quiz('#qQuiz','#qScore',[
+ {q:'Reading a segment after its confined arena closed…',o:['crashes the JVM','throws IllegalStateException'],a:1,why:'Every access is checked against the segment\'s lifetime.'},
+ {q:'C <code>struct { char c; double d; }</code> is how many bytes?',o:['9','16'],a:1,why:'7 bytes of padding align d to 8, and the struct is a multiple of 8.'},
+ {q:'Which arena can be used by any thread and closed explicitly?',o:['ofConfined','ofShared','global'],a:1,why:'Shared arenas allow multi-threaded access; closing them is a bit more expensive.'},
+ {q:'Passing a Java comparator to C\'s bsearch needs…',o:['a downcall','an upcall stub'],a:1,why:'C calls back into Java through a function pointer created by linker.upcallStub.'},
+ {q:'<code>flatten()</code> on a [3][4] sequence layout…',o:['copies data','changes only the layout view'],a:1,why:'Layouts describe memory; the bytes stay put.'}]);
+
+})();
+</script>
+</body>
+</html>

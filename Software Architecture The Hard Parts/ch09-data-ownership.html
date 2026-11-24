@@ -1,0 +1,538 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Data Ownership and Distributed Transactions</title>
+<meta name="description" content="Once data is split, someone has to own each table. And when one business action writes to several services, atomic transactions give way to eventual consistency.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for The Hard Parts companion. Layout: a reading column on blueprint grid paper.
+   Blue ink = structure and services, orange pencil = coupling and data, green = good trade-off, red = bad trade-off.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* additions for The Hard Parts */
+button.tag.theme{cursor:pointer;margin-left:auto}
+button.tag.theme:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;color:var(--ink)}
+pre.code .k{color:var(--blue);font-weight:600} pre.code .c{color:var(--muted);font-style:italic} pre.code .s{color:var(--ok)}
+.rate{display:inline-flex;gap:3px;vertical-align:middle}
+.rate .dot{width:10px;height:10px;border-radius:50%;border:1.5px solid var(--blue);display:inline-block}
+.rate .dot.on{background:var(--blue)}
+.pc{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.pc>div{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--surface);display:flex;flex-direction:column;gap:6px}
+.pc h3{font-size:.95rem}.pc ul{margin:0;padding-left:1.1em;font-size:.92rem;display:flex;flex-direction:column;gap:4px}
+.pc .pro{border-top:4px solid var(--ok)}.pc .con{border-top:4px solid var(--bad)}
+@media (max-width:560px){.pc{grid-template-columns:1fr}}
+.adr{border:1px solid var(--line);border-radius:10px;background:var(--surface);overflow:hidden}
+.adr>div{padding:12px 16px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:4px}
+.adr>div:first-child{border-top:0;background:var(--blue-soft)}
+.adr b{font-family:var(--mono);font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.adr p{font-size:.95rem}
+.saga{border-left:4px solid var(--pencil);padding:10px 16px;background:var(--surface);border-radius:0 10px 10px 0;display:flex;flex-direction:column;gap:8px;font-size:.95rem}
+.saga .who{font-family:var(--mono);font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--pencil)}
+@media (min-width:561px){.q{grid-template-columns:minmax(200px,1fr) auto}}
+.q .opts{max-width:480px}.q .opts button{text-align:left;max-width:100%}
+.tabs{display:flex;flex-wrap:wrap;gap:6px}
+.tabs button{border:1px solid var(--line);background:var(--paper);border-radius:999px;padding:5px 12px;font-size:.88rem}
+.tabs button[aria-pressed="true"]{background:var(--blue);border-color:var(--blue);color:var(--surface)}
+
+/* page */
+
+.own{display:flex;flex-wrap:wrap;gap:8px}
+.own button{border:2px solid var(--line);background:var(--surface);border-radius:10px;padding:8px 12px;font-size:.9rem;text-align:left}
+.own button[aria-pressed="true"]{border-color:var(--blue);background:var(--blue-soft)}
+.acid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.acid>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px}
+.acid b{font-family:var(--display);font-size:1.6rem;line-height:1}
+.acid .st{font-family:var(--mono);font-size:.72rem;padding:2px 8px;border-radius:999px;align-self:flex-start}
+.acid .st.y{background:var(--ok-soft);color:var(--ok)} .acid .st.n{background:var(--bad-soft);color:var(--bad)}
+.acid span{font-size:.9rem;color:var(--muted)}
+.ecm{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:6px}
+.ecm>div{background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:.85rem}
+.ecm b{display:block;font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+@media (max-width:560px){.ecm{grid-template-columns:1fr}}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">The Hard Parts · visual companion</a><span class="tag">Part II · Chapter 9 of 15</span><button class="tag theme" id="themeBtn" type="button" aria-label="Toggle light or dark theme">Theme</button></div>
+  <h1>Data Ownership and Distributed Transactions</h1>
+  <p class="lede">Once data is split, someone has to own each table. And when one business action writes to several services, atomic transactions give way to eventual consistency.</p>
+  <nav class="toc" aria-label="Sections"><a href="#rule">Who owns what</a><a href="#common">Common ownership</a><a href="#joint">Joint ownership</a><a href="#delegate">Choosing a delegate</a><a href="#acid">ACID</a><a href="#base">BASE</a><a href="#ec">Eventual consistency</a><a href="#sysops">Sysops Squad</a><a href="#quiz">Check yourself</a></nav>
+</header>
+
+<section id="rule" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Whoever writes, owns</h2></div>
+  <p>Splitting the database (Chapter 6) is only half the work. The pieces must be stitched back together: someone has to own each table, multi-table updates have to survive the network, and services need a way to read data they no longer own. This chapter covers the first two. The starting rule of thumb is simple: <b>the service that writes to a table owns it</b>. Readers do not count. The rule is easy when one service writes and gets messy when several do.</p>
+  <p>The running example has three services and three tables. Tap a table to see who writes to it and what kind of ownership problem that creates.</p>
+  <div class="sheet">
+    <div class="own" id="ownBtns" role="group" aria-label="Tables"><button data-t="w" aria-pressed="true">Wishlist table</button><button data-t="p" aria-pressed="false">Product table</button><button data-t="a" aria-pressed="false">Audit table</button></div>
+    <div class="svgbox"><svg id="ownSvg" viewBox="0 0 660 230" role="img" aria-label="Wishlist, Catalog and Inventory services writing to tables"></svg></div>
+    <p id="ownTxt" aria-live="polite"></p>
+  </div>
+  <div class="recap">
+    <div><b>Single ownership</b><span>Exactly one service writes. Give it the table, draw the bounded context around both, and move on. Do these first to clear the board.</span></div>
+    <div><b>Common ownership</b><span>Most or all services write (audit logs, configuration). Nobody is the obvious owner.</span></div>
+    <div><b>Joint ownership</b><span>A couple of services in the same domain write to the same table. The most frequent and the hardest case.</span></div>
+  </div>
+</section>
+
+<section id="common" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Common ownership: appoint a keeper</h2></div>
+  <p>Dropping the Audit table into a shared schema brings back every problem from Chapter 6: change control, connection starvation, scaling and fault tolerance. Instead, create one service whose only job is to own that table. Everyone else hands it data. If callers need nothing back, a <b>persisted queue with fire-and-forget</b> messages keeps them from waiting. If they need an answer (a generated key, a confirmation number) they must call synchronously, by REST, gRPC or request-reply messaging.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Communication"><button data-cm="async" aria-pressed="true">Async, persisted queue</button><button data-cm="sync" aria-pressed="false">Synchronous call</button></div>
+    <div class="row"><button class="btn" id="cmDown">Audit Service goes down</button><button class="btn" id="cmFire">Three services write an audit record</button></div>
+    <div class="svgbox"><svg id="cmSvg" viewBox="0 0 660 200" role="img" aria-label="Services sending audit records to a dedicated Audit Service"></svg></div>
+    <p id="cmTxt" aria-live="polite"></p>
+  </div>
+  <p class="small">If other services need to <i>read</i> audit data they do not own, that is a data access question, answered in Chapter 10.</p>
+</section>
+
+<section id="joint" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Joint ownership: four ways out</h2></div>
+  <p>Catalog writes product details; Inventory writes stock counts. Both write the Product table. There are four ways to untangle that. Pick one to redraw the picture and see what you trade.</p>
+  <div class="sheet">
+    <div class="tabs" id="jTabs" role="group" aria-label="Technique"><button data-j="split" aria-pressed="true">Table split</button><button data-j="domain" aria-pressed="false">Data domain</button><button data-j="del" aria-pressed="false">Delegate</button><button data-j="cons" aria-pressed="false">Service consolidation</button></div>
+    <div class="svgbox"><svg id="jSvg" viewBox="0 0 660 230" role="img" aria-label="Catalog and Inventory services under the chosen technique"></svg></div>
+    <p id="jTxt" aria-live="polite"></p>
+    <div class="pc" id="jPc"></div>
+  </div>
+  <p>Here is a table split written as plain DDL (my own sketch, not the book's listing). Create the new table, copy the column across, then drop it from the old one. The hard part is not the SQL; it is keeping the two tables in step afterwards.</p>
+  <pre class="code"><span class="c">-- 1. new table owned by the Inventory service</span>
+<span class="k">CREATE TABLE</span> stock_level (sku <span class="k">VARCHAR</span>(12) <span class="k">PRIMARY KEY</span>, on_hand <span class="k">INT NOT NULL</span>);
+<span class="c">-- 2. seed it from the shared table</span>
+<span class="k">INSERT INTO</span> stock_level (sku, on_hand) <span class="k">SELECT</span> sku, on_hand <span class="k">FROM</span> product;
+<span class="c">-- 3. Catalog's table loses the column it never really owned</span>
+<span class="k">ALTER TABLE</span> product <span class="k">DROP COLUMN</span> on_hand;</pre>
+  <div class="callout"><b class="h">Two questions every split raises</b><span>When Catalog adds a product, does it need confirmation that the stock row exists (synchronous, consistent, slower) or can it fire and forget (fast, eventually consistent)? And what does it do if Inventory is down: refuse the new product (consistency) or accept it and catch up later (availability)?</span></div>
+</section>
+
+<section id="delegate" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Which service becomes the delegate?</h2></div>
+  <p>With the delegate technique one service owns the table and the other asks it to read and write on its behalf. Two ways to choose the owner:</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Priority"><button data-dp="dom" aria-pressed="true">Primary domain priority</button><button data-dp="ops" aria-pressed="false">Operational characteristics priority</button></div>
+    <div class="svgbox"><svg id="dpSvg" viewBox="0 0 660 180" role="img" aria-label="Which service owns the Product table"></svg></div>
+    <div class="bars" id="dpBars"></div>
+    <p id="dpTxt" aria-live="polite"></p>
+  </div>
+  <p>The authors usually lean to <b>domain priority</b> and fix the speed problem with a replicated in-memory or distributed cache, because making Inventory handle product maintenance gives it a job outside its domain. Either way the non-owner pays: network latency, no atomic write, and an outage whenever the owner is down. That is why the delegate technique tends to come last among the four.</p>
+</section>
+
+<section id="acid" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>ACID inside one service</h2></div>
+  <p>You cannot judge distributed transactions until you know exactly what you lose by leaving ACID behind. Four properties, using a customer registration that inserts a profile, a support contract and billing details:</p>
+  <div class="acid" id="acidGrid"></div>
+  <div class="sheet stepper" id="acSt"><div class="svgbox"><svg id="acSvg" viewBox="0 0 660 225" role="img" aria-label="Registration as a single ACID transaction versus a distributed transaction"></svg></div></div>
+</section>
+
+<section id="base" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>BASE: what a distributed transaction offers instead</h2></div>
+  <p>Spread the same registration over a Profile, a Contract and a Billing service and none of the four ACID properties hold across the whole request. Each service still commits its own rows atomically; the <i>business</i> request is no longer atomic. The opposite of an acid is a base, and so the industry named the replacement <b>BASE</b>.</p>
+  <div class="cardgrid" id="baseCards"></div>
+  <div class="sheet"><div class="row between"><h3>ACID or BASE?</h3><span class="score" id="abScore"></span></div><div class="quiz" id="abQuiz"></div></div>
+</section>
+
+<section id="ec" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Three ways to become consistent eventually</h2></div>
+  <p>Customer 123 unsubscribes. The Profile service deletes them and tells the customer they will no longer be billed, but their rows still sit in the Contract and Billing tables. How do those get cleaned up? Pick a pattern, optionally break Billing, and run the clock.</p>
+  <div class="sheet">
+    <div class="tabs" id="ecTabs" role="group" aria-label="Pattern"><button data-e="bg" aria-pressed="true">Background sync</button><button data-e="orch" aria-pressed="false">Orchestrated request</button><button data-e="ev" aria-pressed="false">Event-based</button></div>
+    <div class="row"><label class="row small"><input type="checkbox" id="ecFail"> Billing service fails</label><button class="btn primary" id="ecRun">Unsubscribe customer 123</button></div>
+    <div class="svgbox"><svg id="ecSvg" viewBox="0 0 660 250" role="img" aria-label="Timeline of an unsubscribe request under the chosen pattern"></svg></div>
+    <div class="ecm" id="ecM"></div>
+    <p id="ecTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout"><b class="h">Durable subscribers and dead letters</b><span>Event-based consistency only works if no event is lost. Topic-based brokers need durable subscribers; streaming platforms must keep the message long enough. When a consumer keeps failing, the broker parks the event in a dead letter queue, where an automated fixer, or a person, deals with it.</span></div>
+</section>
+
+<section id="sysops" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Sysops Squad: who owns the survey table?</h2></div>
+  <div class="saga"><span class="who">Sysops Squad</span><span>The developers and the database team realise ownership cannot be settled by either side alone. A blanket ADR goes first: single-writer tables belong to that writer, and other bounded contexts may not reach into its schema. Then the survey: Ticket Completion writes the finish time and expert; Survey writes when the survey was sent and the answers. Joint ownership.</span></div>
+  <div class="sheet"><div class="row between"><h3>Pick a technique for the Survey table</h3><span class="score" id="svScore"></span></div><div class="quiz" id="svQuiz"></div></div>
+  <div class="adr"><div><b>ADR</b><p style="font-family:var(--display);font-weight:600">Survey Service owns the Survey table</p></div><div><b>Decision</b><p>Use the delegate technique. Ticket Completion already sends an event when a ticket closes; it adds the fields the survey needs to that payload, and only Survey writes the table.</p></div><div><b>Consequences</b><p>Everything Ticket Completion used to insert now travels in the message. Creating the survey record becomes its own step instead of part of closing the ticket.</p></div></div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Check yourself</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Software Architecture: The Hard Parts</i> by Neal Ford, Mark Richards, Pramod Sadalage and Zhamak Dehghani (O'Reilly, 2021). Explanations, examples, code and drawings are original summaries, not copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch08-reuse-patterns.html"><span>Previous · Chapter 8</span><b>Reuse Patterns</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch10-distributed-data-access.html"><span>Next · Chapter 10</span><b>Distributed Data Access</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every page of The Hard Parts companion. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('hp:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('hp:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: follows the system until the reader picks one */
+(function(){const r=document.documentElement,b=document.getElementById('themeBtn');const t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+  function cur(){return r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light')}
+  function lab(){if(b)b.textContent=cur()==='dark'?'Light theme':'Dark theme'}
+  if(b)b.addEventListener('click',()=>{const n=cur()==='dark'?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n);lab()});lab()})();
+/* star / dot rating: n of max */
+function rateDots(n,max){max=max||5;let s='';for(let i=0;i<max;i++)s+=`<i class="dot${i<n?' on':''}"></i>`;return `<span class="rate" aria-label="${n} of ${max}">${s}</span>`}
+
+
+/* ---------- ownership diagram ---------- */
+const OW={w:{ws:['wl'],kind:'Single ownership',txt:'Only the Wishlist service writes here, so it owns the table. Other services that merely read wishlists change nothing.'},
+p:{ws:['ca','in'],kind:'Joint ownership',txt:'Catalog writes product details and Inventory writes stock counts. Two services from the same domain share one table: joint ownership.'},
+a:{ws:['wl','ca','in'],kind:'Common ownership',txt:'Every service writes an audit record. When most or all services write a table, it is common ownership.'}};
+function rOwn(t){const s=$('#ownSvg');s.innerHTML='';const SV=[['wl','Wishlist',110],['ca','Catalog',330],['in','Inventory',550]],TB=[['w','Wishlist',110],['a','Audit',330],['p','Product',550]];
+  const all={wl:['w','a'],ca:['a','p'],in:['a','p']};
+  SV.forEach(([id,n,x])=>all[id].forEach(tb=>{const tx=TB.find(z=>z[0]===tb)[2];const hot=tb===t;s.appendChild(el('line',{x1:x,y1:62,x2:tx,y2:158,stroke:hot?'var(--blue)':'var(--line)','stroke-width':hot?3:1.5,class:hot?'flow':''}))}));
+  SV.forEach(([id,n,x])=>{const hot=OW[t].ws.includes(id);s.appendChild(el('rect',{x:x-70,y:20,width:140,height:42,rx:10,fill:hot?'var(--blue-soft)':'var(--surface)',stroke:'var(--blue)','stroke-width':2}));s.appendChild(el('text',{x,y:46,'text-anchor':'middle','font-size':14,'font-weight':700,fill:'var(--ink)'},n+' svc'))});
+  TB.forEach(([id,n,x])=>{const hot=id===t;s.appendChild(el('rect',{x:x-60,y:158,width:120,height:44,rx:4,fill:hot?'var(--pencil-soft)':'var(--paper)',stroke:hot?'var(--pencil)':'var(--ink)','stroke-width':hot?2.5:1.2}));s.appendChild(el('text',{x,y:185,'text-anchor':'middle','font-size':13,'font-weight':hot?700:400,fill:'var(--ink)'},n))});
+  s.appendChild(el('text',{x:640,y:222,'text-anchor':'end','font-size':11,class:'t-mono',fill:'var(--muted)'},'lines = write access'));
+  $('#ownTxt').innerHTML=`<b>${OW[t].kind}.</b> ${OW[t].txt}`}
+seg('#ownBtns button',b=>rOwn(b.dataset.t));rOwn('w');
+
+/* ---------- common ownership ---------- */
+let cmMode='async',cmDown=false,cmQ=0,cmTimer=null;
+function rCm(note){const s=$('#cmSvg');s.innerHTML='';['Wishlist','Catalog','Inventory'].forEach((n,k)=>{const y=25+k*55;s.appendChild(el('rect',{x:10,y,width:130,height:40,rx:8,fill:'var(--surface)',stroke:'var(--blue)','stroke-width':2}));s.appendChild(el('text',{x:75,y:y+25,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--ink)'},n));
+    s.appendChild(el('line',{x1:140,y1:y+20,x2:cmMode==='async'?270:430,y2:100,stroke:'var(--muted)','stroke-width':1.5,'stroke-dasharray':cmMode==='async'?'5 4':''}))});
+  if(cmMode==='async'){s.appendChild(el('rect',{x:270,y:78,width:130,height:44,rx:22,fill:'var(--paper)',stroke:'var(--pencil)','stroke-width':2}));s.appendChild(el('text',{x:335,y:96,'text-anchor':'middle','font-size':11,class:'t-mono',fill:'var(--pencil)'},'persisted queue'));
+    for(let i=0;i<Math.min(cmQ,8);i++)s.appendChild(el('rect',{x:284+i*13,y:103,width:10,height:12,rx:2,fill:'var(--pencil)'}));
+    s.appendChild(el('line',{x1:400,y1:100,x2:430,y2:100,stroke:'var(--muted)','stroke-width':1.5}))}
+  s.appendChild(el('rect',{x:430,y:75,width:120,height:50,rx:10,fill:cmDown?'var(--bad-soft)':'var(--ok-soft)',stroke:cmDown?'var(--bad)':'var(--ok)','stroke-width':2}));s.appendChild(el('text',{x:490,y:104,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--ink)'},cmDown?'Audit (down)':'Audit svc'));
+  s.appendChild(el('line',{x1:550,y1:100,x2:580,y2:100,stroke:'var(--ink)','stroke-width':1.5}));s.appendChild(el('rect',{x:580,y:80,width:70,height:40,rx:4,fill:'var(--paper)',stroke:'var(--ink)'}));s.appendChild(el('text',{x:615,y:105,'text-anchor':'middle','font-size':12,fill:'var(--ink)'},'Audit'));
+  s.appendChild(el('text',{x:10,y:192,'font-size':11,class:'t-mono',fill:'var(--muted)'},'only the Audit service touches the Audit table'));
+  $('#cmTxt').textContent=note||(cmMode==='async'?'Callers drop a message and carry on. Nothing comes back to them.':'Callers wait for the Audit service to answer. Use this only when they need something back.')}
+function cmFire(){if(cmMode==='async'){if(cmDown){cmQ+=3;rCm(`Audit is down, but the three callers did not notice: ${cmQ} message(s) wait safely in the queue.`)}else{cmQ=0;rCm('Three records written. The callers never waited.')}}
+  else rCm(cmDown?'All three callers block, time out and must decide what to do with a failed write. The audit outage became their outage.':'Each caller waits a round trip, then gets its acknowledgment.')}
+seg('[data-cm]',b=>{cmMode=b.dataset.cm;cmQ=0;rCm()});
+$('#cmDown').addEventListener('click',()=>{cmDown=!cmDown;$('#cmDown').textContent=cmDown?'Bring Audit Service back':'Audit Service goes down';if(!cmDown&&cmQ){const n=cmQ;cmQ=0;rCm(`Audit is back and drains the ${n} queued record(s). Nothing was lost.`)}else rCm()});
+$('#cmFire').addEventListener('click',cmFire);rCm();
+
+/* ---------- joint ownership techniques ---------- */
+const JT={split:{t:'Split the table. Catalog keeps Product; Inventory gets a new stock table. Ownership becomes single, but adding or removing a product now means Catalog must tell Inventory.',pro:['Bounded context preserved','Each table has a single owner'],con:['Tables must be restructured','No ACID transaction across the two updates','Keeping them in sync is hard','Some data may be duplicated']},
+domain:{t:'Put the shared table in a schema both services use: a broader bounded context. Neither service waits for the other, but schema changes now involve both.',pro:['Fast data access','No scalability or throughput penalty','Data stays consistent','Services do not depend on each other'],con:['Schema changes ripple to more services','Wider testing scope and deployment risk','Write responsibility needs governance'],tip:'Before choosing this, ask why these are separate services at all. Good answers: different scalability, fault-tolerance, throughput or code volatility needs.'},
+del:{t:'One service owns the table and the other calls it for every read and write. Single ownership, but the services are now tightly coupled.',pro:['Single table ownership','Good control over schema changes','Data structure hidden behind an API'],con:['High service coupling','Slow writes for the non-owner','No atomic transaction for non-owner writes','Non-owner fails when the owner does']},
+cons:{t:'Merge Catalog and Inventory into one Product service. Joint ownership disappears, along with the dependency, at the price of a coarser service.',pro:['Atomic transactions are back','Good overall performance'],con:['Coarse-grained scaling: catalog upkeep scales with stock traffic','Less fault tolerance','Higher deployment risk','Wider testing scope']}};
+function svcBox(s,x,y,n,c,w){w=w||130;s.appendChild(el('rect',{x:x-w/2,y,width:w,height:42,rx:10,fill:'var(--surface)',stroke:c||'var(--blue)','stroke-width':2}));s.appendChild(el('text',{x,y:y+26,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--ink)'},n))}
+function tblBox(s,x,y,n,w){w=w||110;s.appendChild(el('rect',{x:x-w/2,y,width:w,height:38,rx:4,fill:'var(--paper)',stroke:'var(--ink)','stroke-width':1.2}));s.appendChild(el('text',{x,y:y+24,'text-anchor':'middle','font-size':12,fill:'var(--ink)'},n))}
+function ctx(s,x,y,w,h,lab){s.appendChild(el('rect',{x,y,width:w,height:h,rx:14,fill:'none',stroke:'var(--pencil)','stroke-width':1.5,'stroke-dasharray':'6 5'}));if(lab)s.appendChild(el('text',{x:x+10,y:y+h-8,'font-size':11,class:'t-mono',fill:'var(--pencil)'},lab))}
+function ln(s,x1,y1,x2,y2,o){s.appendChild(el('line',Object.assign({x1,y1,x2,y2,stroke:'var(--muted)','stroke-width':1.6},o||{})))}
+function rJ(j){const s=$('#jSvg');s.innerHTML='';const d=JT[j];
+  if(j==='split'){ctx(s,40,10,240,200,'bounded context');ctx(s,380,10,240,200,'bounded context');svcBox(s,160,30,'Catalog');svcBox(s,500,30,'Inventory');ln(s,160,72,160,140);ln(s,500,72,500,140);tblBox(s,160,140,'Product');tblBox(s,500,140,'Stock');ln(s,225,51,435,51,{stroke:'var(--pencil)','stroke-width':2,class:'flow'});s.appendChild(el('text',{x:330,y:42,'text-anchor':'middle','font-size':11,class:'t-mono',fill:'var(--pencil)'},'new / removed SKU'))}
+  if(j==='domain'){ctx(s,30,10,600,205,'shared data domain');svcBox(s,160,30,'Catalog');svcBox(s,500,30,'Inventory');ln(s,160,72,300,140);ln(s,500,72,360,140);tblBox(s,330,140,'Product',140)}
+  if(j==='del'){ctx(s,40,10,250,200,'bounded context');svcBox(s,165,30,'Catalog');tblBox(s,165,140,'Product');ln(s,165,72,165,140);svcBox(s,500,30,'Inventory');ln(s,435,51,230,51,{stroke:'var(--bad)','stroke-width':2,class:'flow'});s.appendChild(el('text',{x:332,y:42,'text-anchor':'middle','font-size':11,class:'t-mono',fill:'var(--bad)'},'every stock read/write'))}
+  if(j==='cons'){ctx(s,170,10,320,200,'one bounded context');svcBox(s,330,30,'Product svc (catalog + stock)','var(--blue)',250);ln(s,330,72,330,140);tblBox(s,330,140,'Product')}
+  $('#jTxt').textContent=d.t+(d.tip?' '+d.tip:'');
+  $('#jPc').innerHTML=`<div class="pro"><h3>Gains</h3><ul>${d.pro.map(x=>`<li>${x}</li>`).join('')}</ul></div><div class="con"><h3>Costs</h3><ul>${d.con.map(x=>`<li>${x}</li>`).join('')}</ul></div>`}
+seg('#jTabs button',b=>rJ(b.dataset.j));rJ('split');
+
+/* ---------- delegate priority ---------- */
+function rDp(m){const s=$('#dpSvg');s.innerHTML='';const owner=m==='dom'?'Catalog':'Inventory',other=m==='dom'?'Inventory':'Catalog';
+  ctx(s,30,8,260,165,'owner');svcBox(s,160,25,owner);tblBox(s,160,120,'Product');ln(s,160,67,160,120,{stroke:'var(--ok)','stroke-width':2.5});
+  svcBox(s,500,25,other);ln(s,435,46,225,46,{stroke:'var(--bad)','stroke-width':2,class:'flow'});s.appendChild(el('text',{x:330,y:38,'text-anchor':'middle','font-size':11,class:'t-mono',fill:'var(--bad)'},'remote calls'));
+  s.appendChild(el('text',{x:500,y:100,'text-anchor':'middle','font-size':12,fill:'var(--muted)'},m==='dom'?'stock updates: many per second':'product edits: a few per day'));
+  bars('#dpBars',m==='dom'?[{l:'Stock writes that go remote',v:95,c:'bad',txt:'almost all'},{l:'Domain fit of the owner',v:90,c:'ok',txt:'natural'}]:[{l:'Stock writes that go remote',v:4,c:'ok',txt:'none'},{l:'Domain fit of the owner',v:30,c:'bad',txt:'awkward'}],100);
+  $('#dpTxt').textContent=m==='dom'?'Catalog does most of the create, update and delete work on products, so it owns the table. Inventory, the busy one, must go across the network for every stock change: slower, and only eventually consistent if it goes async.':'Stock changes happen far more often than catalog edits, so the high-volume writer owns the table and updates it directly. Fast and consistent for the hot data, but Inventory is now responsible for product maintenance and its error handling.'}
+seg('[data-dp]',b=>rDp(b.dataset.dp));rDp('dom');
+
+/* ---------- ACID ---------- */
+const AC=[['A','Atomicity','All updates commit together or all roll back.','Each service commits only its own slice.'],['C','Consistency','Constraints such as foreign keys are never violated mid-transaction.','One failed service leaves the tables out of step; cross-service foreign keys are gone.'],['I','Isolation','Uncommitted rows are invisible to everyone else.','The profile is visible to other requests before billing is done.'],['D','Durability','After a successful commit, the data survives later failures.','Holds per service, not for the business request as a whole.']];
+let acMode=0;
+function rAcid(dist){$('#acidGrid').innerHTML=AC.map(a=>`<div><b>${a[0]}</b><strong>${a[1]}</strong><span class="st ${dist?'n':'y'}">${dist?'lost across services':'holds'}</span><span>${dist?a[3]:a[2]}</span></div>`).join('')}
+$('#acSt').insertAdjacentHTML('beforeend',stepHTML());
+stepper('#acSt',['One Customer service, one ACID transaction. It inserts the profile.','It inserts the support contract.','The billing insert fails.','The database rolls back both earlier inserts. Nothing was ever visible to anyone. All four properties hold.','Now three services. Profile commits its row; other requests can see it at once.','Contract commits its row.','Billing fails. There is no transaction to roll back: profile and contract stay. This half-finished condition is the problem the rest of the chapter solves.'],i=>{
+  const s=$('#acSvg');s.innerHTML='';const dist=i>=4;rAcid(dist);const T=['Profile','Contract','Billing'];
+  if(!dist){ctx(s,40,8,580,205,'one service, one transaction');svcBox(s,330,22,'Customer svc','var(--blue)',160)}
+  T.forEach((t,k)=>{const x=130+k*200;if(dist){ctx(s,x-90,8,180,205,'own transaction');svcBox(s,x,22,t+' svc')}
+    const ST=[['ok','empty','empty'],['ok','ok','empty'],['ok','ok','fail'],['rolled','rolled','fail'],['ok','empty','empty'],['ok','ok','empty'],['ok','ok','fail']];const st=ST[i][k];
+    ln(s,dist?x:330,64,x,110);
+    const fill={empty:'var(--paper)',ok:'var(--ok-soft)',fail:'var(--bad-soft)',rolled:'var(--paper)'}[st],str={empty:'var(--ink)',ok:'var(--ok)',fail:'var(--bad)',rolled:'var(--muted)'}[st];
+    s.appendChild(el('rect',{x:x-60,y:110,width:120,height:40,rx:4,fill,stroke:str,'stroke-width':2}));s.appendChild(el('text',{x,y:135,'text-anchor':'middle','font-size':12,fill:'var(--ink)'},t+' table'));
+    const lab={empty:'',ok:dist?'committed':'inserted',fail:'insert failed',rolled:'rolled back'}[st];s.appendChild(el('text',{x,y:170,'text-anchor':'middle','font-size':11,class:'t-mono',fill:str},lab))})});
+
+/* ---------- BASE cards + quiz ---------- */
+cards('#baseCards',[{t:'BA: basic availability',c:'d1',d:'Every participating service is expected to be up. Async messaging softens this, but then consistency takes longer.'},{t:'S: soft state',c:'d3',d:'The request is in progress and its overall state is incomplete, sometimes unknown: the profile is committed, the contract and billing are not yet.'},{t:'E: eventual consistency',c:'d4',d:'Given time, every part completes and the data lines up. The pattern you pick and your error handling decide how much time.'}]);
+quiz('#abQuiz','#abScore',[{q:'A new order is invisible to other sessions until it commits.',a:0,why:'That is isolation, an ACID property within one database.'},{q:'The profile is saved, but billing has not finished yet.',a:1,why:'Soft state: a business request in mid-flight across services.'},{q:'An order row cannot exist without its customer row, enforced by a foreign key.',a:0,why:'Consistency via constraints, only possible inside one database.'},{q:'The contract table will catch up within a few seconds of the event.',a:1,why:'Eventual consistency is the E in BASE.'}],['ACID','BASE']);
+
+/* ---------- eventual consistency simulator ---------- */
+const EC={bg:{n:'Background sync',resp:'fast',time:'slowest (hours if nightly)',cpl:'data-source coupled',note:'A separate batch job finds what changed and fixes the other tables. The customer gets an answer at once, but the job needs write access to every service\'s tables (bounded contexts broken) and must duplicate their business rules, such as keeping contracts for three months by setting a removal date instead of deleting. Fits closed, heterogeneous systems that do not share data otherwise; not microservices.'},
+orch:{n:'Orchestrated request-based',resp:'slow',time:'immediate',cpl:'decoupled, via orchestrator',note:'A dedicated orchestrator (preferred over overloading the Profile service) calls Profile first, synchronously, then Contract and Billing, and replies only when all are done. Consistent by the time the customer hears back, but slower, and errors are messy.'},
+ev:{n:'Event-based',resp:'fast',time:'short',cpl:'highly decoupled',note:'Profile publishes a customer-unsubscribed event. Contract and Billing are durable subscribers and react in parallel. Fast response and quick consistency; error handling is the hard part.'}};
+let ecP='bg',ecAnim=null;
+function ecDraw(t){const s=$('#ecSvg');s.innerHTML='';const fail=$('#ecFail').checked;const L=['Customer','Profile','Contract','Billing'];
+  L.forEach((n,k)=>{const y=30+k*52;s.appendChild(el('text',{x:10,y:y+5,'font-size':12,'font-weight':700,fill:'var(--ink)'},n));s.appendChild(el('line',{x1:90,y1:y,x2:640,y2:y,stroke:'var(--line)','stroke-width':1}))});
+  const X=v=>90+v*5.5,Y=k=>30+k*52;const ev=[];
+  if(ecP==='bg'){ev.push([0,0,1,'unsubscribe'],[9,1,0,'done'],[70,1,2,'batch job',1],[72,1,3,fail?'job error':'batch job',1])}
+  if(ecP==='orch'){ev.push([0,0,1,'to orchestrator'],[10,1,2,'remove'],[20,1,3,fail?'error!':'remove'],[fail?55:30,1,0,fail?'compensate, then error':'done'])}
+  if(ecP==='ev'){ev.push([0,0,1,'unsubscribe'],[9,1,0,'done'],[12,1,2,'event'],[12,1,3,fail?'event → retries → DLQ':'event'])}
+  s.appendChild(el('text',{x:640,y:242,'text-anchor':'end','font-size':11,class:'t-mono',fill:'var(--muted)'},ecP==='bg'?'time → (batch runs much later)':'time →'));
+  ev.forEach(([at,from,to,lab,batch])=>{if(at>t)return;const x1=X(at),x2=X(Math.min(at+6,100));const bad=lab.includes('error')||lab.includes('DLQ')||lab.includes('compensate');
+    s.appendChild(el('line',{x1,y1:Y(from),x2,y2:Y(to),stroke:bad?'var(--bad)':batch?'var(--pencil)':'var(--blue)','stroke-width':2,'marker-end':''}));s.appendChild(el('circle',{cx:x2,cy:Y(to),r:4,fill:bad?'var(--bad)':'var(--blue)'}));
+    s.appendChild(el('text',{x:Math.min(x2+6,560),y:Y(to)-6,'font-size':10.5,class:'t-mono',fill:bad?'var(--bad)':'var(--muted)'},lab))});
+  if(ecP==='bg'&&t>=60)s.appendChild(el('rect',{x:X(66),y:8,width:X(80)-X(66),height:225,rx:6,fill:'var(--pencil-soft)',opacity:.5}));
+  if(ecP==='orch')s.appendChild(el('rect',{x:X(0),y:Y(1)-14,width:Math.max(0,Math.min(t,fail?55:30))*5.5,height:8,rx:3,fill:'var(--blue-soft)'}));
+  const m=EC[ecP];$('#ecM').innerHTML=`<div><b>Customer waits</b>${m.resp}</div><div><b>Time to consistency</b>${fail?'never, until fixed':m.time}</div><div><b>Coupling</b>${m.cpl}</div>`;
+  let f='';if(fail){f=ecP==='bg'?' With Billing broken, the batch job errors and nobody hears about it until someone reads the job log.':ecP==='orch'?' Billing failed after Profile and Contract committed. Retry? Reverse the other two with compensating updates and tell the customer it failed? The customer was already told nothing yet, so compensation is the usual answer, and compensation itself can fail.':' The broker retries, then moves the event to a dead letter queue. The customer was already told they are unsubscribed, so the fix happens later, by program or by hand.'}
+  $('#ecTxt').textContent=m.note+f}
+function ecRun(){clearInterval(ecAnim);let t=0;ecDraw(0);ecAnim=setInterval(()=>{t+=2;ecDraw(t);if(t>=100)clearInterval(ecAnim)},40)}
+seg('#ecTabs button',b=>{ecP=b.dataset.e;clearInterval(ecAnim);ecDraw(100)});$('#ecRun').addEventListener('click',ecRun);$('#ecFail').addEventListener('change',()=>{clearInterval(ecAnim);ecDraw(100)});ecDraw(100);
+
+/* ---------- Sysops + quiz ---------- */
+quiz('#svQuiz','#svScore',[{q:'Split the Survey table between the two services?',a:1,why:'The table\'s structure does not divide cleanly, so splitting was ruled out.'},{q:'Delegate: Survey owns it, Ticket Completion sends what it knows in the existing completion event?',a:0,why:'This is the chosen option. The event already exists, so no extra call is needed.'},{q:'Hand the table to an external nightly batch job?',a:1,why:'That is background synchronization, which breaks bounded contexts.'}],['Good fit','Poor fit']);
+quiz('#qQuiz','#qScore',[
+{q:'Three services read a table but only one writes to it. Who owns it?',o:['All three','The writer','A new shared service'],a:1,why:'Ownership follows writes. Readers get data through the techniques in Chapter 10.'},
+{q:'Every service writes to a logging table. Best first move?',o:['Shared schema','Dedicated owning service fed by a queue','Table split'],a:1,why:'Common ownership is solved by appointing a single keeper; fire-and-forget keeps callers fast.'},
+{q:'Which joint-ownership technique brings atomic transactions back?',o:['Delegate','Table split','Service consolidation'],a:2,why:'Only merging the services puts the writes back in one transaction.'},
+{q:'Which property does a distributed transaction keep, per service?',o:['Atomicity of the business request','Durability of each local commit','Isolation across services'],a:1,why:'Each service commits durably; nothing spans the whole request.'},
+{q:'Which eventual-consistency pattern most often breaks bounded contexts?',o:['Background synchronization','Event-based','Orchestrated request-based'],a:0,why:'The batch job needs write access to every service\'s tables and copies their rules.'}]);
+
+})();
+</script>
+</body>
+</html>

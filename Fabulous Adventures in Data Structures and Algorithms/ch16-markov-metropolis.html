@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Markov Processes and Metropolis</title>
+<meta name="description" content="A Markov process picks its next state from its current one alone. That makes nonsense prose generators, and, with the Metropolis rule, a way to sample distributions you can only evaluate up to a constant.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Fabulous Adventures companion: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:4px;flex-wrap:wrap;flex:1 1 80px;min-width:0}
+.dots i{width:clamp(6px,3vw,22px);height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code + data-structure helpers */
+pre.code{margin:0;font-family:var(--mono);font-size:.84rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .k{color:var(--blue);font-weight:600} pre.code .c{color:var(--muted);font-style:italic} pre.code .s{color:var(--d2)}
+code{font-family:var(--mono);font-size:.88em;background:var(--blue-soft);padding:1px 5px;border-radius:4px}
+.cells{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.cell{font-family:var(--mono);font-size:.9rem;min-width:2.2em;padding:4px 8px;border:1.5px solid var(--blue);border-radius:6px;background:var(--surface);text-align:center;transition:all .3s}
+.cell.hl{background:var(--blue);color:var(--surface)} .cell.pc{border-color:var(--pencil);background:var(--pencil-soft)} .cell.ok{border-color:var(--ok);background:var(--ok-soft)} .cell.bad{border-color:var(--bad);background:var(--bad-soft)} .cell.dim{opacity:.35}
+.log{font-family:var(--mono);font-size:.82rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+input[type=text],input[type=number]{font:inherit;font-size:.92rem;padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+canvas{max-width:100%;display:block}
+
+/* page */
+
+.ctl{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px 16px}
+.gen{font-family:var(--display);font-size:1.05rem;line-height:1.6;padding:12px 14px;border-radius:8px;background:var(--paper);border:1px solid var(--line);min-height:3.4em}
+.nexts{display:flex;flex-wrap:wrap;gap:6px}
+.nexts button{font-family:var(--mono);font-size:.82rem;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:999px;padding:3px 10px;cursor:pointer}
+.nexts button b{color:var(--muted);font-weight:500;margin-left:4px}
+.mstat{font-family:var(--mono);font-size:.85rem}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Fabulous Adventures in DS&A · visual companion</a><span class="tag">Part 3 · Chapter 16 of 16</span></div>
+  <h1>Markov Processes and Metropolis</h1>
+  <p class="lede">A Markov process picks its next state from its current one alone. That makes nonsense prose generators, and, with the Metropolis rule, a way to sample distributions you can only evaluate up to a constant.</p>
+  <nav class="toc" aria-label="Sections"><a href="#markov">Markov processes</a><a href="#text">Markov text</a><a href="#metropolis">Metropolis</a><a href="#posterior">Continuous posteriors</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="markov" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Random sequences with no memory</h2></div>
+  <p>Wander a strange city, choosing a direction at random at each corner. Gamble chips until you are broke or bored. Autocomplete one word after another. These are all <b>Markov processes</b>: start in a state drawn from an <b>initial distribution</b>, then repeatedly draw the next state from a <b>transition function</b> that sees only the current state. When the transition returns the empty distribution, the sequence stops. A sample is an entire sequence. The transition function is just a likelihood function from chapter 13.</p>
+  <div class="sheet">
+    <h3>Gambler's ruin</h3>
+    <p class="small">Start with 4 to 7 chips. Each coin flip wins or loses one chip. Stop at 0 (broke) or 10 (happy).</p>
+    <div class="row"><button class="btn primary" id="grGo">Play one evening</button><button class="btn" id="grMany">Play 20,000 evenings</button></div>
+    <svg class="svgbox fit" id="grSvg" viewBox="0 0 600 200" role="img" aria-label="Chip count over time"></svg>
+    <p class="small mono" id="grSeq"></p>
+    <svg class="svgbox fit" id="grHist" viewBox="0 0 600 170" role="img" aria-label="Histogram of evening lengths"></svg>
+    <p class="small" id="grOut"></p>
+  </div>
+  <p>Markov models are everywhere: Brownian motion, DNA mutation, the weather, prices. A work queue is a good one to simulate: jobs arrive, workers finish them, and running the chain many times shows how long queues get and how long clients wait.</p>
+</section>
+
+<section id="text" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>A very small language model</h2></div>
+  <p>Let the state be a word. The initial distribution is the set of first words of sentences; the transition from a word is the distribution of the words that followed it in the source text, with a sentence-ending word mapping to empty. The book trains on Shakespeare. This page trains on a tiny corpus of sentences written for it, so you can see every count. Tap a word to follow the chain yourself.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="State size"><button data-o="1" aria-pressed="true">state = last word</button><button data-o="2" aria-pressed="false">state = last two words</button></div>
+    <div class="gen" id="gen" aria-live="polite"></div>
+    <div class="row"><button class="btn primary" id="tGen">Generate a sentence</button><button class="btn" id="tReset">Start by hand</button></div>
+    <p class="small" id="tState"></p>
+    <div class="nexts" id="nexts"></div>
+  </div>
+  <p>Large language models add better tokens, far more context as the state (at a cost that grows with length), vastly more text, learned semantics and human correction. The basic loop is unchanged: pick the next word at random based on what came before. There is no plan and no backtracking. Any <b>intent</b> to seem meaningful belongs to the people who built the model, not to the random process.</p>
+</section>
+
+<section id="metropolis" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>The Metropolis algorithm</h2></div>
+  <p>Rejection sampling needed a hand-fitted helper. <b>Metropolis</b> needs only the (unnormalized) PDF, an initial distribution inside the support, and an unbiased <b>proposal</b> distribution centred on the current point. Each step: propose a nearby x′; compute the ratio w(x′) / w(x); accept x′ with that probability (always if it is uphill), otherwise <b>repeat x</b>. The sequence of samples is itself a Markov process. Only the ratio matters, so normalization never comes up, and each step does a fixed amount of work with no loops.</p>
+  <div class="sheet stepper" id="mStep">
+    <svg class="svgbox fit" id="mOne" viewBox="0 0 600 200" role="img" aria-label="One Metropolis step"></svg>
+  </div>
+  <div class="sheet">
+    <div class="ctl"><label class="rng"><span>proposal std dev: <b id="psV">1.0</b></span><input type="range" id="ps" min="0" max="40" value="20"></label><label class="rng"><span>samples: <b id="nV">5,000</b></span><input type="range" id="n" min="1" max="40" value="10"></label></div>
+    <div class="row"><button class="btn primary" id="mGo">Run the chain</button><span class="mstat" id="mStat"></span></div>
+    <svg class="svgbox fit" id="mTrace" viewBox="0 0 600 150" role="img" aria-label="Trace of the chain"></svg>
+    <svg class="svgbox fit" id="mHist" viewBox="0 0 600 200" role="img" aria-label="Histogram vs target"></svg>
+    <p class="small" id="mOut"></p>
+  </div>
+</section>
+
+<section id="posterior" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Finally: sampling a continuous posterior</h2></div>
+  <p>Bayes for densities: posterior(a) ∝ prior(a) · likelihood(a).Weight(evidence). The divisor P(evidence) is just a constant, which an unnormalized PDF can ignore, and Metropolis can sample from what remains. Use the prior as the initial distribution, and a normal around the current point, with a sensible width, as the proposal. (The likelihoods must be consistently weighted with one another.)</p>
+  <p>A factory makes bent coins whose chance of heads follows the clamped normal from chapter 15, N(0.5, 0.2) on [0, 1]. Flip one coin 10 times. The likelihood is the <b>binomial</b>: C(10, k) · p<sup>k</sup>(1 − p)<sup>10−k</sup>. How fair is this coin?</p>
+  <div class="sheet">
+    <label class="rng"><span>heads observed: <b id="hV">9</b> of 10</span><input type="range" id="h" min="0" max="10" value="9"></label>
+    <svg class="svgbox fit" id="pSvg" viewBox="0 0 600 220" role="img" aria-label="Prior and posterior of coin fairness"></svg>
+    <div class="row"><span class="small"><span style="color:var(--blue);font-weight:700">━</span> prior &nbsp; <span style="color:var(--bad);font-weight:700">━</span> exact posterior &nbsp; bars: 20,000 Metropolis samples</span></div>
+    <p id="pOut"></p>
+  </div>
+  <p>Replace "coin fairness" with "probability this account is a hostile bot" and "heads" with observed behaviours, and this is a real tool. Programs increasingly make decisions under uncertainty at scale. Doing it with principled methods like this one is a responsibility.</p>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="score"></span></div><div class="quiz" id="quizBox"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Fabulous Adventures in Data Structures and Algorithms</i> by Eric Lippert (Manning, 2026). Explanations, code snippets, simulations and drawings are original summaries written for study; they are not taken from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch15-continuous.html"><span>Previous · Chapter 15</span><b>Sampling Continuous Distributions</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="appendix-csharp.html"><span>Next · Appendix A–B</span><b>Notes on C# and Further Reading</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('fadsa:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('fadsa:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+
+const U=()=>Math.random();const gauss=()=>Math.sqrt(-2*Math.log(1-U()))*Math.cos(2*Math.PI*U());
+/* gambler's ruin */
+function evening(){const s=[4+Math.floor(U()*4)];while(s[s.length-1]>0&&s[s.length-1]<10)s.push(s[s.length-1]+(U()<.5?-1:1));return s}
+function grDraw(seq){const s=$('#grSvg');s.innerHTML='';const n=Math.max(30,seq.length-1),X=i=>36+i*(554/n),Y=c=>180-c*16;
+ for(let c=0;c<=10;c+=2){s.appendChild(el('line',{x1:36,x2:590,y1:Y(c),y2:Y(c),stroke:c===0||c===10?'var(--pencil)':'var(--line)'}));s.appendChild(el('text',{x:28,y:Y(c)+4,'text-anchor':'end','font-size':12,fill:'var(--muted)'},c))}
+ const pl=el('polyline',{points:seq.map((c,i)=>X(i)+','+Y(c)).join(' '),fill:'none',stroke:'var(--blue)','stroke-width':2.5,'stroke-linejoin':'round'});s.appendChild(pl);
+ const L=pl.getTotalLength?pl.getTotalLength():0;if(L&&!matchMedia('(prefers-reduced-motion: reduce)').matches){pl.style.strokeDasharray=L;pl.style.strokeDashoffset=L;pl.getBoundingClientRect();pl.style.transition='stroke-dashoffset 1.2s linear';pl.style.strokeDashoffset=0}
+ const end=seq[seq.length-1];s.appendChild(el('circle',{cx:X(seq.length-1),cy:Y(end),r:6,fill:end?'var(--ok)':'var(--bad)'}));
+ $('#grSeq').textContent=seq.join(', ')+(end?'  (home with 10!)':'  (broke)')}
+$('#grGo').addEventListener('click',()=>grDraw(evening()));grDraw([5,4,3,4,5,6,5,4,3,2,1,2,1,2,1,0]);
+function grMany(){const lens=[];let broke=0,mx=0;for(let i=0;i<20000;i++){const e=evening();lens.push(e.length-1);if(!e[e.length-1])broke++;mx=Math.max(mx,e.length-1)}
+ const cap=80,c=Array(cap+1).fill(0);lens.forEach(l=>c[Math.min(l,cap)]++);const m=Math.max(...c),s=$('#grHist');s.innerHTML='';const bw=554/(cap+1);
+ c.forEach((k,i)=>{if(!k)return;const h=130*k/m;s.appendChild(el('rect',{x:36+i*bw,y:145-h,width:Math.max(1,bw-1),height:h,fill:i===cap?'var(--d4)':'var(--d2)'}))});
+ [0,10,20,40,60,80].forEach(t=>s.appendChild(el('text',{x:36+t*bw+bw/2,y:162,'text-anchor':'middle','font-size':12,fill:'var(--muted)'},t===80?'80+':t)));
+ $('#grOut').textContent=`Every evening ends, but the tail is long: the longest of 20,000 took ${mx} flips. Mean ${(lens.reduce((a,b)=>a+b,0)/lens.length).toFixed(1)} flips; broke ${(100*broke/20000).toFixed(0)}% of the time.`}
+$('#grMany').addEventListener('click',grMany);grMany();
+
+/* markov text: original tiny corpus */
+const CORPUS=`the stack keeps the newest plate on top. the queue keeps the oldest customer at the front. the tree keeps every key in order. the cat sat on the stack of plates. the dog chased the cat around the tree. a queue of dogs waited at the door. every plate on the stack was clean. the oldest dog sat at the front of the queue. a tree of plates fell on the cat. the customer chased the queue around the block. every key opened the door at the front. the newest cat waited on top of the tree.`;
+const sents=CORPUS.split(/(?<=\.)\s+/).map(s=>s.split(' '));
+function build(order){const init=new Map(),tr=new Map();const add=(m,k,v)=>{if(!m.has(k))m.set(k,new Map());const mm=m.get(k);mm.set(v,(mm.get(v)||0)+1)};
+ sents.forEach(w=>{const st=w.slice(0,order).join(' ');init.set(st,(init.get(st)||0)+1);for(let i=order;i<w.length;i++)add(tr,w.slice(i-order,i).join(' '),w[i])});return{init,tr}}
+const pick=m=>{let t=0;m.forEach(v=>t+=v);let r=U()*t;for(const[k,v] of m){r-=v;if(r<0)return k}return[...m.keys()].pop()};
+let ord=1,M=build(1),words=[];
+function stateKey(){return words.slice(-ord).join(' ')}
+function showText(){$('#gen').textContent=words.length?words.join(' '):'…';const done=words.length&&/\.$/.test(words[words.length-1]);
+ const opts=!words.length?M.init:(done?null:M.tr.get(stateKey()));$('#tState').innerHTML=!words.length?'Initial distribution (first words of sentences):':done?'Sentence ended: the transition returned the empty distribution.':`State “<b>${stateKey()}</b>” → next-word distribution:`;
+ const nx=$('#nexts');nx.innerHTML='';if(opts)[...opts].sort((a,b)=>b[1]-a[1]).forEach(([w,c])=>{const b=document.createElement('button');b.innerHTML=`${w}<b>×${c}</b>`;b.addEventListener('click',()=>{words.push(...w.split(' '));showText()});nx.appendChild(b)})}
+function gen(){words=pick(M.init).split(' ');let g=0;while(!/\.$/.test(words[words.length-1])&&g++<60){const m=M.tr.get(stateKey());if(!m)break;words.push(pick(m))}showText()}
+seg('[data-o]',b=>{ord=+b.dataset.o;M=build(ord);gen()});$('#tGen').addEventListener('click',gen);$('#tReset').addEventListener('click',()=>{words=[];showText()});gen();
+
+/* metropolis */
+const tgt=x=>Math.exp(-x*x)+Math.exp(-10*(x-1)*(x-1));const Z=Math.sqrt(Math.PI)+Math.sqrt(Math.PI/10);
+function chain(w,n,sd,x0){const xs=[];let x=x0!=null?x0:gauss(),acc=0;for(let i=0;i<n;i++){const p=x+sd*gauss();const r=w(p)/w(x);if(U()<=r){x=p;acc++}xs.push(x)}return{xs,acc:acc/n}}
+function plotH(svg,xs,lo,hi,f,ymax,col,curves){svg.innerHTML='';const W=600,H=+svg.viewBox.baseVal.height,L=30,R=590,B=H-22,T=8;const X=x=>L+(x-lo)/(hi-lo)*(R-L),Y=y=>B-y/ymax*(B-T);const nb=50,c=Array(nb).fill(0),bw=(hi-lo)/nb;xs.forEach(v=>{const i=Math.floor((v-lo)/bw);if(i>=0&&i<nb)c[i]++});
+ c.forEach((k,i)=>{const d=k/(xs.length*bw);svg.appendChild(el('rect',{x:X(lo+i*bw)+.5,y:Y(d),width:Math.max(0,X(lo+(i+1)*bw)-X(lo+i*bw)-1),height:B-Y(d),fill:col||'var(--d2)',opacity:.7}))});
+ (curves||[{f,c:'var(--ink)'}]).forEach(cv=>{let p='';for(let i=0;i<=300;i++){const x=lo+(hi-lo)*i/300;p+=(i?' L':'M')+X(x).toFixed(1)+','+Y(Math.min(cv.f(x),ymax*1.1)).toFixed(1)}svg.appendChild(el('path',{d:p,fill:'none',stroke:cv.c,'stroke-width':2.5}))});
+ svg.appendChild(el('line',{x1:L,x2:R,y1:B,y2:B,stroke:'var(--pencil)'}));const st=(hi-lo)>2?1:.25;for(let t=Math.ceil(lo/st)*st;t<=hi+1e-9;t+=st)svg.appendChild(el('text',{x:X(t),y:B+16,'text-anchor':'middle','font-size':12,fill:'var(--muted)'},+t.toFixed(2)));return{X,Y}}
+const sdMap=v=>v===0?0.02:+(Math.pow(10,(v-20)/13.3)).toPrecision(2);
+function mRun(){const sd=sdMap(+$('#ps').value),n=+$('#n').value*500;$('#psV').textContent=sd;$('#nV').textContent=n.toLocaleString();const {xs,acc}=chain(tgt,n,sd,0);
+ const tr=$('#mTrace');tr.innerHTML='';const m=Math.min(xs.length,600);const Yt=x=>75-x*22;[-2,0,2].forEach(v=>{tr.appendChild(el('line',{x1:30,x2:590,y1:Yt(v),y2:Yt(v),stroke:'var(--line)'}));tr.appendChild(el('text',{x:24,y:Yt(v)+4,'text-anchor':'end','font-size':12,fill:'var(--muted)'},v))});
+ tr.appendChild(el('polyline',{points:xs.slice(0,m).map((x,i)=>(30+i*560/m).toFixed(1)+','+Yt(Math.max(-3,Math.min(3,x))).toFixed(1)).join(' '),fill:'none',stroke:'var(--d4)','stroke-width':1.3}));tr.appendChild(el('text',{x:590,y:146,'text-anchor':'end','font-size':12,fill:'var(--muted)'},`trace of the first ${m} samples`));
+ plotH($('#mHist'),xs,-3,3,x=>tgt(x)/Z,0.75);
+ $('#mStat').textContent=`accepted ${(100*acc).toFixed(0)}% of proposals`;
+ $('#mOut').textContent=sd<0.2?'Tiny steps: almost everything is accepted, but the chain crawls. Successive samples are clumped and the histogram is lumpy.':sd>4?'Huge steps: most proposals land far out in the thin tails and are rejected, so the chain repeats itself (flat runs in the trace).':'A sweet spot: steps are neither too timid nor too wild. The histogram follows the two-humped target.'}
+['#ps','#n'].forEach(s=>$(s).addEventListener('change',mRun));['#ps','#n'].forEach(s=>$(s).addEventListener('input',()=>{$('#psV').textContent=sdMap(+$('#ps').value);$('#nV').textContent=(+$('#n').value*500).toLocaleString()}));$('#mGo').addEventListener('click',mRun);mRun();
+
+/* single step stepper */
+const STEPS=[{x:-0.3,p:0.85},{x:0.85,p:1.9},{x:0.85,p:2.4},{x:0.85,p:0.2}];const scen=[];
+STEPS.forEach(s=>{const r=tgt(s.p)/tgt(s.x);scen.push({...s,r})});
+const mCap=['Current sample x = −0.3. Propose x′ from a normal centred on x.','x′ = 0.85 is uphill: the ratio w(x′)/w(x) is above 1, so accept and move.',
+ 'From 0.85, propose x′ = 1.9: downhill, ratio about '+scen[1].r.toFixed(2)+'. Flip a biased coin: accept with that probability.',
+ 'Propose 2.4: ratio only '+scen[2].r.toFixed(3)+'. Almost surely rejected, and the next sample is 0.85 again. Repeats are part of the answer.',
+ 'Propose 0.2: ratio '+scen[3].r.toFixed(2)+'. Accepted fairly often. Over many steps the time spent at each x is proportional to w(x).'];
+function mOne(i){const s=$('#mOne');s.innerHTML='';const X=x=>30+(x+3)/6.5*560,Y=y=>180-y*115;let p='';for(let k=0;k<=300;k++){const x=-3+6.5*k/300;p+=(k?' L':'M')+X(x).toFixed(1)+','+Y(tgt(x)).toFixed(1)}
+ s.appendChild(el('path',{d:p+` L${X(3.5)},180 L${X(-3)},180Z`,fill:'var(--blue-soft)',stroke:'var(--ink)','stroke-width':2}));s.appendChild(el('line',{x1:30,x2:590,y1:180,y2:180,stroke:'var(--pencil)'}));
+ const st=i===0?{x:-0.3}:scen[i-1];const cx=st.x;s.appendChild(el('line',{x1:X(cx),x2:X(cx),y1:180,y2:Y(tgt(cx)),stroke:'var(--blue)','stroke-width':3}));s.appendChild(el('circle',{cx:X(cx),cy:Y(tgt(cx)),r:7,fill:'var(--blue)'}));s.appendChild(el('text',{x:X(cx),y:196,'text-anchor':'middle','font-size':13,fill:'var(--blue)','font-weight':700},'x'));
+ if(i>0){const px=st.p;const cc=st.r>=1?'var(--ok)':st.r>.3?'var(--d3)':'var(--bad)';s.appendChild(el('line',{x1:X(px),x2:X(px),y1:180,y2:Y(tgt(px)),stroke:cc,'stroke-width':3,'stroke-dasharray':'5 3'}));s.appendChild(el('circle',{cx:X(px),cy:Y(tgt(px)),r:7,fill:cc}));s.appendChild(el('text',{x:X(px),y:196,'text-anchor':'middle','font-size':13,fill:cc,'font-weight':700},"x′"));
+  s.appendChild(el('text',{x:590,y:20,'text-anchor':'end','font-size':15,fill:'var(--ink)','font-weight':700},`ratio = ${st.r.toFixed(3)}`))}
+ else{let g='';for(let k=0;k<=100;k++){const x=cx-2.5+5*k/100;g+=(k?' L':'M')+X(x).toFixed(1)+','+(180-55*Math.exp(-((x-cx)**2)/2)).toFixed(1)}s.appendChild(el('path',{d:g,fill:'none',stroke:'var(--d4)','stroke-width':2,'stroke-dasharray':'4 3'}));s.appendChild(el('text',{x:X(cx)+70,y:116,'font-size':13,fill:'var(--d4)'},'proposal'))}}
+$('#mStep').insertAdjacentHTML('beforeend',stepHTML());stepper('#mStep',mCap,mOne);
+
+/* posterior */
+const C10=[1,10,45,120,210,252,210,120,45,10,1];
+const npdf=p=>p<0||p>1?0:Math.exp(-(((p-.5)/.2)**2)/2);
+function post(){const k=+$('#h').value;$('#hV').textContent=k;const w=p=>npdf(p)*C10[k]*Math.pow(p,k)*Math.pow(1-p,10-k);
+ const zP=(()=>{let s=0;for(let i=0;i<2000;i++)s+=npdf((i+.5)/2000);return s/2000})(),zQ=(()=>{let s=0;for(let i=0;i<2000;i++)s+=w((i+.5)/2000);return s/2000})();
+ // Metropolis: initial from prior (clamped normal via rejection), proposal N(x, 0.15)
+ let x0;do{x0=.5+.2*gauss()}while(x0<0||x0>1);const{xs,acc}=chain(w,20000,.15,x0);
+ const mean=xs.reduce((a,b)=>a+b,0)/xs.length;const below=xs.filter(v=>v<=.5).length/xs.length;
+ plotH($('#pSvg'),xs,0,1,null,4.2,'var(--d2)',[{f:p=>npdf(p)/zP,c:'var(--blue)'},{f:p=>w(p)/zQ,c:'var(--bad)'}]);
+ $('#pOut').innerHTML=`Posterior mean fairness <b>${mean.toFixed(2)}</b> (prior mean 0.50). P(fairness ≤ 0.5 | ${k} heads) ≈ <b>${(100*below).toFixed(1)}%</b>. Metropolis accepted ${(100*acc).toFixed(0)}% of proposals.`}
+$('#h').addEventListener('input',post);post();
+
+quiz('#quizBox','#score',[
+ {q:'In a Markov process, the next state depends on…',o:['the whole history','only the current state','nothing'],a:1,why:'That missing memory is exactly what makes long Markov texts drift.'},
+ {q:'How does a Markov text generator know a sentence has ended?',o:['A length limit','The transition returns the empty distribution','It never ends'],a:1,why:'The empty distribution from chapter 14 is the stop signal.'},
+ {q:'Why can Metropolis use an unnormalized PDF?',o:['It only needs the ratio w(x′)/w(x)','It normalizes first','It integrates numerically'],a:0,why:'Any constant factor cancels in the ratio.'},
+ {q:'What happens when Metropolis rejects a proposal?',o:['It loops and tries again','It emits the current sample again','It throws'],a:1,why:'That is why each step costs a fixed amount of work.'},
+ {q:'Why can we skip dividing by P(evidence) in the posterior?',o:['It is always 1','It is a constant for a given observation','Metropolis computes it'],a:1,why:'Constant factors change only the total area, not the shape.'}]);
+
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,534 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Automating Governance: Code Level</title>
+<meta name="description" content="Architects used to govern with review boards and wikis nobody read. This half of Chapter 4 shows how code-level metrics and architecture test libraries turn rules into checks that run on every build.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Accelerate companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:minmax(0,1fr)}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+button.tag{cursor:pointer}button.tag:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre}
+.code .k{color:var(--blue);font-weight:600}.code .c{color:var(--muted);font-style:italic}.code .s{color:var(--d2)}
+.pill{display:inline-block;font-family:var(--mono);font-size:.72rem;padding:2px 8px;border-radius:999px;border:1px solid currentColor}
+.okbg{background:var(--ok-soft)}.badbg{background:var(--bad-soft)}
+.cb{display:flex;gap:10px;align-items:flex-start;font-size:.92rem;cursor:pointer;max-width:66ch}.cb input{margin-top:5px;flex:none;width:16px;height:16px;accent-color:var(--blue)}
+.two>*,.three>*{min-width:0}
+
+/* page */
+
+.metric{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.metric div{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--paper);display:flex;flex-direction:column}
+.metric b{font-family:var(--mono);font-size:1.3rem}
+.metric span{font-size:.8rem;color:var(--muted)}
+.ladder{display:flex;flex-direction:column;gap:6px}
+.ladder div{display:grid;grid-template-columns:7.5rem 1fr;gap:10px;align-items:center;font-size:.92rem}
+.ladder b{font-family:var(--mono);font-size:.78rem;color:var(--muted)}
+.ladder span{padding:8px 12px;border-radius:8px;border:1px solid var(--line);background:var(--paper)}
+.ladder .on span{border-color:var(--pencil);background:var(--pencil-soft)}
+.fnpick{display:flex;flex-wrap:wrap;gap:6px}
+.depgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px}
+.depgrid button{border:1px solid var(--line);border-radius:8px;padding:8px;background:var(--paper);font-family:var(--mono);font-size:.8rem;text-align:left}
+.depgrid button.ok{border-color:var(--ok);background:var(--ok-soft)}
+.depgrid button.no{border-color:var(--bad);background:var(--bad-soft)}
+.hash{font-family:var(--mono);font-size:.8rem;word-break:break-all}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Building Evolutionary Architectures · visual companion</a><span class="tag">Part I · Chapter 4 of 9</span><button class="tag themebtn" type="button">Theme: auto</button></div>
+  <h1>Automating Governance: Code Level</h1>
+  <p class="lede">Architects used to govern with review boards and wikis nobody read. This half of Chapter 4 shows how code-level metrics and architecture test libraries turn rules into checks that run on every build.</p>
+  <nav class="toc" aria-label="Sections"><a href="#history">Why automate</a><a href="#metrics">Coupling metrics</a><a href="#mainseq">Main sequence</a><a href="#imports">Import direction</a><a href="#complexity">Cyclomatic complexity</a><a href="#licenses">License check</a><a href="#archunit">ArchUnit</a><a href="#check">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="history" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>The same lesson, learned three times</h2></div>
+  <p>Kent Beck's XP team in the 1990s noticed that projects which integrated more often had fewer problems, so they took it to the extreme: <b>continuous integration</b>, everyone committing to the main line at least daily. The old way, coding in isolation for weeks and merging in an "integration phase," let conflicts pile up combinatorially. Slide the gap between merges.</p>
+  <div class="sheet">
+    <label class="rng"><span>Days between merges: <b id="dV"></b></span><input type="range" id="days" min="1" max="60" value="20"></label>
+    <div class="svgbox"><svg id="mSvg" viewBox="0 0 640 200" role="img" aria-label="Merge effort against days between merges"></svg></div>
+    <p id="mTxt" class="small" aria-live="polite"></p>
+  </div>
+  <div class="cardgrid" id="hist"></div>
+</section>
+
+<section id="metrics" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Afferent and efferent coupling</h2></div>
+  <p>Software has little of the predictive mathematics other engineers enjoy, but it has a few code metrics that say something about architecture. From Yourdon and Constantine (1979): <b>afferent coupling (Ca)</b> counts incoming connections to a component; <b>efferent coupling (Ce)</b> counts outgoing ones. Robert Martin later derived <b>instability</b>, I = Ce / (Ce + Ca). Tap a component.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Codebase"><button data-cb="ok" aria-pressed="true">Governed codebase</button><button data-cb="mud" aria-pressed="false">Big Ball of Mud</button></div>
+    <div class="two">
+      <div class="svgbox fit"><svg id="cpSvg" viewBox="0 0 320 280" role="img" aria-label="Component dependency graph"></svg></div>
+      <div class="stack"><h3 id="cpName"></h3><div class="metric" id="cpM"></div><p id="cpTxt" class="small" aria-live="polite"></p></div>
+    </div>
+  </div>
+  <p class="small">Tools that report these: JDepend, IntelliJ's dependency matrix, SonarQube, NDepend, JArchitect and others for most platforms.</p>
+</section>
+
+<section id="mainseq" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Distance from the main sequence</h2></div>
+  <p><b>Abstractness</b> A is the share of abstract elements (interfaces, abstract classes) among all elements. Combine it with instability and you get one of the few holistic structural metrics: <b>D = |A + I − 1|</b>. Components near the diagonal "main sequence" balance the two. Too abstract and unstable: the <b>zone of uselessness</b>. Too concrete and stable: the <b>zone of pain</b>, brittle code nobody can change safely.</p>
+  <div class="sheet">
+    <div class="row"><span class="small">Presets:</span><button class="btn" data-pre="0">Mocking library</button><button class="btn" data-pre="1">Framework core</button><button class="btn" data-pre="2">Healthy module</button></div>
+    <div class="two">
+      <div class="stack">
+        <label class="rng"><span>Abstract elements: <b id="aV"></b></span><input type="range" id="abs" min="0" max="20" value="4"></label>
+        <label class="rng"><span>Concrete elements: <b id="cV"></b></span><input type="range" id="con" min="1" max="40" value="16"></label>
+        <label class="rng"><span>Incoming (Ca): <b id="caV"></b></span><input type="range" id="ca" min="0" max="20" value="6"></label>
+        <label class="rng"><span>Outgoing (Ce): <b id="ceV"></b></span><input type="range" id="ce" min="0" max="20" value="6"></label>
+      </div>
+      <div class="svgbox fit"><svg id="msSvg" viewBox="0 0 300 300" role="img" aria-label="Abstractness versus instability plot with zones"></svg></div>
+    </div>
+    <p id="msTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout blue"><b class="h">Two uses</b><span><b>Before a migration</b>, measure and pull troubled code back toward the line: extract methods from oversized ones (raising abstractness), then remove the duplication you uncover. Moving code on a shaky foundation is harder. <b>As a fitness function</b>, fail the build when a component drifts too far from the line.</span></div>
+</section>
+
+<section id="imports" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Govern the direction of imports</h2></div>
+  <p>A close cousin of the cycle check: declare which packages may depend on which, and fail the build otherwise. With a metrics library that has an API, this is a few lines inside an ordinary unit test. The authors prefer this to written guidelines and scolding: developers can focus on the domain, and the rule lives as an executable artifact. Try some imports.</p>
+  <div class="two">
+    <pre class="code"><span class="c">// illustrative: declare allowed package edges</span>
+rules = DependencyRules()
+web         = rules.pkg(<span class="s">"shop.web"</span>)
+persistence = rules.pkg(<span class="s">"shop.persistence"</span>)
+util        = rules.pkg(<span class="s">"shop.util"</span>)
+
+web.mayDependOn(util)
+persistence.mayDependOn(util)
+
+assert analyzer.matches(rules)</pre>
+    <div class="sheet"><div class="depgrid" id="deps"></div><p id="depTxt" class="small" aria-live="polite">Tap an import to try it.</p></div>
+  </div>
+</section>
+
+<section id="complexity" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Cyclomatic complexity, and herding teams</h2></div>
+  <p>Thomas McCabe's 1976 metric counts independent paths through code. For a single function, CC = decision points + 1 (formally E − N + 2 on the control-flow graph). Pick a function.</p>
+  <div class="sheet">
+    <div class="fnpick seg" role="group" aria-label="Function"><button data-fn="0" aria-pressed="true">no branches</button><button data-fn="1" aria-pressed="false">one if</button><button data-fn="2" aria-pressed="false">if / else-if</button><button data-fn="3" aria-pressed="false">loop + nested ifs</button></div>
+    <div class="two"><pre class="code" id="fnCode"></pre><div class="svgbox fit"><svg id="cfg" viewBox="0 0 260 260" role="img" aria-label="Control flow graph"></svg></div></div>
+    <p id="ccTxt" aria-live="polite"></p>
+  </div>
+  <div class="ladder" id="ccLadder"></div>
+  <p>Industry folklore says under 10 is fine; the authors prefer under 5. But a metric cannot tell <b>essential</b> complexity (the problem is hard) from <b>accidental</b> complexity (the code is poorly factored). Test-driven development tends to produce smaller methods as a side effect. And if your codebase already fails a hard limit everywhere, don't give up: <b>herd</b> teams toward it with a threshold that warns first and becomes an error over time.</p>
+  <div class="sheet">
+    <label class="rng"><span>Sprint <b id="spV"></b> of 12</span><input type="range" id="sp" min="1" max="12" value="1"></label>
+    <div class="svgbox"><svg id="herdSvg" viewBox="0 0 640 220" role="img" aria-label="Complexity threshold tightening over sprints"></svg></div>
+    <p id="herdTxt" class="small" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="licenses" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Case study: did a license change?</h2></div>
+  <p>PenultimateWidgets' lawyers approved every open source license in a project with patented algorithms. Then the awkward question: what if a library quietly changes its license in a routine update? Before writing anything, check whether a tool already exists (today, Black Duck does this). At the time they built a small fitness function. Step through, then simulate an update.</p>
+  <div class="sheet stepper" id="licStep"></div>
+  <div class="sheet">
+    <div class="row"><button class="btn" data-up="same">Update to 2.4.1 (same license)</button><button class="btn primary" data-up="diff">Update to 3.0.0 (license edited)</button></div>
+    <div id="licOut" class="stack" aria-live="polite"></div>
+  </div>
+  <div class="callout"><b class="h">Half automated, half human</b><span>No attempt to interpret the change. Detection is automatic; the reaction (a lawyer reviewing the new text) stays manual. Fitness functions often just announce "something you care about changed."</span></div>
+</section>
+
+<section id="archunit" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Architecture tests: rules as code</h2></div>
+  <p><b>ArchUnit</b> (Java) and <b>NetArchTest</b> (.NET) let you write structural rules in fluent, readable assertions: package and class dependencies, inheritance, annotations, layers. Principles written in a wiki are aspirational; principles checked in the build are governance. Pick a rule, then try dependencies against it.</p>
+  <div class="sheet">
+    <select id="rule"></select>
+    <pre class="code" id="ruleCode"></pre>
+    <div class="depgrid" id="auDeps"></div>
+    <p id="auTxt" class="small" aria-live="polite"></p>
+  </div>
+  <div class="cardgrid" id="lint"></div>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b>Automate governance</b><span>CI automated integration; DevOps automated operations; fitness functions automate architecture review.</span></div>
+    <div><b class="blue">Ca, Ce, I</b><span>Incoming and outgoing coupling; instability = Ce / (Ce + Ca).</span></div>
+    <div><b class="blue">D = |A + I − 1|</b><span>Stay near the main sequence; avoid the zones of pain and uselessness.</span></div>
+    <div><b class="pencil">Complexity</b><span>CC = decisions + 1. Prefer under 5. Herd legacy code with warnings that become errors.</span></div>
+    <div><b>Small glue, big value</b><span>A license hash check took a few steps and no AI.</span></div>
+    <div><b class="okc">Rules as code</b><span>ArchUnit, NetArchTest and linters turn principles into executable checks.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Building Evolutionary Architectures: Automated Software Governance</i> (2nd edition) by Neal Ford, Rebecca Parsons, Patrick Kua and Pramod Sadalage (O'Reilly, 2023). Explanations, examples, code snippets and drawings are original summaries; nothing here is copied from the book's figures or listings.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch03-incremental-change.html"><span>Previous · Chapter 3</span><b>Engineering Incremental Change</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch04b-stack-governance.html"><span>Next · Chapter 4</span><b>Automating Governance: Across the Stack</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('bea:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('bea:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  const fs=[...r.querySelectorAll('.fill')];requestAnimationFrame(()=>requestAnimationFrame(()=>fs.forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle: auto -> light -> dark */
+(function(){const b=document.querySelector('.themebtn');const modes=['auto','light','dark'];let m=store.get('theme','auto');
+  function apply(){if(m==='auto')document.documentElement.removeAttribute('data-theme');else document.documentElement.setAttribute('data-theme',m);if(b)b.textContent='Theme: '+m}
+  apply();if(b)b.addEventListener('click',()=>{m=modes[(modes.indexOf(m)+1)%3];store.set('theme',m);apply()})})();
+
+
+/* merges */
+function merges(){const d=+$('#days').value;$('#dV').textContent=d;const s=$('#mSvg');s.innerHTML='';const X=v=>60+v/60*560,Y=v=>175-v*150;const f=v=>Math.min(1,(v*v)/3600*1.05);
+  s.appendChild(el('line',{x1:60,y1:175,x2:620,y2:175,stroke:'var(--line)'}));s.appendChild(el('line',{x1:60,y1:20,x2:60,y2:175,stroke:'var(--line)'}));
+  let p='';for(let v=1;v<=60;v++)p+=(p?'L':'M')+X(v)+','+Y(f(v));s.appendChild(el('path',{d:p,fill:'none',stroke:'var(--pencil)','stroke-width':2.5}));
+  s.appendChild(el('circle',{cx:X(d),cy:Y(f(d)),r:7,fill:'var(--pencil)'}));s.appendChild(el('text',{x:340,y:196,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},'days between merges'));s.appendChild(el('text',{x:20,y:100,'font-size':11,fill:'var(--muted)',transform:'rotate(-90 20 100)','text-anchor':'middle'},'merge pain'));
+  const conflicts=Math.round(d*d/12);$('#mTxt').textContent=d<=1?'Daily merges: conflicts are tiny and resolved while fresh. Teams spend less time merging overall, not just per merge.':`About ${conflicts} tangled conflicts waiting at the end (illustrative). Every day apart adds conflicts that interact with each other.`}
+$('#days').addEventListener('input',merges);merges();
+cards('#hist',[{t:'1990s · Continuous integration',c:'d1',d:'Replace the dreaded integration phase with daily commits to the main line.'},{t:'2000s · DevOps automation',c:'d2',d:'Puppet and Chef replaced hand-installed servers and patching, enforcing consistency.'},{t:'Now · Automated governance',c:'pencil',d:'Replace code reviews and architecture review boards (where things fall through the cracks) with fitness functions wired into CI.'}]);
+
+/* coupling graph */
+const CP={ok:{n:[['api',160,40],['orders',80,130],['catalog',240,130],['payments',80,230],['util',240,230]],e:[[0,1],[0,2],[1,3],[1,4],[2,4],[3,4]]},
+ mud:{n:[['api',160,40],['orders',80,130],['catalog',240,130],['payments',80,230],['util',240,230]],e:[[0,1],[0,2],[1,3],[1,4],[2,4],[3,4],[4,1],[2,1],[3,0],[4,0],[2,3],[3,2],[1,2],[4,3]]}};
+let cpM='ok',cpSel=1;
+function cp(){const G=CP[cpM],s=$('#cpSvg');s.innerHTML='';G.e.forEach(([a,b])=>{const A=G.n[a],B=G.n[b];const hot=a===cpSel||b===cpSel;const dx=B[1]-A[1],dy=B[2]-A[2],L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;const tw=G.e.some(e=>e[0]===b&&e[1]===a)?6:0;
+  const x1=A[1]+ux*34-uy*tw,y1=A[2]+uy*20+ux*tw,x2=B[1]-ux*40-uy*tw,y2=B[2]-uy*24+ux*tw;const c=hot?(a===cpSel?'var(--pencil)':'var(--blue)'):'var(--line)';
+  s.appendChild(el('line',{x1,y1,x2,y2,stroke:c,'stroke-width':hot?2.4:1.4}));s.appendChild(el('polygon',{points:`${x2+ux*6},${y2+uy*6} ${x2-uy*4},${y2+ux*4} ${x2+uy*4},${y2-ux*4}`,fill:c}))});
+  G.n.forEach((n,i)=>{const g=el('g',{style:'cursor:pointer',tabindex:0,role:'button'});g.appendChild(el('rect',{x:n[1]-38,y:n[2]-18,width:76,height:36,rx:8,fill:i===cpSel?'var(--blue)':'var(--surface)',stroke:'var(--blue)','stroke-width':2}));g.appendChild(el('text',{x:n[1],y:n[2]+5,'text-anchor':'middle','font-size':12,'font-weight':700,fill:i===cpSel?'var(--surface)':'var(--ink)',class:'t-mono'},n[0]));g.addEventListener('click',()=>{cpSel=i;cp()});s.appendChild(g)});
+  const ca=G.e.filter(e=>e[1]===cpSel).length,ce=G.e.filter(e=>e[0]===cpSel).length,I=ca+ce?ce/(ca+ce):0;$('#cpName').textContent=G.n[cpSel][0];
+  $('#cpM').innerHTML=`<div><b class="blue">${ca}</b><span>Ca · incoming (blue)</span></div><div><b class="pencil">${ce}</b><span>Ce · outgoing (orange)</span></div><div><b>${I.toFixed(2)}</b><span>I = Ce/(Ce+Ca)</span></div>`;
+  $('#cpTxt').textContent=I>.7?'Highly unstable: it depends on many others, so their changes can force changes here.':I<.3&&ca>0?'Stable: many depend on it and it depends on little. Changes here ripple outward, so it should be abstract or very carefully managed.':'Balanced between depending and being depended on.'+(cpM==='mud'?' But look at the density: in a ball of mud a change anywhere can ripple anywhere.':'')}
+seg('[data-cb]',b=>{cpM=b.dataset.cb;cp()});cp();
+
+/* main sequence */
+const PRE=[[18,6,1,12],[1,30,16,3],[6,14,6,7]];
+function ms(){const a=+$('#abs').value,c=+$('#con').value,ca=+$('#ca').value,ce=+$('#ce').value;['aV','cV','caV','ceV'].forEach((k,i)=>$('#'+k).textContent=[a,c,ca,ce][i]);
+  const A=a/(a+c),I=ca+ce?ce/(ca+ce):0,D=Math.abs(A+I-1);const s=$('#msSvg');s.innerHTML='';const X=v=>40+v*240,Y=v=>260-v*240;
+  s.appendChild(el('polygon',{points:`${X(0)},${Y(0)} ${X(.45)},${Y(0)} ${X(0)},${Y(.45)}`,fill:'var(--bad-soft)'}));s.appendChild(el('polygon',{points:`${X(1)},${Y(1)} ${X(.55)},${Y(1)} ${X(1)},${Y(.55)}`,fill:'var(--mid-soft)'}));
+  s.appendChild(el('text',{x:X(.04),y:Y(.06),'font-size':11,'font-weight':700,fill:'var(--bad)'},'zone of pain'));s.appendChild(el('text',{x:X(.96),y:Y(.92),'text-anchor':'end','font-size':11,'font-weight':700,fill:'var(--mid)'},'zone of uselessness'));
+  s.appendChild(el('rect',{x:X(0),y:Y(1),width:240,height:240,fill:'none',stroke:'var(--line)'}));s.appendChild(el('line',{x1:X(0),y1:Y(1),x2:X(1),y2:Y(0),stroke:'var(--ok)','stroke-width':2,'stroke-dasharray':'6 4'}));
+  s.appendChild(el('text',{x:X(.5)+6,y:Y(.5)-6,'font-size':10.5,fill:'var(--ok)',transform:`rotate(45 ${X(.5)} ${Y(.5)})`},'main sequence'));
+  s.appendChild(el('text',{x:X(.5),y:290,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},'instability I →'));s.appendChild(el('text',{x:14,y:Y(.5),'text-anchor':'middle','font-size':11,fill:'var(--muted)',transform:`rotate(-90 14 ${Y(.5)})`},'abstractness A →'));
+  const px=X(I),py=Y(A);const t=(A+I-1)/2;s.appendChild(el('line',{x1:px,y1:py,x2:X(I-t),y2:Y(A-t),stroke:'var(--pencil)','stroke-width':1.5,'stroke-dasharray':'3 3'}));
+  const col=D>.5?'var(--bad)':D>.3?'var(--mid)':'var(--ok)';s.appendChild(el('circle',{cx:px,cy:py,r:8,fill:col}));
+  const zone=A+I<.45?'in the zone of pain':A+I>1.55?'in the zone of uselessness':D<.3?'close to the main sequence':'drifting from the line';
+  $('#msTxt').innerHTML=`A = ${A.toFixed(2)}, I = ${I.toFixed(2)}, <b>D = ${D.toFixed(2)}</b>: ${zone}. ${A+I<.45?'Lots of concrete code that many others lean on: big methods, little reuse, risky to change.':A+I>1.55?'Mostly abstractions with few users: indirection for its own sake (common, and acceptable, in mocking libraries).':''}`}
+['abs','con','ca','ce'].forEach(k=>$('#'+k).addEventListener('input',ms));$$('[data-pre]').forEach(b=>b.addEventListener('click',()=>{const p=PRE[+b.dataset.pre];['abs','con','ca','ce'].forEach((k,i)=>$('#'+k).value=p[i]);ms()}));ms();
+
+/* imports */
+const IMP=[['web','util',1],['persistence','util',1],['util','persistence',0],['web','persistence',0],['util','web',0],['persistence','web',0]];
+$('#deps').innerHTML=IMP.map((d,i)=>`<button data-d="${i}">${d[0]} → ${d[1]}</button>`).join('');
+$$('#deps button').forEach(b=>b.addEventListener('click',()=>{const d=IMP[+b.dataset.d];b.className=d[2]?'ok':'no';$('#depTxt').innerHTML=d[2]?`<b class="okc">Allowed.</b> ${d[0]} may depend on ${d[1]}.`:`<b class="badc">Test fails before commit.</b> No rule allows ${d[0]} to import ${d[1]}.${d[0]==='util'?' Utilities reaching up into other packages would also create cycles.':''}`}));
+
+/* cyclomatic */
+const FN=[['function total(items) {\n  return sum(items.map(i => i.price));\n}',[],1],
+ ['function shipping(order) {\n  if (order.total > 100) return 0;\n  return 7.5;\n}',['total > 100'],2],
+ ['function band(score) {\n  if (score < 100) return "low";\n  else if (score > 500) return "high";\n  return "mid";\n}',['score < 100','score > 500'],3],
+ ['function audit(lines) {\n  for (const l of lines) {          // 1\n    if (l.amount < 0) {            // 2\n      if (l.refund && l.approved)  // 3, 4 (&&)\n        log(l);\n      else flag(l);\n    }\n  }\n}',['for','amount < 0','refund','&& approved'],5]];
+function cc(i){const f=FN[i];$('#fnCode').textContent=f[0];const s=$('#cfg');s.innerHTML='';const n=f[1].length;
+  const nodes=[[130,20,'start']];f[1].forEach((d,k)=>nodes.push([130,60+k*(160/Math.max(1,n)),d]));nodes.push([130,240,'end']);
+  for(let k=0;k<nodes.length-1;k++)s.appendChild(el('line',{x1:nodes[k][0],y1:nodes[k][1],x2:nodes[k+1][0],y2:nodes[k+1][1],stroke:'var(--muted)','stroke-width':1.5}));
+  f[1].forEach((d,k)=>{const y=nodes[k+1][1];s.appendChild(el('path',{d:`M130,${y} C${200+k*8},${y} ${200+k*8},240 136,240`,fill:'none',stroke:'var(--pencil)','stroke-width':1.8}))});
+  nodes.forEach((p,k)=>{const dec=k>0&&k<nodes.length-1;s.appendChild(el(dec?'rect':'circle',dec?{x:p[0]-8,y:p[1]-8,width:16,height:16,fill:'var(--pencil)',transform:`rotate(45 ${p[0]} ${p[1]})`}:{cx:p[0],cy:p[1],r:8,fill:'var(--blue)'}));s.appendChild(el('text',{x:p[0]-16,y:p[1]+4,'text-anchor':'end','font-size':10,fill:'var(--muted)',class:'t-mono'},p[2]))});
+  $('#ccTxt').innerHTML=`${n} decision point${n===1?'':'s'} → <b>CC = ${f[2]}</b>. ${f[2]>=5?'Already at the authors\' preferred ceiling; nested conditions are a signal to extract smaller functions.':'Comfortably small.'}`;
+  $('#ccLadder').innerHTML=[['CC ≤ 5','well factored (the authors\' preference)',5],['CC ≤ 10','common industry threshold',10],['CC > 50','beyond rescue by test coverage (per Crap4j)',51],['CC > 800','one real 4,000-line C function with GOTOs',801]].map(r=>`<div class="${f[2]<=r[2]&&(r[2]===5||f[2]>5)?'on':''}"><b>${r[0]}</b><span>${r[1]}</span></div>`).join('')}
+seg('[data-fn]',b=>cc(+b.dataset.fn));cc(0);
+function herd(){const sp=+$('#sp').value;$('#spV').textContent=sp;const s=$('#herdSvg');s.innerHTML='';const X=v=>60+(v-1)/11*540,Y=v=>190-v/30*170;
+  const warn=v=>Math.max(10,25-v*1.4),err=v=>Math.max(10,30-v*2);
+  s.appendChild(el('line',{x1:60,y1:190,x2:610,y2:190,stroke:'var(--line)'}));[10,20,30].forEach(v=>{s.appendChild(el('line',{x1:60,y1:Y(v),x2:610,y2:Y(v),stroke:'var(--line)','stroke-dasharray':'2 4'}));s.appendChild(el('text',{x:52,y:Y(v)+4,'text-anchor':'end','font-size':10,fill:'var(--muted)',class:'t-mono'},v))});
+  let pw='',pe='',pm='';for(let v=1;v<=12;v++){pw+=(pw?'L':'M')+X(v)+','+Y(warn(v));pe+=(pe?'L':'M')+X(v)+','+Y(err(v));pm+=(pm?'L':'M')+X(v)+','+Y(Math.max(7,26-v*1.6))}
+  s.appendChild(el('path',{d:pe,fill:'none',stroke:'var(--bad)','stroke-width':2.5}));s.appendChild(el('path',{d:pw,fill:'none',stroke:'var(--mid)','stroke-width':2.5,'stroke-dasharray':'6 4'}));s.appendChild(el('path',{d:pm,fill:'none',stroke:'var(--blue)','stroke-width':2}));
+  s.appendChild(el('line',{x1:X(sp),y1:15,x2:X(sp),y2:190,stroke:'var(--ink)',opacity:.35}));
+  s.appendChild(el('text',{x:600,y:Y(err(12))-8,'text-anchor':'end','font-size':11,'font-weight':700,fill:'var(--bad)'},'error threshold'));s.appendChild(el('text',{x:70,y:Y(warn(1))-8,'font-size':11,'font-weight':700,fill:'var(--mid)'},'warning threshold'));s.appendChild(el('text',{x:70,y:Y(26)+18,'font-size':11,'font-weight':700,fill:'var(--blue)'},'worst function in codebase'));
+  const m=Math.max(7,26-sp*1.6);$('#herdTxt').textContent=`Sprint ${sp}: errors above ${Math.round(err(sp))}, warnings above ${Math.round(warn(sp))}. Worst function: ${Math.round(m)}. ${sp>=10?'Target reached, and the fitness function stays in place so it never slides back.':'Teams pay down debt gradually instead of facing a wall of red on day one.'}`}
+$('#sp').addEventListener('input',herd);herd();
+
+/* license */
+$('#licStep').innerHTML=stepHTML();
+stepper('#licStep',['Record where each dependency keeps its license file.','Store the license text (or a hash of it) next to the library version.','When a new version number appears, open the downloaded package and read its license file.','If the hash differs, fail the build and notify the lawyer.'],()=>{});
+function h(s){let x=2166136261;for(const ch of s){x^=ch.charCodeAt(0);x=Math.imul(x,16777619)>>>0}return x.toString(16).padStart(8,'0')}
+const base='Permission is granted to use, copy and modify this software for any purpose.';const stored=h(base);
+$$('[data-up]').forEach(b=>b.addEventListener('click',()=>{const diff=b.dataset.up==='diff';const txt=diff?base+' Derived works must be released under this same license.':base;const nh=h(txt);
+  $('#licOut').innerHTML=`<div class="hash">stored  ${stored}<br>new     ${nh}</div><div class="callout ${diff?'':'ok'}"><b class="h">${diff?'Build failed: license text changed':'Hashes match: build continues'}</b><span>${diff?'An email goes to legal with the new text. Nobody upgrades until a human approves.':'No human attention needed.'}</span></div>`}));
+
+/* archunit */
+const RULES=[['Layers',`layeredArchitecture()
+  .layer(<span class="s">"Web"</span>).definedBy(<span class="s">"..web.."</span>)
+  .layer(<span class="s">"Service"</span>).definedBy(<span class="s">"..service.."</span>)
+  .layer(<span class="s">"Data"</span>).definedBy(<span class="s">"..data.."</span>)
+  .whereLayer(<span class="s">"Web"</span>).mayNotBeAccessedByAnyLayer()
+  .whereLayer(<span class="s">"Service"</span>).mayOnlyBeAccessedByLayers(<span class="s">"Web"</span>)
+  .whereLayer(<span class="s">"Data"</span>).mayOnlyBeAccessedByLayers(<span class="s">"Service"</span>)`,[['Web → Service',1],['Service → Data',1],['Web → Data',0,'skips a layer'],['Data → Service',0,'upward call'],['Service → Web',0,'nobody may call Web']]],
+ ['Restricted library',`classes().that().resideInAPackage(<span class="s">"..pricing.engine.."</span>)
+  .should().onlyHaveDependentClassesThat()
+  .resideInAnyPackage(<span class="s">"..checkout.."</span>, <span class="s">"..pricing.."</span>)`,[['checkout → pricing.engine',1],['pricing.api → pricing.engine',1],['reports → pricing.engine',0,'only checkout may use the engine'],['admin → pricing.engine',0,'only checkout may use the engine']]],
+ ['Naming by inheritance',`classes().that().implement(PaymentGateway.<span class="k">class</span>)
+  .should().haveSimpleNameEndingWith(<span class="s">"Gateway"</span>)`,[['StripeGateway implements PaymentGateway',1],['PaypalGateway implements PaymentGateway',1],['CardHelper implements PaymentGateway',0,'name must end with Gateway']]],
+ ['Annotation required',`classes().that().areAssignableTo(Ledger.<span class="k">class</span>)
+  .should().onlyHaveDependentClassesThat()
+  .areAnnotatedWith(Transactional.<span class="k">class</span>)`,[['@Transactional PostingService → Ledger',1],['ReportJob → Ledger (no annotation)',0,'must be @Transactional'],['@Transactional RefundService → Ledger',1]]]];
+$('#rule').innerHTML=RULES.map((r,i)=>`<option value="${i}">${r[0]}</option>`).join('');
+function au(){const r=RULES[+$('#rule').value];$('#ruleCode').innerHTML='<span class="c">// illustrative ArchUnit-style rule</span>\n'+r[1];$('#auDeps').innerHTML=r[2].map((d,i)=>`<button data-a="${i}">${d[0]}</button>`).join('');$('#auTxt').textContent='Tap a dependency to evaluate it.';
+  $$('#auDeps button').forEach(b=>b.addEventListener('click',()=>{const d=r[2][+b.dataset.a];b.className=d[1]?'ok':'no';$('#auTxt').innerHTML=d[1]?'<b class="okc">Passes.</b>':`<b class="badc">Rule violated:</b> ${d[2]}.`}))}
+$('#rule').addEventListener('change',au);au();
+cards('#lint',[{t:'No ArchUnit for my language?',c:'d2',d:'Most languages have a linter (ESLint, Cpplint, Staticcheck for Go, even sql-lint) with plug-in rules. Less convenient, but you can encode many structural checks.'},{t:'Search by characteristic',c:'d1',d:'Knowing the name helps. Accessibility ("a11y") is widely mandated, so tools such as Pa11y exist to scan pages from the command line.'},{t:'Wiki principles',c:'bad',d:'Many architects have written these rules in a wiki that nobody reads. Unless something validates them, you can never be confident they are followed.'}]);
+
+quiz('#qz','#qScore',[
+ {q:'A component has Ca = 2 and Ce = 3. Its instability is…',o:['0.4','0.6','1.5'],a:1,why:'I = Ce/(Ce+Ca) = 3/5 = 0.6.'},
+ {q:'Concrete, heavily depended-on code lands in…',o:['The zone of uselessness','The zone of pain','The main sequence'],a:1,why:'Low abstractness and low instability: brittle and hard to change.'},
+ {q:'A function with an if and an else-if has CC of…',o:['2','3','4'],a:1,why:'Two decision points plus one.'},
+ {q:'Your codebase fails a CC limit of 10 everywhere. The book suggests…',o:['Drop the rule','A cascading threshold: warn now, error later','Rewrite everything first'],a:1,why:'Herding lets teams pay down debt gradually, and the rule then prevents regression.'},
+ {q:'Why prefer an ArchUnit layer test over a wiki page about layers?',o:['It is shorter','It is enforced on every build','Wikis are banned'],a:1,why:'Principles without enforcement are aspirational.'}]);
+
+})();
+</script>
+</body>
+</html>

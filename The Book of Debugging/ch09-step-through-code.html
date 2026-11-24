@@ -1,0 +1,527 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Step Through the Code</title>
+<meta name="description" content="The debugger lets you watch the program think. To get the most out of it you need to know what optimisation does to your view, which kind of breakpoint to use, and how to read stacks, variables and even assembly.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for The Book of Debugging companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = the program and its structure, orange pencil = the investigator, green = fixed / good, red = bug / bad.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:minmax(0,1fr)}}
+.two>*,.three>*,.stack>*{min-width:0}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* additions for the debugging companion */
+pre.code{margin:0;font-family:var(--mono);font-size:.84rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)} pre.code .h{background:var(--bad-soft);color:var(--bad);border-radius:3px} pre.code .g{background:var(--ok-soft);color:var(--ok);border-radius:3px}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.term{font-family:var(--mono);font-size:.82rem;background:#0f1b2a;color:#d6e2f0;border-radius:8px;padding:12px 14px;min-height:5em;overflow-x:auto;white-space:pre-wrap;word-break:break-word}
+.term .e{color:#f2877c} .term .o{color:#76cf91} .term .m{color:#94a6ba}
+.theme-btn{position:absolute;top:6px;right:max(16px,env(safe-area-inset-right,0px));z-index:5;border:1px solid var(--line);background:var(--surface);color:var(--muted);border-radius:999px;padding:4px 11px;font-family:var(--mono);font-size:.72rem}
+.theme-btn:hover{border-color:var(--blue);color:var(--blue)}
+.pill{display:inline-block;font-family:var(--mono);font-size:.72rem;padding:2px 8px;border-radius:999px;border:1px solid currentColor}
+.meter{height:12px;border-radius:6px;background:var(--paper);border:1px solid var(--line);overflow:hidden}
+.meter>i{display:block;height:100%;width:0;background:var(--blue);transition:width .5s ease}
+.game{display:flex;flex-direction:column;gap:12px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.tiles button{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:10px;text-align:left;font-size:.9rem;display:flex;flex-direction:column;gap:2px}
+.tiles button b{font-family:var(--display);font-weight:600}
+.tiles button[aria-pressed="true"]{background:var(--blue-soft);border-color:var(--blue)}
+.tiles button.good{background:var(--ok-soft);border-color:var(--ok)} .tiles button.badt{background:var(--bad-soft);border-color:var(--bad)}
+.stat span.big{font-size:clamp(1.7rem,5vw,2.5rem);color:var(--ink)}
+.stat span.big.blue{color:var(--blue)} .stat span.big.badc{color:var(--bad)} .stat span.big.okc{color:var(--ok)} .stat span.big.pencil{color:var(--pencil)} .stat span.big.midc{color:var(--mid)}
+
+/* page */
+
+.dbg{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:12px}
+@media (max-width:720px){.dbg{grid-template-columns:minmax(0,1fr)}}
+.src{font-family:var(--mono);font-size:.82rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:8px 0;overflow-x:auto}
+.src div{white-space:pre;padding:0 10px 0 6px;display:flex;gap:8px}
+.src div .ln{color:var(--muted);width:2ch;text-align:right;flex:none}
+.src div.cur{background:var(--blue-soft);box-shadow:inset 3px 0 0 var(--blue)}
+.src div.gone{opacity:.35;text-decoration:line-through}
+.src div .bp{width:10px;height:10px;border-radius:50%;flex:none;margin-top:5px;background:transparent}
+.src div.has-bp .bp{background:var(--bad)}
+.panel{display:flex;flex-direction:column;gap:8px}
+.panel h4{margin:0;font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.panel .box{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-height:2.4em;white-space:pre-wrap}
+.life{display:flex;flex-direction:column;gap:6px}
+.life div{display:grid;grid-template-columns:120px 1fr;gap:10px;align-items:center;font-size:.88rem}
+.life .tr{position:relative;height:16px;background:var(--paper);border:1px solid var(--line);border-radius:4px}
+.life .tr i{position:absolute;top:0;bottom:0;border-radius:3px;opacity:.85}
+.mem{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:4px;font-family:var(--mono);font-size:.78rem}
+.mem span{text-align:center;padding:6px 0;border-radius:4px;background:var(--paper);border:1px solid var(--line)}
+.mem span.w{outline:2px solid var(--bad)} .mem span.hit{background:var(--bad-soft);color:var(--bad)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">The Book of Debugging · visual companion</a><span class="tag">Part III · Examine · Strategy 13</span><span class="tag">Page 9 of 16</span></div>
+  <h1>Step Through the Code</h1>
+  <p class="lede">The debugger lets you watch the program think. To get the most out of it you need to know what optimisation does to your view, which kind of breakpoint to use, and how to read stacks, variables and even assembly.</p>
+  <nav class="toc" aria-label="Sections"><a href="#builds">Debug vs release</a><a href="#ub">Undefined behaviour</a><a href="#step">Step over, into, out</a><a href="#stack">Call stack</a><a href="#data">Examine the data</a><a href="#databp">Data breakpoints</a><a href="#asm">Assembly view</a><a href="#exe">Right executable</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="builds" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Debug builds, release builds, and what optimisation hides</h2></div>
+  <p>Examining starts with the debugger: run the program, stop near the entry point, and watch. To see clearly, use a <b>debug build</b>. The editor's unit is the line, but the CPU executes instructions, and an optimising compiler rearranges, merges, hoists and deletes them. In an optimised build the execution pointer jumps around, breakpoints silently move to another line, and variables show as "optimised away". Compare the same function both ways.</p>
+  <div class="sheet stepper" id="optStep">
+    <div class="row"><div class="seg" role="group" aria-label="Build"><button aria-pressed="true" data-b="dbg">debug (-O0)</button><button aria-pressed="false" data-b="rel">release (-O2)</button></div></div>
+    <div class="dbg"><div class="src" id="optSrc"></div><div class="panel"><h4>Locals</h4><div class="box" id="optLoc"></div></div></div>
+  </div>
+  <p>Builds can also behave differently on purpose: compile-time switches swap implementations, add checks or change memory layout, so a bug may show only in one configuration. Default to debug builds; if a bug only lives in release, use a release build with debug info, or switch optimisation off just around the code you need (for example with a pragma in Visual Studio).</p>
+</section>
+
+<section id="ub" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>When the optimiser takes the language at its word</h2></div>
+  <div class="two">
+    <pre class="code"><span class="k">int</span> main() {
+  <span class="k" id="uType">int</span> i = 1;
+  printf(<span class="s">"Hello\n"</span>);
+  <span class="k">while</span> (i &gt; 0) { i++; }
+  printf(<span class="s">"Goodbye\n"</span>);
+}</pre>
+    <div class="sheet">
+      <div class="row"><div class="seg" role="group" aria-label="Type"><button aria-pressed="true" data-u="int">int</button><button aria-pressed="false" data-u="unsigned">unsigned</button></div><div class="seg" role="group" aria-label="Optimisation"><button aria-pressed="true" data-o="0">-O0</button><button aria-pressed="false" data-o="2">-O2</button></div></div>
+      <div class="term" id="ubOut"></div>
+      <p class="small" id="ubTip"></p>
+    </div>
+  </div>
+</section>
+
+<section id="step" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Step over, step into, step out</h2></div>
+  <p>Once paused somewhere relevant, move carefully: <b>step over</b> runs the current line, <b>step into</b> enters the function it calls, <b>step out</b> finishes the current function and returns to the caller. Run to cursor (or a breakpoint further down) skips ahead. Watch the call stack and the locals as you go. Find the bug in this small program: the total should be 50 (orders of 50 or more ship free).</p>
+  <div class="sheet">
+    <div class="dbg">
+      <div class="src" id="pSrc"></div>
+      <div class="panel"><h4>Call stack</h4><div class="box" id="pStack"></div><h4>Locals</h4><div class="box" id="pLoc"></div><h4>Output</h4><div class="box" id="pOut"></div></div>
+    </div>
+    <div class="row"><button class="btn primary" data-s="over">Step over</button><button class="btn" data-s="into">Step into</button><button class="btn" data-s="out">Step out</button><button class="btn" id="pRestart">Restart</button></div>
+    <p class="small" id="pTip">Paused at the breakpoint on line 9.</p>
+  </div>
+</section>
+
+<section id="stack" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Read the call stack like a story</h2></div>
+  <div class="two">
+    <div class="stack">
+      <p>When the program pauses, the highlighted line says where you are; the call stack says <i>how you got there</i>. Each frame is a decision that was taken: if <code>ApplyDiscount</code> sits above <code>Checkout</code>, then whatever <code>if</code> guards that call must have been true. Look at the other threads' stacks too, especially when work is spread over several.</p>
+      <p>Stacks can be corrupted, typically by a stack overflow from infinite recursion, or by a buffer overrun on the stack. Then the frames are garbage and you work from other evidence.</p>
+      <p><b>Conditional breakpoints</b> pause only when a condition holds, which is handy for code that runs thousands of times. But condition editors are fiddly, lack code completion and can be slow. The book's preference: write the <code>if</code> in code with a plain breakpoint inside, and delete it before committing.</p>
+    </div>
+    <div class="sheet game">
+      <div class="stack-view box" style="font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px;white-space:pre;overflow-x:auto">&gt; shop.exe!Cart::ApplyDiscount(code="VIP")   cart.cpp:88
+  shop.exe!Cart::Checkout(user=0x1f40)         cart.cpp:41
+  shop.exe!Ui::OnPayClicked()                  ui.cpp:203
+  shop.exe!main()                              main.cpp:17</div>
+      <pre class="code">void Cart::Checkout(User* u) {
+  <span class="k">if</span> (u-&gt;isMember &amp;&amp; !code.empty())  <span class="c">// line 40</span>
+    ApplyDiscount(code);               <span class="c">// line 41</span>
+  ...</pre>
+      <div class="quiz" id="csQuiz"></div><span class="score" id="csScore"></span>
+    </div>
+  </div>
+</section>
+
+<section id="data" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Examine the data, by lifetime</h2></div>
+  <p>Data drives control flow, so at every pause look at what the code references. Different kinds of variables live for different spans, which tells you who else could have changed them.</p>
+  <div class="sheet">
+    <div class="life" id="life"></div>
+    <div class="detail" id="lifeTip" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="databp" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Who wrote to this memory?</h2></div>
+  <div class="two">
+    <div class="stack">
+      <p>A <b>data breakpoint</b> stops execution the moment the bytes at an address change, which answers "who is overwriting my value?" directly. Addresses change between runs, so you set them up again each time, typically by first breaking where the variable is created. Watch windows evaluate expressions; visualisers (such as Natvis files) make your own types readable; you can even move the execution pointer to re-run a line, though that does not undo side effects.</p>
+      <p>Click a cell to watch it, then run.</p>
+    </div>
+    <div class="sheet">
+      <div class="mem" id="mem"></div>
+      <div class="row"><button class="btn primary" id="memRun">Continue</button><button class="btn" id="memReset">Reset</button></div>
+      <div class="term" id="memLog"></div>
+    </div>
+  </div>
+</section>
+
+<section id="asm" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Drop down to the assembly view</h2></div>
+  <p>One innocent line can be many instructions (a declaration such as <code>SomeClass obj;</code> runs constructors for the class and every member), and any of them can be the one that fails. The assembly view lets you step instruction by instruction. You do not need to be fluent; a handful of x86 mnemonics covers most of what you will read. Tap an instruction.</p>
+  <div class="two">
+    <pre class="code" id="asmCode"></pre>
+    <div class="stack">
+      <div class="detail" id="asmTip" aria-live="polite"><p class="small">Tap a line of assembly to decode it.</p></div>
+      <div class="tbl"><table class="t"><tbody>
+        <tr><td class="mono">mov, lea</td><td>copy data / compute an address</td></tr>
+        <tr><td class="mono">add sub mul div</td><td>arithmetic</td></tr>
+        <tr><td class="mono">cmp, test</td><td>compare, set flags</td></tr>
+        <tr><td class="mono">jmp, je, jge, jnz…</td><td>jump, possibly on a condition</td></tr>
+        <tr><td class="mono">call, ret</td><td>enter / leave a function</td></tr>
+        <tr><td class="mono">push, pop</td><td>stack operations</td></tr>
+      </tbody></table></div>
+    </div>
+  </div>
+</section>
+
+<section id="exe" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Make sure you are debugging the right program</h2></div>
+  <div class="two">
+    <div class="stack">
+      <p>The program you launch is not always the one doing the work. Launchers check for updates and then start another executable, build systems call compilers with long generated command lines, and the arguments that matter may never be visible to you. Let the launcher run, then find the real process and its command line with the OS tools (<code>ps</code> on Unix-like systems, a tool such as Process Explorer on Windows), and launch or attach to that one directly.</p>
+      <p>Attaching after the fact is also a cure for bugs that hide from debuggers: one remote program behaved differently with a debugger attached because the log was routed differently. Reproduce first, attach second, and examine the fallout.</p>
+    </div>
+    <pre class="code">$ ps -ef | grep tool
+dev  4120  4101  updater --check
+dev  4133  4120  <span class="h">tool-core --project=/p/a.json --fast</span>
+<span class="c"># debug tool-core with exactly these arguments</span></pre>
+  </div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Quick check</h2></div>
+  <div class="row between"><span class="small">Pick an answer for each.</span><span class="score" id="qScore"></span></div>
+  <div class="quiz" id="quizBox"></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>The Book of Debugging: A Systematic Workflow for Finding and Fixing Bugs</i> by Johannes Kuhlmann (No Starch Press). Explanations, code snippets, simulations and drawings are original summaries, not text from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch08-colleagues-search-dumps.html"><span>Previous · Strategies 10–12</span><b>Ask Colleagues, Search All Files, Collect Crash Dumps</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch10-read-code-follow-data.html"><span>Next · Strategies 14–15</span><b>Read the Code and Follow the Data</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every page of The Book of Debugging companion. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('dbg:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('acc:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: auto -> light -> dark */
+(function(){const b=document.createElement('button');b.className='theme-btn';b.type='button';const modes=['auto','light','dark'];let m=store.get('theme','auto');
+function ap(){if(m==='auto')document.documentElement.removeAttribute('data-theme');else document.documentElement.setAttribute('data-theme',m);b.textContent='theme: '+m;b.setAttribute('aria-label','Colour theme: '+m+'. Click to change.')}
+b.addEventListener('click',()=>{m=modes[(modes.indexOf(m)+1)%3];store.set('theme',m);ap()});ap();document.body.appendChild(b)})();
+
+
+/* optimisation stepper */
+const OS=['int Sum(const int* v, int n) {','  int total = 0;','  int scale = 2;','  for (int i = 0; i < n; ++i)','    total += v[i] * scale;','  return total;','}'];
+let bmode='dbg';
+const OD={dbg:[{l:1,v:'total = ?\nscale = ?'},{l:2,v:'total = 0\nscale = ?'},{l:3,v:'total = 0\nscale = 2\ni = 0'},{l:4,v:'total = 0\nscale = 2\ni = 0'},{l:3,v:'total = 6\nscale = 2\ni = 1'},{l:5,v:'total = 6\nscale = 2'}],
+ rel:[{l:3,v:'total = <optimised away>\nscale = <optimised away>',g:[1,2]},{l:4,v:'total = <in register>\ni = <optimised away>',g:[1,2]},{l:4,v:'total = <in register>',g:[1,2]},{l:3,v:'i = <optimised away>',g:[1,2]},{l:5,v:'total = 12',g:[1,2]},{l:5,v:'total = 12',g:[1,2]}]};
+const OC={dbg:['Line 1: entering the function. Every line maps to its own instructions.','Line 2: total is set.','Line 3: scale is set.','Line 4: the loop starts.','Line 5: one iteration; values are exactly what the source says.','Line 6: return.'],
+ rel:['The pointer lands on the loop: lines 2 and 3 produced no code of their own (scale was folded into a shift).','The loop body: total lives in a register, i has vanished.','Stepping again stays on the same line: the loop was unrolled.','The pointer jumps back up to the loop header…','…then to the return. A breakpoint you set on line 3 was silently moved.','Same answer, very different view.']};
+function od(i){const s=OD[bmode][i];$('#optSrc').innerHTML=OS.map((l,k)=>`<div class="${k===s.l?'cur':''} ${(s.g||[]).includes(k)?'gone':''}"><span class="ln">${k+1}</span><span>${l.replace(/</g,'&lt;')}</span></div>`).join('');$('#optLoc').textContent=s.v}
+$('#optStep').insertAdjacentHTML('beforeend',stepHTML());
+const cap=[...OC.dbg];const goOpt=stepper('#optStep',cap,i=>od(i));
+seg('[data-b]',b=>{bmode=b.dataset.b;cap.splice(0,cap.length,...OC[bmode]);goOpt(0)});
+
+/* UB */
+let ut='int',uo=0;function ub(){$('#uType').textContent=ut;let o,t;
+ if(ut==='int'&&uo===2){o='Hello\n<span class="m">(loops forever; "Goodbye" was never even compiled)</span>';t='Signed overflow is undefined behaviour, so the optimiser may assume i > 0 stays true forever and delete everything after the loop.'}
+ else if(ut==='int'){o='Hello\n<span class="m">(after ~2 billion iterations i wraps negative on this machine)</span>\nGoodbye';t='Unoptimised, the code runs literally and the wraparound happens in practice, but the language never promised it.'}
+ else{o='Hello\n<span class="m">(i wraps to 0, a defined behaviour for unsigned)</span>\nGoodbye';t='Unsigned overflow is well-defined, so the compiler must keep the exit path.'}
+ $('#ubOut').innerHTML=o;$('#ubTip').textContent=t}
+seg('[data-u]',b=>{ut=b.dataset.u;ub()});seg('[data-o]',b=>{uo=+b.dataset.o;ub()});ub();
+
+/* stepping program */
+const P=['int Price(int qty, int unit) {','  int p = qty * unit;','  if (qty > 10) p = p * 9 / 10;','  return p;','}','int Shipping(int total) {','  return total >= 50 ? 0 : 5;','}','int main() {','  int a = Price(2, 10);','  int b = Price(3, 10);','  int total = a + b + Shipping(a);','  printf("%d\\n", total);','}'];
+/* frames: each state: line, stack[], locals, out */
+const ST=[
+ {l:8,s:['main() line 9'],v:'(none yet)',o:''},
+ {l:9,s:['main() line 10'],v:'a = ?',o:''},
+ {l:1,s:['Price(qty=2, unit=10) line 2','main() line 10'],v:'qty = 2, unit = 10\np = ?',o:'',f:'Price1'},
+ {l:2,s:['Price(qty=2, unit=10) line 3','main() line 10'],v:'qty = 2, unit = 10\np = 20',o:'',f:'Price1'},
+ {l:3,s:['Price(qty=2, unit=10) line 4','main() line 10'],v:'p = 20 (no discount)',o:'',f:'Price1'},
+ {l:10,s:['main() line 11'],v:'a = 20\nb = ?',o:''},
+ {l:11,s:['main() line 12'],v:'a = 20, b = 30\ntotal = ?',o:''},
+ {l:6,s:['Shipping(total=20) line 7','main() line 12'],v:'total = 20   ← only a, not a + b!',o:'',f:'Ship'},
+ {l:11,s:['main() line 12'],v:'a = 20, b = 30\ntotal = 55',o:''},
+ {l:12,s:['main() line 13'],v:'total = 55',o:'55'},
+ {l:13,s:['(program ended)'],v:'',o:'55'}];
+let pc=0;const bpLine=8;
+function pr(){const s=ST[pc];$('#pSrc').innerHTML=P.map((l,k)=>`<div class="${k===s.l?'cur':''} ${k===bpLine?'has-bp':''}"><span class="bp"></span><span class="ln">${k+1}</span><span>${l.replace(/</g,'&lt;')}</span></div>`).join('');
+ $('#pStack').textContent=s.s.map((x,i)=>(i?'  ':'> ')+x).join('\n');$('#pLoc').textContent=s.v;$('#pOut').textContent=s.o||' '}
+const NEXT={over:{0:1,1:5,2:3,3:4,4:5,5:6,6:8,7:8,8:9,9:10,10:10},into:{0:1,1:2,2:3,3:4,4:5,5:6,6:7,7:8,8:9,9:10,10:10},out:{2:5,3:5,4:5,7:8}};
+$$('[data-s]').forEach(b=>b.addEventListener('click',()=>{const k=b.dataset.s;const n=NEXT[k][pc];if(n===undefined){$('#pTip').textContent='Step out only works inside a called function.';return}pc=n;pr();
+ $('#pTip').innerHTML=pc===7?'<b class="badc">There it is.</b> Shipping() receives 20: line 12 passes <code>a</code> instead of <code>a + b</code>, so a 50 order still pays 5 shipping.':pc===1&&k==='over'?'Step into here to see Price() work.':pc===5&&k==='over'?'Stepped over the second Price() call: fine, its result is plausible.':pc===6?'Step into this line: it calls Shipping().':pc===10?'Output 55, expected 50. If you missed it, restart and step into Shipping().':'Keep going. Watch the locals panel.'}));
+$('#pRestart').addEventListener('click',()=>{pc=0;pr();$('#pTip').textContent='Paused at the breakpoint on line 9.'});pr();
+
+quiz('#csQuiz','#csScore',[
+ {q:'What must be true about line 40?',o:['The condition was true','It was false','Cannot tell'],a:0,why:'ApplyDiscount is on the stack, so the call on line 41 happened.'},
+ {q:'Which caller started the checkout?',o:['A timer','The pay button handler','main() directly'],a:1,why:'Ui::OnPayClicked sits directly under Checkout.'}]);
+
+/* lifetimes */
+const LV=[['Local','Lives while its scope runs. Easy for the debugger to show; gone when the function returns.',[[30,45],[60,72]],'d1'],['Static local','Same scope as a local, but lives as long as the program and keeps its value between calls. Easy to forget that history matters.',[[30,100]],'d2'],['Member','Lives as long as its object; any method of that object (or anyone with a reference) may change it. Look under this.',[[20,85]],'d3'],['Global','Reachable from everywhere, all the time. The debugger rarely lists them automatically; add them to a watch.',[[0,100]],'d4'],['Raw memory','Whatever a pointer points to: reinterpretable as any type. Use the memory view, or cast the address to a typed pointer.',[[10,95]],'d5']];
+$('#life').innerHTML='<div><span class="small">program run →</span><span></span></div>'+LV.map((v,i)=>`<div><button class="btn" data-lv="${i}" style="text-align:left">${v[0]}</button><div class="tr">${v[2].map(r=>`<i style="left:${r[0]}%;width:${r[1]-r[0]}%;background:var(--${v[3]})"></i>`).join('')}</div></div>`).join('');
+$$('[data-lv]').forEach(b=>b.addEventListener('click',()=>{const v=LV[+b.dataset.lv];$('#lifeTip').style.borderLeftColor=`var(--${v[3]})`;$('#lifeTip').innerHTML=`<h3 style="color:var(--${v[3]})">${v[0]}</h3><p class="small">${v[1]}</p>`}));$('[data-lv="0"]').click();
+
+/* data breakpoint */
+const MEMV=['hp:100','ammo:30','x:12','y:40','speed:5','armor:20','gold:250','lvl:3'];let watched=null,ran=false;
+function md(){$('#mem').innerHTML=MEMV.map((m,i)=>`<span data-m="${i}" class="${watched===i?'w':''}" tabindex="0" role="button">${m}</span>`).join('');$$('#mem span').forEach(s=>s.addEventListener('click',()=>{watched=+s.dataset.m;md();$('#memLog').innerHTML=`<span class="m">data breakpoint set on &amp;${MEMV[watched].split(':')[0]}</span>`}))}
+$('#memRun').addEventListener('click',()=>{if(watched===null){$('#memLog').innerHTML='<span class="m">Click a cell to set a data breakpoint first. (Hint: gold mysteriously drops to 0.)</span>';return}
+ const writer={0:'Combat::ApplyDamage()  combat.cpp:77',1:'Weapon::Fire()  weapon.cpp:31',2:'Physics::Integrate()  physics.cpp:120',3:'Physics::Integrate()  physics.cpp:121',4:'Buffs::Tick()  buffs.cpp:15',5:'Combat::ApplyDamage()  combat.cpp:80',6:'<b>Inventory::Sort()  inventory.cpp:58   ← writes past its array!</b>',7:'Xp::LevelUp()  xp.cpp:9'}[watched];
+ $$('#mem span')[watched].classList.add('hit');$('#memLog').innerHTML=`<span class="e">Data breakpoint hit: ${MEMV[watched].split(':')[0]} changed</span>\n> ${writer}`+(watched===6?'\n<span class="o">Found the corruption: the sort loop runs one element too far and lands on gold.</span>':'\n<span class="m">An expected writer. Gold is the mystery; try that cell.</span>')});
+$('#memReset').addEventListener('click',()=>{watched=null;md();$('#memLog').innerHTML=''});md();
+
+/* asm */
+const ASM=[['f1():',''],['  push rbp','Save the caller\'s frame pointer on the stack.'],['  mov  rbp, rsp','Start this function\'s stack frame.'],['  mov  dword ptr [rbp-4], 0','i = 0 (a local lives at rbp-4).'],['.loop:',''],['  cmp  dword ptr [rbp-4], 100','Compare i with 100…'],['  jge  .done','…and leave the loop if i >= 100.'],['  mov  eax, dword ptr [rbp-4]','Load i into a register.'],['  add  dword ptr [rbp-8], eax','sum += i.'],['  add  dword ptr [rbp-4], 1','++i.'],['  jmp  .loop','Back to the comparison.'],['.done:',''],['  mov  eax, dword ptr [rbp-8]','Return value goes in eax: sum.'],['  pop  rbp','Restore the caller\'s frame.'],['  ret','Return to the caller.']];
+$('#asmCode').innerHTML=ASM.map((a,i)=>`<span data-a="${i}" style="cursor:${a[1]?'pointer':'default'}">${a[0]}</span>`).join('\n');
+$$('[data-a]').forEach(s=>s.addEventListener('click',()=>{const a=ASM[+s.dataset.a];if(!a[1])return;$$('[data-a]').forEach(o=>o.classList.remove('cur'));s.classList.add('cur');$('#asmTip').innerHTML=`<span class="eyebrow mono">${a[0].trim()}</span><p>${a[1]}</p>`}));
+
+quiz('#quizBox','#qScore',[
+ {q:'Your breakpoint keeps landing on a different line in a release build. Why?',o:['IDE bug','The optimiser removed or moved that line\'s code','Wrong symbols'],a:1,why:'Optimised code no longer maps one-to-one to source lines.'},
+ {q:'You want the debugger inside the function the current line calls.',o:['Step over','Step into','Step out'],a:1,why:'Step into enters the called function.'},
+ {q:'Who overwrote this variable? Fastest tool?',o:['printf everywhere','A data breakpoint on its address','Reading the whole codebase'],a:1,why:'It stops at the exact instruction that writes it.'},
+ {q:'Signed int overflow in C++ is…',o:['Wraparound','Undefined behaviour the optimiser may exploit','A compile error'],a:1,why:'That is why the "Goodbye" can vanish at -O2.'},
+ {q:'Breakpoints never hit, though you are sure the code runs. Possible cause?',o:['You are debugging a launcher, not the real executable','The CPU is too fast','Too many breakpoints'],a:0,why:'Launchers often start the real program as a separate process.'}]);
+
+})();
+</script>
+</body>
+</html>

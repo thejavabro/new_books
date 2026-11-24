@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Instrument the Program and Remove Randomness</title>
+<meta name="description" content="Make the program tell on itself with assertions and checked errors. Then hunt down the sources of randomness (time, threads, random numbers, input, network) so a one-in-fifty bug happens every time.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for The Book of Debugging companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = the program and its structure, orange pencil = the investigator, green = fixed / good, red = bug / bad.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:minmax(0,1fr)}}
+.two>*,.three>*,.stack>*{min-width:0}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* additions for the debugging companion */
+pre.code{margin:0;font-family:var(--mono);font-size:.84rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;max-width:100%}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)} pre.code .h{background:var(--bad-soft);color:var(--bad);border-radius:3px} pre.code .g{background:var(--ok-soft);color:var(--ok);border-radius:3px}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.term{font-family:var(--mono);font-size:.82rem;background:#0f1b2a;color:#d6e2f0;border-radius:8px;padding:12px 14px;min-height:5em;overflow-x:auto;white-space:pre-wrap;word-break:break-word}
+.term .e{color:#f2877c} .term .o{color:#76cf91} .term .m{color:#94a6ba}
+.theme-btn{position:absolute;top:6px;right:max(16px,env(safe-area-inset-right,0px));z-index:5;border:1px solid var(--line);background:var(--surface);color:var(--muted);border-radius:999px;padding:4px 11px;font-family:var(--mono);font-size:.72rem}
+.theme-btn:hover{border-color:var(--blue);color:var(--blue)}
+.pill{display:inline-block;font-family:var(--mono);font-size:.72rem;padding:2px 8px;border-radius:999px;border:1px solid currentColor}
+.meter{height:12px;border-radius:6px;background:var(--paper);border:1px solid var(--line);overflow:hidden}
+.meter>i{display:block;height:100%;width:0;background:var(--blue);transition:width .5s ease}
+.game{display:flex;flex-direction:column;gap:12px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.tiles button{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:10px;text-align:left;font-size:.9rem;display:flex;flex-direction:column;gap:2px}
+.tiles button b{font-family:var(--display);font-weight:600}
+.tiles button[aria-pressed="true"]{background:var(--blue-soft);border-color:var(--blue)}
+.tiles button.good{background:var(--ok-soft);border-color:var(--ok)} .tiles button.badt{background:var(--bad-soft);border-color:var(--bad)}
+.stat span.big{font-size:clamp(1.7rem,5vw,2.5rem);color:var(--ink)}
+.stat span.big.blue{color:var(--blue)} .stat span.big.badc{color:var(--bad)} .stat span.big.okc{color:var(--ok)} .stat span.big.pencil{color:var(--pencil)} .stat span.big.midc{color:var(--mid)}
+
+/* page */
+
+.pipe{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px}
+.pipe div{border:1px solid var(--line);border-radius:8px;padding:8px;background:var(--paper);font-size:.82rem;display:flex;flex-direction:column;gap:4px;min-height:96px}
+.pipe div b{font-family:var(--mono);font-size:.78rem}
+.pipe div label{font-size:.78rem;color:var(--muted);display:flex;gap:4px;align-items:center}
+.pipe div.bad{border-color:var(--bad);background:var(--bad-soft)} .pipe div.stop{outline:3px solid var(--pencil);outline-offset:1px}
+.pipe div .v{font-family:var(--mono);font-size:.8rem}
+@media (max-width:560px){.pipe{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.hex{display:grid;grid-template-columns:repeat(16,minmax(0,1fr));gap:2px;font-family:var(--mono);font-size:.7rem}
+.hex span{text-align:center;padding:3px 0;border-radius:3px;background:var(--paper);cursor:pointer}
+.hex span.cd{background:var(--mid-soft);color:var(--mid)} .hex span.dd{background:var(--bad-soft);color:var(--bad)} .hex span.fd{background:var(--blue-soft);color:var(--blue)} .hex span.ok{background:var(--ok-soft);color:var(--ok)}
+.hex span.sel{outline:2px solid var(--pencil)}
+@media (max-width:520px){.hex{font-size:.56rem}}
+.sort{display:flex;flex-direction:column;gap:8px}
+.sort .it{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--paper);font-size:.92rem}
+.sort .it.r{border-color:var(--ok);background:var(--ok-soft)} .sort .it.w{border-color:var(--bad);background:var(--bad-soft)}
+@media (max-width:560px){.sort .it{grid-template-columns:1fr}}
+.runs{display:flex;flex-wrap:wrap;gap:6px;font-family:var(--mono);font-size:.82rem}
+.runs span{border:1px solid var(--line);border-radius:6px;padding:3px 8px;background:var(--paper)}
+.runs span.bad{border-color:var(--bad);color:var(--bad)} .runs span.good{border-color:var(--ok);color:var(--ok)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">The Book of Debugging · visual companion</a><span class="tag">Part II · Probe · Strategies 8–9</span><span class="tag">Page 7 of 16</span></div>
+  <h1>Instrument the Program and Remove Randomness</h1>
+  <p class="lede">Make the program tell on itself with assertions and checked errors. Then hunt down the sources of randomness (time, threads, random numbers, input, network) so a one-in-fifty bug happens every time.</p>
+  <nav class="toc" aria-label="Sections"><a href="#assert">Assertions</a><a href="#errors">Assert or handle?</a><a href="#magic">Magic values</a><a href="#heisen">Don't break the repro</a><a href="#sources">Sources of randomness</a><a href="#race">Concurrency</a><a href="#seed">Seeds and time</a><a href="#use">Put it to work</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="assert" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Assertions: fail where the assumption breaks</h2></div>
+  <p>Instrumenting means changing the program, before you know what is wrong, so it reports problems itself. The cheapest instrument is an assertion: a check that a condition holds, which stops the program if it does not. Code is full of unstated assumptions (inputs are valid, a container has one element after a push, a sum of squares is not negative). Writing them down as asserts turns silent corruption into a loud stop. The trick is placement: <span class="key">assert as early as possible</span>, so the program fails where the assumption is first violated, not three systems later.</p>
+  <div class="sheet">
+    <div class="row between"><h3>A value goes bad in step 2</h3><span class="small" id="aTip"></span></div>
+    <div class="pipe" id="pipe"></div>
+    <div class="row"><button class="btn primary" id="aRun">Run</button></div>
+    <p class="small" id="aRes">Tick asserts in any step, then run. Without them, the crash appears far from the cause.</p>
+  </div>
+  <div class="two">
+    <pre class="code"><span class="c">// break into the debugger instead of exiting</span>
+<span class="k">#define</span> ASSERT(cond, msg)            \
+  <span class="k">if</span> (!(cond)) {                      \
+    printf(<span class="s">"Assert: %s\n"</span>, msg);    \
+    __debugbreak();                   \
+  }
+
+<span class="c">// checked at compile time</span>
+static_assert(<span class="k">sizeof</span>(Header) == 16,
+              <span class="s">"Header layout changed"</span>);</pre>
+    <div class="stack">
+      <p>A good assertion reports the condition, file, line and ideally the values involved. Better still, under a debugger it should <b>break like a breakpoint</b>, so you can inspect the state right there and sometimes even continue to learn more. Static assertions check conditions at compile time in languages compiled ahead of time (C, C++, Rust, D).</p>
+    </div>
+  </div>
+</section>
+
+<section id="errors" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Assert, or handle the error?</h2></div>
+  <p>Asserts are for things that should never happen; error handling is for things that can happen in normal use. A caller passing a null filename is a programming mistake: assert. A file that cannot be opened is a fact of life: handle it, and signal the failure to the caller with an error code, enum, result type, optional or exception. Often you want both: an assert to catch it during development, graceful handling in the shipped build. And <span class="key">always check return values</span>, even from the standard library. One environment-setup tool chased pending-reboot states with checks between every step, until the team noticed installers already report "reboot required" through exit code 3010.</p>
+  <div class="sheet">
+    <div class="row between"><h3>Sort these</h3><span class="score" id="sScore"></span></div>
+    <div class="sort" id="sort"></div>
+  </div>
+  <div class="cardgrid" id="recover"></div>
+</section>
+
+<section id="magic" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Fill memory with patterns you will recognise</h2></div>
+  <p>Fill data with obvious <b>magic values</b> and you can see at a glance whether code has run, what it changed, and whether something wrote past its boundary (use guard values, or fences, at the edges). Zero is a poor choice because it looks normal. Good magic values are odd (so they fault when used as addresses), make code that uses them behave strangely, and are invalid as instructions. Visual Studio's debug runtime is the familiar example: <code>0xCD</code> for freshly allocated memory, <code>0xDD</code> for freed memory, <code>0xFD</code> for the guard bytes around each allocation. Set your debugger and logs to show hex so the patterns pop out.</p>
+  <div class="sheet">
+    <div class="row between"><h3>Read the memory view</h3><div class="seg" role="group" aria-label="Scenario"><button aria-pressed="true" data-sc="0">Dump A</button><button aria-pressed="false" data-sc="1">Dump B</button><button aria-pressed="false" data-sc="2">Dump C</button></div></div>
+    <div class="hex" id="hex"></div>
+    <p class="small">Tap any byte. Then decide what went wrong.</p>
+    <div class="tiles" id="diag"></div>
+    <div class="detail" id="hexTip" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="heisen" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Instrumentation can hide the bug</h2></div>
+  <div class="two">
+    <div class="stack">
+      <p>Every change you add to learn about the bug can change the bug. A log line shifts timing and can make a race disappear; extra code moves data in memory and can dodge a corruption. One team before a big launch had a bug that vanished under the debugger and vanished again when they added logging. Out of time, they shipped with the log statements in place as the "fix".</p>
+      <p>That worked by luck. Any later change could bring the bug back at a worse moment. Change as little as possible and confirm the bug still reproduces after every modification.</p>
+    </div>
+    <div class="sheet">
+      <h3>Keep it, but switch it off</h3>
+      <p class="small">Do not delete good instrumentation once the bug is fixed; bugs come back. Put it behind switches that are off by default in user builds (it costs performance and can leak internals), with per-system flags and one master flag.</p>
+      <pre class="code"><span class="k">#if</span> INSTRUMENT_AUDIO || INSTRUMENT_ALL
+  ASSERT(voices &lt;= MAX_VOICES, <span class="s">"mixer overflow"</span>);
+  LOG(<span class="s">"voices=%d"</span>, voices);
+<span class="k">#endif</span></pre>
+    </div>
+  </div>
+</section>
+
+<section id="sources" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>A random bug has a non-random cause</h2></div>
+  <p>Computers are deterministic, so a bug that seems random must depend on something that supplies varying values. Find that source and either disable it to make the bug reproduce every time, or follow it to the cause. Watch for patterns first: after a set number of minutes? Only with three keys held? An abstraction over each source makes it easy to override. The usual suspects, and the functions to search for:</p>
+  <div class="row"><div class="seg" role="group" aria-label="Language"><button aria-pressed="true" data-lang="c">C / C++</button><button aria-pressed="false" data-lang="cs">C#</button><button aria-pressed="false" data-lang="py">Python</button></div></div>
+  <div class="cardgrid" id="srcCards"></div>
+</section>
+
+<section id="race" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Concurrency: the same program, different results</h2></div>
+  <div class="two">
+    <div class="stack">
+      <p>Two threads each add 1 to a shared counter many times. <code>counter++</code> is really read, add, write; if both threads read the same old value, one increment is lost. The result changes from run to run, which is exactly what makes threading bugs feel random. Search for thread and lock primitives to find entry points, and if your task system allows it, force everything onto one thread while debugging. Expect slower runs and functions that wait on parallel work.</p>
+    </div>
+    <div class="sheet">
+      <div class="row"><div class="seg" role="group" aria-label="Mode"><button aria-pressed="true" data-rm="par">two threads</button><button aria-pressed="false" data-rm="lock">with a mutex</button><button aria-pressed="false" data-rm="ser">forced serial</button></div></div>
+      <div class="row"><button class="btn primary" id="raceRun">Run 6 times</button><span class="small">expected: 200,000</span></div>
+      <div class="runs" id="runs"></div>
+      <p class="small" id="raceTip"></p>
+    </div>
+  </div>
+</section>
+
+<section id="seed" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Fix the seed, fix the clock</h2></div>
+  <div class="two">
+    <div class="sheet">
+      <div class="row"><div class="seg" role="group" aria-label="Seed"><button aria-pressed="true" data-seed="time">srand(time(0))</button><button aria-pressed="false" data-seed="fixed">srand(42)</button></div></div>
+      <div class="row"><button class="btn primary" id="launch">Launch the program</button></div>
+      <div class="runs" id="weather"></div>
+      <p class="small" id="wTip">A renderer bug only appeared in rain, and the weather was chosen at random on start-up and changed later. Forcing rain and disabling the change made it reproduce on every launch.</p>
+    </div>
+    <div class="stack">
+      <p>Pseudo-random generators are deterministic given their seed; seeding from the clock is what makes each run differ. Use a fixed seed, or return a constant, while debugging. If the program depends on random numbers for real features, own the algorithm: one procedural world generator produced different landscapes on different platforms because each platform's library implemented its PRNG differently.</p>
+      <p>Time itself is a source: <code>array[time(0) % 11] = 0</code> writes out of bounds only some seconds. Pin the clock to a value, or start from the same instant, and use a fixed delta time (such as 16.6 ms) instead of a measured one.</p>
+    </div>
+  </div>
+  <div class="sheet">
+    <h3>Why fixed time steps matter: float addition is not associative</h3>
+    <div class="row"><button class="btn" id="fpA">Sum three ways</button></div>
+    <div class="tbl"><table class="t"><tbody id="fpT"></tbody></table></div>
+    <p class="small">Same numbers, different order, different result. A variable time step changes the operations every run, so floating-point results drift apart; fast-math compiler options make it worse across platforms.</p>
+  </div>
+</section>
+
+<section id="use" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Put determinism to work</h2></div>
+  <div class="three">
+    <div class="sheet"><span class="eyebrow">Follow it</span><p class="small">If the bug comes and goes, its cause is linked to the randomness. Trace the data and logic dependencies from the source you found.</p></div>
+    <div class="sheet"><span class="eyebrow">Trust the fix</span><p class="small">With randomness disabled, "cannot reproduce" really means fixed, not "got lucky this time".</p></div>
+    <div class="sheet"><span class="eyebrow">Compare runs</span><p class="small">Now you can make a good run and a bad run on purpose and diff their logs or step through both.</p></div>
+  </div>
+  <p class="small">You rarely need determinism everywhere, which is hard (every system, compiler, library, OS scheduler and float operation must cooperate). Make the area around the bug deterministic. And yes, very rarely the randomness is real: cosmic-ray bit flips, failing components, unstable power. Consider hardware only after everything else.</p>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Quick check</h2></div>
+  <div class="row between"><span class="small">Pick an answer for each.</span><span class="score" id="qScore"></span></div>
+  <div class="quiz" id="quizBox"></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>The Book of Debugging: A Systematic Workflow for Finding and Fixing Bugs</i> by Johannes Kuhlmann (No Starch Press). Explanations, code snippets, simulations and drawings are original summaries, not text from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch06-history-and-debugger.html"><span>Previous · Strategies 6–7</span><b>Check Version Histories and Attach the Debugger</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch08-colleagues-search-dumps.html"><span>Next · Strategies 10–12</span><b>Ask Colleagues, Search All Files, Collect Crash Dumps</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every page of The Book of Debugging companion. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('dbg:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('acc:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: auto -> light -> dark */
+(function(){const b=document.createElement('button');b.className='theme-btn';b.type='button';const modes=['auto','light','dark'];let m=store.get('theme','auto');
+function ap(){if(m==='auto')document.documentElement.removeAttribute('data-theme');else document.documentElement.setAttribute('data-theme',m);b.textContent='theme: '+m;b.setAttribute('aria-label','Colour theme: '+m+'. Click to change.')}
+b.addEventListener('click',()=>{m=modes[(modes.indexOf(m)+1)%3];store.set('theme',m);ap()});ap();document.body.appendChild(b)})();
+
+
+/* assert pipeline */
+const STP=[['readInput()','count = 12'],['parse()','count = -1 (bug)'],['allocate()','size = -16 bytes'],['fill()','writes …'],['render()','crash']];
+const asr=new Set();
+function pdraw(stop){$('#pipe').innerHTML=STP.map((s,i)=>`<div class="${i>=1&&(stop==null||i<=stop)&&stop!==-1?'bad':''} ${stop===i?'stop':''}"><b>${i+1}. ${s[0]}</b><span class="v">${stop==null?'':(stop===-1||i<=stop?s[1]:'not reached')}</span><label><input type="checkbox" data-a="${i}" ${asr.has(i)?'checked':''}> assert input</label></div>`).join('');
+ $$('#pipe input').forEach(c=>c.addEventListener('change',()=>{c.checked?asr.add(+c.dataset.a):asr.delete(+c.dataset.a)}))}
+$('#aRun').addEventListener('click',()=>{const first=[...asr].filter(i=>i>=2).sort()[0];const stop=first!=null?first:4;pdraw(stop);
+ const dist=stop-1;$('#aRes').innerHTML=first===2?'<b class="okc">Stopped in allocate(), right after the bad value was produced.</b> The culprit is one step back: parse(). Even better: an assert on parse()\'s output.':first!=null?`Stopped in step ${stop+1}, ${dist} steps after the cause. Closer than a crash, but move the check earlier.`:asr.has(0)||asr.has(1)?'Those asserts check inputs that were still fine. The program crashed in render(), far from the cause.':'<b class="badc">Crash in render().</b> Four steps from the real cause, and the stack shows none of it.';$('#aTip').textContent=first!=null?'assert fired':'crashed'});
+pdraw(null);
+
+/* sort */
+const SI=[['Caller passes a null filename to writeFile()','Assert'],['The file cannot be opened: disk full','Handle'],['Network request times out','Handle'],['sizeof(Header) must be 16 bytes','Static assert'],['A list that was just filled is somehow empty','Assert'],['User typed letters into a number field','Handle']];
+let sr=0,sn=0;
+$('#sort').innerHTML=SI.map((s,i)=>`<div class="it" id="si${i}"><span>${s[0]}</span><div class="seg" role="group">${['Assert','Static assert','Handle'].map(o=>`<button data-i="${i}" data-o="${o}" aria-pressed="false">${o}</button>`).join('')}</div></div>`).join('');
+$$('#sort button').forEach(b=>b.addEventListener('click',()=>{const i=+b.dataset.i,it=$('#si'+i);if(it.dataset.done)return;it.dataset.done=1;press(b.parentNode,b);const ok=b.dataset.o===SI[i][1];sn++;if(ok)sr++;it.classList.add(ok?'r':'w');if(!ok)it.querySelector('span').insertAdjacentHTML('beforeend',` <b class="small">→ ${SI[i][1]}</b>`);$('#sScore').textContent=`${sr} / ${sn}`}));
+cards('#recover',[{t:'Retry, different input',d:'A random temp-file name already exists: pick another and try again.',c:'ok'},{t:'Retry later',d:'A temporary network error may be gone in a second.',c:'ok'},{t:'Fall back',d:'Call a different function or use a default that gets the job done another way.',c:'ok'},{t:'Tell the user',d:'Clear feedback lets users fix input or environment problems themselves.',c:'ok'}]);
+
+/* hex */
+const DUMPS=[
+ {b:['fd','fd','fd','fd','2a','00','00','00','cd','cd','cd','cd','cd','cd','cd','cd','fd','fd','fd','fd','00','00','00','00','00','00','00','00','00','00','00','00'],a:1,why:'Bytes 8–15 of the allocation still hold 0xCD: never written. The bug reads an uninitialised field.'},
+ {b:['dd','dd','dd','dd','dd','dd','dd','dd','dd','dd','dd','dd','dd','dd','dd','dd','41','41','41','41','00','00','00','00','00','00','00','00','00','00','00','00'],a:2,why:'Your pointer points into a block of 0xDD: that memory was freed. Use after free.'},
+ {b:['fd','fd','fd','fd','48','65','6c','6c','6f','20','57','6f','72','6c','64','21','21','21','fd','fd','00','00','00','00','00','00','00','00','00','00','00','00'],a:0,why:'Two guard bytes after the 12-byte buffer were overwritten by "!!". Something wrote past the end.'}];
+const DIAG=['Buffer overrun','Reading uninitialised memory','Use after free'];
+let di=0;
+function hx(){const d=DUMPS[di];$('#hexTip').innerHTML='';$('#hex').innerHTML=d.b.map((x,i)=>`<span class="${x==='cd'?'cd':x==='dd'?'dd':x==='fd'?'fd':''}" data-i="${i}">${x}</span>`).join('');
+ $$('#hex span').forEach(s=>s.addEventListener('click',()=>{$$('#hex span').forEach(o=>o.classList.remove('sel'));s.classList.add('sel');const x=s.textContent;$('#hexTip').innerHTML=`<p class="small"><b class="mono">0x${x}</b>: ${x==='cd'?'allocated but never written':x==='dd'?'freed memory: must not be read or written':x==='fd'?'guard byte around an allocation: must never change':'ordinary data'}</p>`}));
+ $('#diag').innerHTML=DIAG.map((t,i)=>`<button data-i="${i}"><b>${t}</b></button>`).join('');
+ $$('#diag button').forEach(b=>b.addEventListener('click',()=>{const ok=+b.dataset.i===d.a;$$('#diag button').forEach(o=>o.classList.remove('good','badt'));b.classList.add(ok?'good':'badt');if(!ok)$(`#diag [data-i="${d.a}"]`).classList.add('good');$('#hexTip').innerHTML=`<p><b class="${ok?'okc':'badc'}">${ok?'Right.':'Not quite.'}</b> ${d.why}</p>`}))}
+seg('[data-sc]',b=>{di=+b.dataset.sc;hx()});hx();
+
+/* sources */
+const SRC={c:[['Time','time(), gettimeofday(), clock_gettime(), std::chrono::system_clock::now(), GetTickCount()'],['Uninitialised data','int x; malloc() without memset; stray pointers'],['Concurrency','std::thread, std::mutex, pthread_create(), CreateThread()'],['Random numbers','rand(), srand(), std::random_device, std::mt19937'],['External input','keyboard, mouse, touch, file reads'],['Communication','socket(), send(), recv(), curl, Boost.ASIO']],
+ cs:[['Time','DateTime.Now, DateTime.UtcNow, DateTime.Today'],['Uninitialised data','rarer: fields default to zero, but watch unsafe code and pools'],['Concurrency','Thread.Start(), Task.Run(), Parallel.ForEach(), System.Threading'],['Random numbers','Random.Next(), Random.NextDouble()'],['External input','input events, file reads'],['Communication','TcpClient, UdpClient, HttpClient, NetworkStream']],
+ py:[['Time','time.time(), datetime.datetime.now()'],['Uninitialised data','rare in Python; watch mutable defaults and shared state'],['Concurrency','threading.Thread, multiprocessing, concurrent.futures'],['Random numbers','random.random(), random.randint()'],['External input','input(), file reads'],['Communication','socket, requests, urllib, aiohttp']]};
+const tips={'Time':'Pin to a fixed value or a fixed start; use a fixed delta time.','Uninitialised data':'Zero (or pattern-fill) every allocation through one wrapper you can switch on.','Concurrency':'Force serial execution while debugging, if the architecture allows.','Random numbers':'Fixed seed, or return a constant.','External input':'Automate or replay input instead of performing it live.','Communication':'Avoid the network; replay recorded messages or return canned ones.'};
+function src(l){cards('#srcCards',SRC[l].map((s,i)=>({t:s[0],d:`<span class="mono">${s[1]}</span><br>${tips[s[0]]}`,c:['d1','d2','d3','d4','d5','pencil'][i]})))}
+seg('[data-lang]',b=>src(b.dataset.lang));src('c');
+
+/* race */
+let rmode='par';seg('[data-rm]',b=>rmode=b.dataset.rm);
+$('#raceRun').addEventListener('click',()=>{const out=[];for(let k=0;k<6;k++){let v=200000;if(rmode==='par'){v=200000-Math.floor(Math.random()*60000+2000)}out.push(v)}
+ $('#runs').innerHTML=out.map(v=>`<span class="${v===200000?'good':'bad'}">${v.toLocaleString()}</span>`).join('');
+ $('#raceTip').textContent=rmode==='par'?'Different every time: lost updates from unsynchronised read-modify-write.':rmode==='lock'?'Correct every time: the mutex makes the increment atomic (that is a fix).':'Correct every time: forcing serial execution removes the randomness so you can study the rest of the bug.'});
+
+/* seed */
+let smode='time';seg('[data-seed]',b=>{smode=b.dataset.seed;$('#weather').innerHTML=''});
+const WX=['sun','clouds','rain','fog','snow'];let launches=0;
+function lcg(s){return()=>{s=(s*1103515245+12345)%2147483648;return s/2147483648}}
+$('#launch').addEventListener('click',()=>{launches++;const r=lcg(smode==='time'?Date.now()%100000+launches*7919:42);const w=WX[Math.floor(r()*5)];
+ $('#weather').insertAdjacentHTML('beforeend',`<span class="${w==='rain'?'bad':''}">#${launches}: ${w}${w==='rain'?' · bug!':''}</span>`);if(smode==='fixed')$('#wTip').textContent='Fixed seed: the same weather on every launch. Here it happens to be rain, so the bug now reproduces every single time.'});
+$('#fpA').addEventListener('click',()=>{const a=0.1,b=0.2,c=0.3;const f=Math.fround;const r1=(a+b)+c,r2=a+(b+c),r3=(a+c)+b;
+ $('#fpT').innerHTML=[['(0.1 + 0.2) + 0.3',r1],['0.1 + (0.2 + 0.3)',r2],['(0.1 + 0.3) + 0.2',r3]].map(([l,v])=>`<tr><td class="mono">${l}</td><td class="mono">${v.toPrecision(17)}</td></tr>`).join('')+'<tr><td colspan="2" class="small">64-bit doubles, computed in your browser</td></tr>'});
+
+quiz('#quizBox','#qScore',[
+ {q:'Where should an assertion go?',o:['As late as possible','As early as possible','Only in main()'],a:1,why:'Fail where the assumption is first violated, close to the cause.'},
+ {q:'A file the user picked cannot be opened. Assert or handle?',o:['Assert','Handle'],a:1,why:'It can happen in normal use, so the program must cope.'},
+ {q:'A variable shows 0xDDDDDDDD in a Visual Studio debug build.',o:['Uninitialised','Freed memory','Guard bytes'],a:1,why:'0xDD marks freed memory: a use-after-free.'},
+ {q:'Adding a log line made the bug vanish. What now?',o:['Ship it','Assume timing or memory layout changed; keep hunting','Remove the debugger'],a:1,why:'The bug is hidden, not fixed; it can come back any time.'},
+ {q:'A bug appears only some launches. First thing to look for?',o:['Cosmic rays','A source of varying input: time, threads, PRNG, input, network','A compiler bug'],a:1,why:'Deterministic machines need a varying source; hardware is a last resort.'}]);
+
+})();
+</script>
+</body>
+</html>

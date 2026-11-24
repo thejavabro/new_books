@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>GUI Applications</title>
+<meta name="description" content="Every mainstream GUI toolkit is single-threaded on purpose. The trick is to keep all UI work on the event thread and all slow work off it, and to hand results across cleanly.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Java Concurrency in Practice companion. A lab-notebook reading column on blueprint grid paper.
+   Blue ink = threads and structure, orange pencil = shared state and locks, green = safe, red = broken.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code */
+pre.code{margin:0;background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--blue);border-radius:0 8px 8px 0;padding:12px 14px;overflow-x:auto;font-family:var(--mono);font-size:.82rem;line-height:1.55;tab-size:2;max-width:100%}
+pre.code.bad{border-left-color:var(--bad)} pre.code.good{border-left-color:var(--ok)}
+pre.code .k{color:var(--d5);font-weight:600} pre.code .c{color:var(--muted);font-style:italic} pre.code .s{color:var(--d2)} pre.code .a{color:var(--pencil)} pre.code .n{color:var(--d3)}
+pre.code .hl{background:var(--mid-soft);border-radius:3px;box-shadow:0 0 0 2px var(--mid-soft)}
+code{font-family:var(--mono);font-size:.88em;background:var(--blue-soft);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+pre code{background:none;padding:0;font-size:inherit;overflow-wrap:normal}
+.codecap{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;display:flex;gap:8px;align-items:center}
+.codecap b{color:var(--ok)} .codecap b.x{color:var(--bad)}
+.rule{border:1.5px solid var(--blue);border-radius:10px;padding:12px 16px;background:var(--blue-soft);font-weight:600;max-width:66ch}
+.rule::before{content:"Rule of thumb";display:block;font-family:var(--mono);font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:var(--blue);font-weight:600;margin-bottom:2px}
+/* thread lanes */
+.lanes{display:flex;flex-direction:column;gap:8px}
+.lane{display:grid;grid-template-columns:5.5rem minmax(0,1fr);gap:10px;align-items:center}
+.lane>b{font-family:var(--mono);font-size:.8rem}
+.lane .ops{display:flex;flex-wrap:wrap;gap:6px;min-height:34px;align-items:center}
+.op{font-family:var(--mono);font-size:.78rem;padding:4px 8px;border-radius:6px;border:1px solid var(--line);background:var(--paper)}
+.op.on{border-color:var(--blue);background:var(--blue-soft)}
+.op.badop{border-color:var(--bad);background:var(--bad-soft);color:var(--bad)}
+.op.okop{border-color:var(--ok);background:var(--ok-soft);color:var(--ok)}
+.memcell{display:inline-flex;flex-direction:column;align-items:center;gap:2px;border:1.5px solid var(--pencil);border-radius:8px;padding:6px 14px;background:var(--pencil-soft);font-family:var(--mono)}
+.memcell span{font-size:.7rem;color:var(--muted)}
+.memcell b{font-size:1.3rem}
+.themebtn{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted)}
+.themebtn:hover{border-color:var(--blue);color:var(--blue)}
+.sec-head h2,h1{min-width:0;overflow-wrap:break-word}
+
+/* page */
+
+.demo{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:center}
+@media (max-width:620px){.demo{grid-template-columns:1fr}}
+.spinner{width:64px;height:64px;border-radius:50%;border:7px solid var(--blue-soft);border-top-color:var(--blue);animation:spin 1s linear infinite;margin:auto}
+@keyframes spin{to{transform:rotate(360deg)}}
+.prog{height:16px;border-radius:8px;background:var(--paper);border:1px solid var(--line);overflow:hidden}
+.prog i{display:block;height:100%;width:0;background:var(--ok);transition:width .15s}
+.flowsvg text{font-size:12px}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Java Concurrency in Practice · visual companion</a><span class="tag">Part II · Chapter 9 of 16</span><button class="themebtn" type="button">Theme: auto</button></div>
+  <h1>GUI Applications</h1>
+  <p class="lede">Every mainstream GUI toolkit is single-threaded on purpose. The trick is to keep all UI work on the event thread and all slow work off it, and to hand results across cleanly.</p>
+  <nav class="toc" aria-label="Sections"><a href="#why">Why single-threaded</a><a href="#edt">Event thread</a><a href="#confinement">Swing rules</a><a href="#longtasks">Long tasks</a><a href="#models">Shared models</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="why" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Why GUIs are single-threaded</h2></div>
+  <p>Nearly every GUI toolkit (Swing, SWT, AWT, the Windows and macOS toolkits) is built as a <b>single-threaded subsystem</b>: all UI work happens on one <b>event dispatch thread</b> (EDT). People tried multithreaded toolkits many times and kept giving up. Two forces doom them:</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="whySvg" viewBox="0 0 640 230" role="img" aria-label="Input events travel bottom-up while model changes travel top-down"></svg></div>
+    <div class="row"><button class="btn primary" id="whyGo">Run both at once</button><span class="small" id="whyTxt"></span></div>
+  </div>
+  <p>User input "bubbles up" from the operating system to widgets to application code, while application actions "bubble down" from the app to widgets to the OS. Locks taken in opposite orders are a recipe for deadlock (chapter 10). Model-view-controller makes it worse: controller calls model calls view, while view calls back into model. Confining everything to one thread side-steps all of it, at the price that any slow handler freezes the whole UI.</p>
+</section>
+
+<section id="edt" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Sequential event processing, felt for real</h2></div>
+  <p>Events are processed one at a time, in order, each one finishing before the next starts. That makes handlers easy to write, but a long handler blocks everything behind it, including repaints and the Cancel button. A web page's main thread works exactly like Swing's EDT, so this demo is not a simulation: the slow button really blocks this page for two seconds. Click it, then try clicking the counter while it's busy.</p>
+  <div class="sheet">
+    <div class="demo">
+      <div class="stack" style="align-items:center"><div class="spinner" aria-hidden="true"></div><div class="row"><button class="btn" id="cnt">Clicks: 0</button></div></div>
+      <div class="stack">
+        <button class="btn" id="slowEdt">Slow work on the event thread</button>
+        <button class="btn primary" id="slowBg">Slow work in the background</button>
+        <button class="btn" id="cancelBg" disabled>Cancel background work</button>
+        <div class="prog"><i id="pg"></i></div>
+        <p class="small" id="dTxt" aria-live="polite">Ready.</p>
+      </div>
+    </div>
+  </div>
+  <div class="rule">Code on the event thread must be short. Anything long-running (computation, I/O, network) belongs in another thread.</div>
+</section>
+
+<section id="confinement" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Thread confinement in Swing</h2></div>
+  <p>Swing components and data models are not thread-safe; they are confined to the EDT. Code running elsewhere must not touch them. A handful of methods are exceptions and safe from any thread:</p>
+  <div class="recap">
+    <div><b class="blue">SwingUtilities.isEventDispatchThread</b><span>Am I on the EDT?</span></div>
+    <div><b class="blue">SwingUtilities.invokeLater</b><span>Schedule a Runnable to run on the EDT, return at once. Works like a single-thread executor.</span></div>
+    <div><b class="blue">invokeAndWait</b><span>Same, but block until it has run. Only call it from a non-GUI thread.</span></div>
+    <div><b class="blue">repaint, revalidate</b><span>Queue a repaint or layout request.</span></div>
+    <div><b class="blue">Listener add/remove</b><span>Safe from any thread, though listeners are always called on the EDT.</span></div>
+  </div>
+  <p>Short tasks can run entirely on the EDT: a button's action listener updates a model, the model fires events, the view repaints, all in one thread with no synchronization. That's the happy case.</p>
+  <div class="sheet"><div class="row between"><h3>Which thread should run it?</h3><span class="score" id="tScore"></span></div><div class="quiz" id="tQuiz"></div></div>
+</section>
+
+<section id="longtasks" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Long-running tasks: off and back again</h2></div>
+  <p>For a slow task, the handler hands the work to a background executor and returns. When the work finishes, the background thread uses <code>invokeLater</code> to post a completion task back to the EDT, which updates the UI. Cancellation rides on the <code>Future</code> returned by <code>submit</code>: the Cancel button calls <code>future.cancel(true)</code>, and the task polls its interrupted status.</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="flSvg" class="flowsvg" viewBox="0 0 640 220" role="img" aria-label="Hand-off between the event thread and a background thread"></svg></div>
+    <div class="stepper" id="flStep"></div>
+  </div>
+  <p>The book wraps this in a <code>BackgroundTask</code> class built on <code>FutureTask</code>: subclasses implement <code>compute()</code> in the background, call <code>setProgress</code>, and get <code>onCompletion</code> and <code>onProgress</code> callbacks on the EDT. Java 6's <code>SwingWorker</code> provides the same: <code>doInBackground</code>, <code>publish</code>/<code>process</code> and <code>done</code>.</p>
+  <pre class="code good">
+new SwingWorker&lt;Report, Integer&gt;() {
+  protected Report doInBackground() {   // background thread
+    for (int i = 0; i &lt; 100; i++) { work(i); setProgress(i); }
+    return build();
+  }
+  protected void done() {               // event thread
+    label.setText(get().summary());
+  }
+}.execute();</pre>
+</section>
+
+<section id="models" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Shared data models</h2></div>
+  <p>Data models such as a <code>TableModel</code> are confined to the EDT too. But what if the data lives elsewhere, say a large tree loaded lazily from a remote file system, or updated by a feed? Two approaches:</p>
+  <div class="two">
+    <div class="callout ok"><b class="h">Thread-safe data model</b><span>If the data structure is thread-safe and not too contended (a <code>ConcurrentHashMap</code>, a copy-on-write list), background threads update it and the EDT reads it. Versioned structures with copy-on-write can serve consistent snapshots.</span></div>
+    <div class="callout blue"><b class="h">Split data model</b><span>Keep a <b>presentation model</b> confined to the EDT and a separate thread-safe <b>shared model</b>. The shared model registers listeners and pushes either full snapshots or incremental updates to the presentation model via <code>invokeLater</code>.</span></div>
+  </div>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Update style"><button data-u="snap" aria-pressed="true">Snapshot</button><button data-u="inc" aria-pressed="false">Incremental</button></div>
+    <div class="svgbox"><svg id="smSvg" viewBox="0 0 640 170" role="img" aria-label="Shared model feeding presentation model"></svg></div>
+    <p id="smTxt"></p>
+  </div>
+  <div class="rule">Consider a split data model when a model must be shared by more than one thread and making it thread-safe is too complex or costly.</div>
+  <p><b>Other single-threaded subsystems.</b> The same idea helps whenever a resource is unsafe for concurrent use, like a native library that requires all calls from one thread. Confine it to a dedicated single-thread executor and have everyone else submit tasks to it, getting results through Futures.</p>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Java Concurrency in Practice</i> by Brian Goetz with Tim Peierls, Joshua Bloch, Joseph Bowbeer, David Holmes and Doug Lea (Addison-Wesley, 2006). Explanations, code snippets and drawings are original summaries, not copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch08-applying-thread-pools.html"><span>Previous · Chapter 8</span><b>Applying Thread Pools</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch10-avoiding-liveness-hazards.html"><span>Next · Chapter 10</span><b>Avoiding Liveness Hazards</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('jcip:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('jcip:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: auto -> light -> dark */
+(function(){const r=document.documentElement;let m=store.get('theme','auto');
+  function ap(){if(m==='auto')r.removeAttribute('data-theme');else r.setAttribute('data-theme',m);$$('.themebtn').forEach(b=>b.textContent='Theme: '+m)}
+  ap();$$('.themebtn').forEach(b=>b.addEventListener('click',()=>{m=m==='auto'?'light':m==='light'?'dark':'auto';store.set('theme',m);ap()}))})();
+/* tiny Java highlighter for <pre class="code">. Lines starting with "!!" are highlighted. */
+(function(){const KW='abstract|boolean|break|case|catch|class|char|continue|default|do|double|else|enum|extends|final|finally|for|if|implements|import|instanceof|int|interface|long|new|null|private|protected|public|return|static|super|switch|synchronized|this|throw|throws|true|false|try|var|void|volatile|while|byte|short|float';
+  const re=new RegExp('(//[^\\n]*|/\\*[\\s\\S]*?\\*/)|("(?:[^"\\\\\\n]|\\\\.)*"|\'(?:[^\'\\\\\\n]|\\\\.)*\')|(@[A-Za-z]+)|\\b('+KW+')\\b|\\b(\\d[\\d_]*L?)\\b','g');
+  const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  window.hlJava=function(p){const src=p.textContent.replace(/^\n/,'').replace(/\s+$/,'');
+    const lines=src.split('\n').map(l=>{const mark=l.startsWith('!!');if(mark)l=l.slice(2);
+      let out='',last=0;l.replace(re,(m,c,s,a,k,n,off)=>{out+=esc(l.slice(last,off));const cls=c?'c':s?'s':a?'a':k?'k':'n';out+=`<span class="${cls}">${esc(m)}</span>`;last=off+m.length;return m});out+=esc(l.slice(last));
+      return mark?`<span class="hl">${out}</span>`:out});
+    p.innerHTML='<code>'+lines.join('\n')+'</code>'};
+  $$('pre.code').forEach(hlJava)})();
+
+
+/* why */
+function drawWhy(run){const s=$('#whySvg');s.innerHTML='';const L=[['OS / native',190],['Widget',115],['Application',40]];
+  L.forEach(([t,y])=>{s.appendChild(el('rect',{x:220,y,width:200,height:40,rx:8,fill:'var(--surface)',stroke:'var(--pencil)','stroke-width':1.6}));s.appendChild(el('text',{x:320,y:y+25,'text-anchor':'middle','font-weight':700,class:'s-ink'},t+' lock'))});
+  const up=el('path',{d:'M180,210 L180,60',stroke:'var(--blue)','stroke-width':3,fill:'none',class:run?'flow':''});s.appendChild(up);
+  s.appendChild(el('polygon',{points:'172,64 188,64 180,48',fill:'var(--blue)'}));s.appendChild(el('text',{x:170,y:140,'text-anchor':'end',fill:'var(--blue)','font-weight':700},'input event'));s.appendChild(el('text',{x:170,y:156,'text-anchor':'end',fill:'var(--blue)','font-size':12},'bottom-up'));
+  const dn=el('path',{d:'M460,40 L460,190',stroke:'var(--d2)','stroke-width':3,fill:'none',class:run?'flow':''});s.appendChild(dn);
+  s.appendChild(el('polygon',{points:'452,186 468,186 460,202',fill:'var(--d2)'}));s.appendChild(el('text',{x:470,y:110,fill:'var(--d2)','font-weight':700},'app action'));s.appendChild(el('text',{x:470,y:126,fill:'var(--d2)','font-size':12},'top-down'));
+  if(run){s.appendChild(el('rect',{x:226,y:104,width:188,height:62,rx:8,fill:'var(--bad-soft)',stroke:'var(--bad)','stroke-width':2,opacity:.9}));s.appendChild(el('text',{x:320,y:140,'text-anchor':'middle','font-weight':800,fill:'var(--bad)'},'DEADLOCK'))}
+  $('#whyTxt').textContent=run?'The input thread holds the native lock and wants the widget lock; the app thread holds the widget lock and wants the native lock.':''}
+$('#whyGo').addEventListener('click',()=>drawWhy(true));drawWhy(false);
+
+/* real EDT demo */
+let clicks=0,bgTimer=null;
+$('#cnt').addEventListener('click',()=>{clicks++;$('#cnt').textContent='Clicks: '+clicks});
+$('#slowEdt').addEventListener('click',()=>{$('#dTxt').textContent='Working on the event thread…';const t0=performance.now();while(performance.now()-t0<2000){} $('#pg').style.width='100%';$('#dTxt').textContent='Done. The spinner froze and clicks waited in the queue: they were processed only now.'});
+$('#slowBg').addEventListener('click',()=>{if(bgTimer)return;let p=0;$('#cancelBg').disabled=false;$('#slowBg').disabled=true;$('#dTxt').textContent='Working in the background; the UI stays live.';
+  bgTimer=setInterval(()=>{p+=5;$('#pg').style.width=p+'%';if(p>=100){clearInterval(bgTimer);bgTimer=null;$('#cancelBg').disabled=true;$('#slowBg').disabled=false;$('#dTxt').textContent='Done: completion posted back to the event thread.'}},100)});
+$('#cancelBg').addEventListener('click',()=>{if(bgTimer){clearInterval(bgTimer);bgTimer=null;$('#pg').style.width='0';$('#cancelBg').disabled=true;$('#slowBg').disabled=false;$('#dTxt').textContent='Cancelled. The Cancel click was handled because the event thread was free.'}});
+
+quiz('#tQuiz','#tScore',[
+ {q:'Setting a JLabel\'s text',a:0,why:'Swing components are confined to the EDT.'},
+ {q:'Downloading a 50 MB file',a:1,why:'Long I/O would freeze the UI.'},
+ {q:'Calling TableModel.fireTableDataChanged',a:0,why:'Models are confined to the EDT as well.'},
+ {q:'Querying a slow database for search results',a:1,why:'Run it in the background, then invokeLater the results.'},
+ {q:'Toggling a button\'s enabled state when work starts',a:0,why:'UI state: EDT. It\'s quick, too.'}],['Event thread','Background thread']);
+
+/* flow */
+const FL=[[0,'User clicks Search. The listener runs on the EDT.'],[1,'The listener disables the button, shows a spinner and submits the search to a background executor. It returns immediately: the EDT is free.'],
+ [2,'The search runs in a background thread. The UI keeps repainting; the Cancel button works.'],[3,'Done. The background thread calls invokeLater(() -> showResults(r)).'],[4,'showResults runs on the EDT: re-enables the button and fills the table. All UI changes stayed on the EDT.']];
+function drawFl(i){const s=$('#flSvg');s.innerHTML='';
+  [['Event thread',50,'blue'],['Background',150,'d2']].forEach(([t,y,c])=>{s.appendChild(el('text',{x:0,y:y+5,'font-weight':700,fill:`var(--${c})`},t));s.appendChild(el('line',{x1:100,y1:y,x2:630,y2:y,stroke:`var(--${c})`,'stroke-width':2,'stroke-dasharray':'4 4',opacity:.5}))});
+  const B=[[110,50,'click','blue'],[200,50,'submit','blue'],[300,150,'search…','d2'],[440,150,'invokeLater','d2'],[540,50,'show results','blue']];
+  B.forEach((b,k)=>{const on=k<=i;const g=el('g',{opacity:on?1:.18});g.appendChild(el('rect',{x:b[0]-40,y:b[1]-18,width:k===2?160:90,height:36,rx:8,fill:k===i?`var(--${b[3]})`:'var(--surface)',stroke:`var(--${b[3]})`,'stroke-width':1.6}));
+    g.appendChild(el('text',{x:b[0]+(k===2?40:5),y:b[1]+5,'text-anchor':'middle','font-weight':700,fill:k===i?'var(--surface)':'var(--ink)'},b[2]));s.appendChild(g)});
+  if(i>=1)s.appendChild(el('line',{x1:245,y1:68,x2:262,y2:132,stroke:'var(--muted)','stroke-width':2}));
+  if(i>=3)s.appendChild(el('line',{x1:485,y1:132,x2:500,y2:68,stroke:'var(--muted)','stroke-width':2}));
+  if(i>=1&&i<=3){s.appendChild(el('text',{x:330,y:56,'text-anchor':'middle',fill:'var(--ok)','font-weight':600},'EDT free: repaints, Cancel'))}}
+$('#flStep').innerHTML=stepHTML();stepper('#flStep',FL.map(f=>f[1]),i=>drawFl(i));
+
+/* split model */
+function drawSM(m){const s=$('#smSvg');s.innerHTML='';
+  s.appendChild(el('rect',{x:20,y:40,width:200,height:90,rx:10,fill:'var(--pencil-soft)',stroke:'var(--pencil)','stroke-width':1.6}));s.appendChild(el('text',{x:120,y:70,'text-anchor':'middle','font-weight':700,fill:'var(--pencil)'},'Shared model'));s.appendChild(el('text',{x:120,y:92,'text-anchor':'middle',class:'s-muted','font-size':12},'thread-safe'));s.appendChild(el('text',{x:120,y:110,'text-anchor':'middle',class:'s-muted','font-size':12},'updated by feed threads'));
+  s.appendChild(el('rect',{x:420,y:40,width:200,height:90,rx:10,fill:'var(--blue-soft)',stroke:'var(--blue)','stroke-width':1.6}));s.appendChild(el('text',{x:520,y:70,'text-anchor':'middle','font-weight':700,fill:'var(--blue)'},'Presentation model'));s.appendChild(el('text',{x:520,y:92,'text-anchor':'middle',class:'s-muted','font-size':12},'confined to the EDT'));s.appendChild(el('text',{x:520,y:110,'text-anchor':'middle',class:'s-muted','font-size':12},'drives the table'));
+  s.appendChild(el('line',{x1:225,y1:85,x2:410,y2:85,stroke:'var(--ok)','stroke-width':m==='snap'?8:2.5,class:'flow'}));s.appendChild(el('polygon',{points:'410,77 410,93 420,85',fill:'var(--ok)'}));
+  s.appendChild(el('text',{x:318,y:74,'text-anchor':'middle','font-size':12,fill:'var(--ok)','font-weight':700},m==='snap'?'whole snapshot':'just the change'));
+  s.appendChild(el('text',{x:318,y:110,'text-anchor':'middle','font-size':12,class:'s-muted'},'via invokeLater'));
+  $('#smTxt').textContent=m==='snap'?'Simple: send a copy of the data. Fine when the data set is small or updates are rare; wasteful for big models that change often.':'Send only what changed (row 42 updated). Less copying and finer-grained repaints, and the view can show changes as they happen. More code to keep both sides in sync.'}
+seg('[data-u]',b=>drawSM(b.dataset.u));drawSM('snap');
+
+quiz('#qQuiz','#qScore',[
+ {q:'Why did multithreaded GUI toolkits keep failing?',o:['Deadlocks from opposite lock orders','Too few CPUs'],a:0,why:'Bottom-up input and top-down actions acquire locks in opposite orders.'},
+ {q:'A background thread finished. How does it update a label?',o:['label.setText directly','SwingUtilities.invokeLater'],a:1,why:'Post the update to the EDT.'},
+ {q:'Why can\'t a Cancel button stop a task running on the EDT?',o:['The EDT is busy and can\'t process the click','Cancel buttons need a lock'],a:0,why:'Events are processed sequentially.'},
+ {q:'In SwingWorker, which method runs on the background thread?',o:['done()','doInBackground()'],a:1,why:'done() and process() run on the EDT.'},
+ {q:'A native library must be called from one thread only. Good design?',o:['A dedicated single-thread executor','synchronized around each call'],a:0,why:'Confine it, like a GUI toolkit confines widgets.'}]);
+
+})();
+</script>
+</body>
+</html>

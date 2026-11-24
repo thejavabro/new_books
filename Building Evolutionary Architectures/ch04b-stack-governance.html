@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Automating Governance: Across the Stack</title>
+<meta name="description" content="Above the codebase, turnkey tools thin out. The second half of Chapter 4 shows fitness functions built from a little glue code, from service communication rules to chaos engineering and side-by-side experiments.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Accelerate companion. Layout: a lab-notebook reading column on blueprint grid paper.
+   Blue ink = structure and measurement, orange pencil = people and culture, green = good outcome, red = bad outcome.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:minmax(0,1fr)}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+button.tag{cursor:pointer}button.tag:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.5;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre}
+.code .k{color:var(--blue);font-weight:600}.code .c{color:var(--muted);font-style:italic}.code .s{color:var(--d2)}
+.pill{display:inline-block;font-family:var(--mono);font-size:.72rem;padding:2px 8px;border-radius:999px;border:1px solid currentColor}
+.okbg{background:var(--ok-soft)}.badbg{background:var(--bad-soft)}
+.cb{display:flex;gap:10px;align-items:flex-start;font-size:.92rem;cursor:pointer;max-width:66ch}.cb input{margin-top:5px;flex:none;width:16px;height:16px;accent-color:var(--blue)}
+.two>*,.three>*{min-width:0}
+
+/* page */
+
+.logt{font-family:var(--mono);font-size:.78rem}
+.logt td,.logt th{padding:5px 8px;border-bottom:1px solid var(--line);white-space:nowrap;text-align:left}
+.logt tr.bad td{background:var(--bad-soft);color:var(--bad)}
+.ingr{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+@media (max-width:640px){.ingr{grid-template-columns:1fr}}
+.ingr label{border:1px solid var(--line);border-radius:10px;padding:12px;background:var(--paper);display:flex;gap:10px;align-items:flex-start;cursor:pointer;font-size:.92rem}
+.ingr label:has(input:checked){border-color:var(--ok);background:var(--ok-soft)}
+.ingr input{margin-top:4px;accent-color:var(--ok)}
+.reqs{display:grid;grid-template-columns:repeat(auto-fill,minmax(30px,1fr));gap:3px}
+.reqs i{display:block;height:22px;line-height:20px!important;border-radius:4px;background:var(--paper);border:1px solid var(--line);font-style:normal;font-size:.68rem;font-family:var(--mono);text-align:center;line-height:24px}
+.reqs i.ctl{background:var(--blue-soft);border-color:var(--blue)}
+.reqs i.both{background:var(--ok-soft);border-color:var(--ok)}
+.reqs i.mis{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Building Evolutionary Architectures · visual companion</a><span class="tag">Part I · Chapter 4 of 9</span><button class="tag themebtn" type="button">Theme: auto</button></div>
+  <h1>Automating Governance: Across the Stack</h1>
+  <p class="lede">Above the codebase, turnkey tools thin out. The second half of Chapter 4 shows fitness functions built from a little glue code, from service communication rules to chaos engineering and side-by-side experiments.</p>
+  <nav class="toc" aria-label="Sections"><a href="#cases">Small case studies</a><a href="#already">Already using some</a><a href="#comm">Service communication</a><a href="#reliability">Implementation choices</a><a href="#chaos">Chaos engineering</a><a href="#enterprise">Enterprise level</a><a href="#scientist">Scientist</a><a href="#checklist">Checklist, not stick</a><a href="#check">Quick check</a><a href="#recap">Recap</a></nav>
+</header>
+
+<section id="cases" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Measure instead of guessing</h2></div>
+  <p>Three short PenultimateWidgets stories share one moral: a quickly built fitness function turned a gut-feel argument into data. Pick one.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Case"><button data-cs="av" aria-pressed="true">Reuse the legacy system?</button><button data-cs="ca" aria-pressed="false">Will auto-scaling hold?</button><button data-cs="po" aria-pressed="false">What to port first?</button></div>
+    <div class="svgbox"><svg id="csSvg" viewBox="0 0 640 230" role="img" aria-label="Case study chart"></svg></div>
+    <div class="row" id="csCtl"></div>
+    <p id="csTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="already" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>You probably already have fitness functions</h2></div>
+  <p>Metrics suites such as SonarQube, linters such as ESLint, pyLint and cpplint, source checkers such as PMD: many teams already run these occasionally. Using a tool now and then does not make it a fitness function. Tick the ingredients to convert one.</p>
+  <div class="sheet">
+    <div class="ingr">
+      <label><input type="checkbox" class="ing"><span><b>An objective measure.</b> "p95 latency under 300 ms," not "fast enough."</span></label>
+      <label><input type="checkbox" class="ing"><span><b>Fast feedback.</b> An alert or a failed build when the measure is breached.</span></label>
+      <label><input type="checkbox" class="ing"><span><b>Continuous wiring.</b> Runs in the pipeline or production, not when someone remembers.</span></label>
+    </div>
+    <p id="ingTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="comm" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Governing calls between microservices</h2></div>
+  <p>A cycle check works because a compiler sees one codebase. Microservices may be written in different languages, live in different repositories and use different protocols, so no single tool sees them all. The trick is to standardize one thing, a <b>log format</b> (itself enforced by a fitness function on the shared container image), then write a few lines of script that read the logs. Rule here: domain services may only talk to the <b>orchestrator</b>.</p>
+  <div class="sheet">
+    <div class="tbl"><table class="logt" id="logs"><thead><tr><th>caller</th><th>callee</th><th>user</th><th>corr-id</th><th>time (UTC)</th><th>ms</th></tr></thead><tbody></tbody></table></div>
+    <div class="row"><button class="btn" id="addLog">More traffic</button><button class="btn primary" id="scan">Run the 24-hour log scan</button></div>
+    <div class="two">
+      <pre class="code"><span class="c"># illustrative glue code, run by the pipeline</span>
+<span class="k">for</span> entry <span class="k">in</span> read_logs(hours=<span class="s">24</span>):
+    <span class="k">if</span> entry.caller != <span class="s">"orchestrator"</span> \
+       <span class="k">and</span> entry.callee != <span class="s">"orchestrator"</span>:
+        violations.append(entry)
+
+<span class="k">if</span> violations:
+    fail_build(violations)</pre>
+      <p id="scanTxt" class="small" aria-live="polite">The scan has not run yet.</p>
+    </div>
+  </div>
+  <p class="small">This is the <b>reactive</b> version: no runtime overhead, but violations surface up to a day late. A <b>proactive</b> version uses real-time monitors and catches them at once, with a little overhead. Pick by criticality: security-relevant calls deserve the proactive one.</p>
+</section>
+
+<section id="reliability" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Same goal, two fitness functions</h2></div>
+  <p>A student answers questions in a <b>TestTaker</b> service, which sends each answer asynchronously to an <b>AutoGrader</b> that stores it. The requirement: never drop an answer. Option 1 instruments each container to compare messages in and out. Option 2 tags every answer with a <b>correlation ID</b> at the start and checks at the end that each ID resolved. Drop some messages and see which catches it.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Where messages are lost"><button data-drop="none" aria-pressed="true">Nothing lost</button><button data-drop="svc" aria-pressed="false">Lost inside AutoGrader</button><button data-drop="wire" aria-pressed="false">Lost between services</button></div>
+    <div class="svgbox"><svg id="relSvg" viewBox="0 0 640 200" role="img" aria-label="TestTaker sending to AutoGrader with counters"></svg></div>
+    <div class="lamps row" id="relL"></div>
+    <p id="relTxt" class="small" aria-live="polite"></p>
+  </div>
+  <p class="small">Counting is simple and atomic, enforced through consistent infrastructure, but proves only service-level reliability. Correlation IDs prove end-to-end reliability, but someone must keep state for the whole workflow. Which is right? It depends, and there is never only one way to implement a fitness function. On the real project, the chart from this check exposed lost messages and triggered a forensic hunt.</p>
+</section>
+
+<section id="chaos" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>DevOps fitness functions: the Simian Army</h2></div>
+  <p>Netflix ran on someone else's cloud and worried about latency, outages and elasticity it could not control. So it built tools that cause trouble on purpose, continuously, in production. Teams had no choice but to build services that survive. Switch resilience on or off and unleash a monkey.</p>
+  <div class="sheet">
+    <label class="cb"><input type="checkbox" id="resil" checked><span>Services were designed for failure (redundancy across zones, timeouts, fallbacks)</span></label>
+    <div class="row" id="monk"></div>
+    <div class="svgbox"><svg id="chSvg" viewBox="0 0 640 220" role="img" aria-label="Services spread across availability zones"></svg></div>
+    <p id="chTxt" class="small" aria-live="polite"></p>
+  </div>
+  <div class="cardgrid" id="army"></div>
+  <div class="callout blue"><b class="h">Holistic, continual, operational</b><span>The Simian Army ran all the time against many parts of the system at once. When a mistyped command once took down a large chunk of a cloud region, Netflix kept running because the tools had already forced its engineers to plan for that. The original army is retired; the janitor lives on as Swabbie.</span></div>
+</section>
+
+<section id="enterprise" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Enterprise architects govern capabilities, not technologies</h2></div>
+  <p>When applications call fine-grained services all over the enterprise, implementation details leak everywhere and everything becomes brittle. Enterprise architects can instead define <b>platforms</b>: business capabilities behind slow-changing contracts, with fitness functions guarding what each platform must deliver. Toggle the two shapes.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Shape"><button data-ent="adhoc" aria-pressed="true">Ad hoc service mesh-up</button><button data-ent="plat" aria-pressed="false">Platforms with contracts</button></div>
+    <div class="svgbox"><svg id="entSvg" viewBox="0 0 640 250" role="img" aria-label="Applications connecting to services directly or through platforms"></svg></div>
+    <p id="entTxt" class="small" aria-live="polite"></p>
+  </div>
+  <div class="cardgrid" id="entCards"></div>
+</section>
+
+<section id="scientist" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Case study: refactoring while deploying 60 times a day</h2></div>
+  <p>GitHub merged code with a shell script around command-line Git: correct, but it did not scale. A new library implementation was ready, but merging had worked flawlessly for years. GitHub's open source <b>Scientist</b> framework runs the old code (the <b>control</b>) and the new code (the <b>candidate</b>) on a sample of real requests. It randomizes their order, times both, compares results, swallows and logs candidate exceptions, publishes everything, and <i>always returns the control's answer</i>. Run the experiment.</p>
+  <div class="sheet">
+    <div class="two">
+      <pre class="code"><span class="c"># illustrative shape of an experiment</span>
+<span class="k">def</span> merge(base, head)
+  science <span class="s">"merge-engine"</span> <span class="k">do</span> |e|
+    e.use { shell_merge(base, head) } <span class="c"># control</span>
+    e.try { lib_merge(base, head) }   <span class="c"># candidate</span>
+  <span class="k">end</span>                                  <span class="c"># returns control</span>
+<span class="k">end</span></pre>
+      <div class="stack">
+        <label class="rng"><span>Share of requests that also run the candidate: <b id="smpV"></b>%</span><input type="range" id="smp" min="1" max="20" value="1"></label>
+        <label class="cb"><input type="checkbox" id="bug" checked><span>Candidate still has an edge-case bug</span></label>
+        <div class="row"><button class="btn primary" id="runSci">Run 1 day of traffic</button><button class="btn" id="fixSci">Fix the bug</button></div>
+      </div>
+    </div>
+    <div class="reqs" id="reqs"></div>
+    <p id="sciTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout ok"><b class="h">A fidelity fitness function</b><span>The general idea: when replacing an old system, run both side by side behind a proxy that can call old, new or both, and compare until every piece of behavior has moved. The legacy code becomes the consistency test. GitHub ran its experiment for days, saw no mismatches or slow cases for a full day, then deleted the old path.</span></div>
+</section>
+
+<section id="checklist" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>A checklist, not a stick</h2></div>
+  <p>Fitness functions are not a tool for architects to torture developers from an ivory tower. Think of a pilot's or surgeon's checklist: professionals use them not because they forget their jobs, but because repetitive complex work makes people skip steps. Everyone knows not to ship a container with debug ports open; under deadline pressure someone eventually does.</p>
+  <p>Developers must understand each check so that fixing it is not a nuisance. Pick a way to document one.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Format"><button data-doc="adr" aria-pressed="true">ADR section</button><button data-doc="bdd" aria-pressed="false">BDD scenario</button><button data-doc="nb" aria-pressed="false">Notebook</button></div>
+    <pre class="code" id="docCode"></pre>
+    <p id="docTxt" class="small" aria-live="polite"></p>
+  </div>
+  <div class="svgbox"><svg id="rail" viewBox="0 0 640 170" role="img" aria-label="Guardrails along roads of different surfaces"></svg></div>
+  <p class="small">A colleague's analogy: the road can be asphalt, cobblestones or gravel; the guardrails keep travelers on it whatever the surface. Fitness functions are guardrails for architecture characteristics, often just 10 to 20 lines of script glued to other tools' output.</p>
+</section>
+
+<section id="check" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qz"></div></div>
+</section>
+
+<section id="recap" class="stack">
+  <div class="sec-head"><span class="num">10</span><h2>Recap on one page</h2></div>
+  <div class="recap">
+    <div><b>Data beats gut feel</b><span>Stress tests, canary ramps and usage logging settle arguments quickly.</span></div>
+    <div><b class="pencil">Metric + threshold + wiring</b><span>That is what turns a tool you already use into a fitness function.</span></div>
+    <div><b class="blue">Glue code</b><span>Standardize logs, then a short script can govern a polyglot system.</span></div>
+    <div><b>Choose implementations deliberately</b><span>Counting vs correlation IDs; reactive vs proactive.</span></div>
+    <div><b>Chaos as governance</b><span>Continuous fault injection forces resilience.</span></div>
+    <div><b class="okc">Fidelity checks</b><span>Run old and new side by side; ship when they agree.</span></div>
+    <div><b>Document and collaborate</b><span>ADRs, BDD or notebooks; checklists, not sticks.</span></div>
+  </div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Building Evolutionary Architectures: Automated Software Governance</i> (2nd edition) by Neal Ford, Rebecca Parsons, Patrick Kua and Pramod Sadalage (O'Reilly, 2023). Explanations, examples, code snippets and drawings are original summaries; nothing here is copied from the book's figures or listings.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch04a-code-governance.html"><span>Previous · Chapter 4</span><b>Automating Governance: Code Level</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch05a-connascence-quanta.html"><span>Next · Chapter 5</span><b>Topologies: Connascence and Quanta</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('bea:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('bea:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  const fs=[...r.querySelectorAll('.fill')];requestAnimationFrame(()=>requestAnimationFrame(()=>fs.forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle: auto -> light -> dark */
+(function(){const b=document.querySelector('.themebtn');const modes=['auto','light','dark'];let m=store.get('theme','auto');
+  function apply(){if(m==='auto')document.documentElement.removeAttribute('data-theme');else document.documentElement.setAttribute('data-theme',m);if(b)b.textContent='Theme: '+m}
+  apply();if(b)b.addEventListener('click',()=>{m=modes[(modes.indexOf(m)+1)%3];store.set('theme',m);apply()})})();
+
+
+/* cases */
+let csM='av';
+function cs(){const s=$('#csSvg');s.innerHTML='';const c=$('#csCtl');
+  if(csM==='av'){if(!$('#avL')){c.innerHTML='<label class="rng" style="flex:1"><span>Load applied to the legacy system: <b id="avV"></b> req/s</span><input type="range" id="avL" min="50" max="1500" value="400" step="50"></label>';$('#avL').addEventListener('input',cs)}
+    const L=+$('#avL').value;$('#avV').textContent=L;const X=v=>60+v/1500*560,Y=v=>200-v/10*180;const err=v=>v<1100?0.2+v/1100*.6:0.8+(v-1100)/40;const need=600;
+    s.appendChild(el('rect',{x:X(0),y:20,width:X(need)-X(0),height:180,fill:'var(--blue-soft)'}));s.appendChild(el('text',{x:X(need/2),y:36,'text-anchor':'middle','font-size':11,fill:'var(--blue)'},'expected integration load'));
+    let p='';for(let v=50;v<=1500;v+=25)p+=(p?'L':'M')+X(v)+','+Y(Math.min(10,err(v)));s.appendChild(el('path',{d:p,fill:'none',stroke:'var(--pencil)','stroke-width':2.5}));
+    s.appendChild(el('line',{x1:60,y1:Y(1),x2:620,y2:Y(1),stroke:'var(--bad)','stroke-dasharray':'4 4'}));s.appendChild(el('text',{x:616,y:Y(1)-5,'text-anchor':'end','font-size':10.5,fill:'var(--bad)'},'1% error budget'));
+    const e=Math.min(10,err(L));s.appendChild(el('circle',{cx:X(L),cy:Y(e),r:7,fill:e<1?'var(--ok)':'var(--bad)'}));s.appendChild(el('text',{x:340,y:222,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},'requests per second (error % on vertical axis)'));
+    $('#csTxt').innerHTML=`Error rate at ${L} req/s: <b>${e.toFixed(2)}%</b>. The real result: the legacy system handled the integration with plenty of headroom, so the team skipped a costly rewrite.`}
+  else if(csM==='ca'){if(!$('#caL')){c.innerHTML='<label class="rng" style="flex:1"><span>Users routed to the auto-scaled version: <b id="caV"></b>%</span><input type="range" id="caL" min="0" max="100" value="5" step="5"></label>';$('#caL').addEventListener('input',cs)}
+    const p=+$('#caL').value;$('#caV').textContent=p;const inst=1+Math.ceil(p/20);
+    s.appendChild(el('rect',{x:30,y:80,width:120,height:60,rx:8,fill:'var(--paper)',stroke:'var(--line)'}));s.appendChild(el('text',{x:90,y:115,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--ink)'},'users'));
+    s.appendChild(el('rect',{x:220,y:40,width:140,height:40,rx:8,fill:'var(--surface)',stroke:'var(--blue)'}));s.appendChild(el('text',{x:290,y:65,'text-anchor':'middle','font-size':11.5,fill:'var(--ink)'},`single VM · ${100-p}%`));
+    s.appendChild(el('line',{x1:150,y1:110,x2:220,y2:60,stroke:'var(--blue)','stroke-width':Math.max(1,(100-p)/12)}));s.appendChild(el('line',{x1:150,y1:110,x2:220,y2:160,stroke:'var(--ok)','stroke-width':Math.max(1,p/12)}));
+    for(let k=0;k<inst;k++)s.appendChild(el('rect',{x:220+k*48,y:140,width:42,height:40,rx:6,fill:'var(--ok-soft)',stroke:'var(--ok)'}));s.appendChild(el('text',{x:222,y:200,'font-size':11,fill:'var(--ok)'},`auto-scaled: ${inst} instance${inst>1?'s':''} · ${p}%`));
+    s.appendChild(el('rect',{x:470,y:70,width:150,height:80,rx:8,fill:'var(--paper)',stroke:'var(--line)'}));s.appendChild(el('text',{x:545,y:100,'text-anchor':'middle','font-size':11.5,'font-weight':700,fill:'var(--ink)'},'monitor'));s.appendChild(el('text',{x:545,y:122,'text-anchor':'middle','font-size':11,fill:'var(--ok)'},'p95 latency OK ✓'));
+    $('#csTxt').textContent=p<100?'A feature flag routes a growing slice of users to the stopgap. The team raises the share only while monitoring stays green: a canary release used as a fitness function.':'Fully rolled out. Keeping the fitness function running also tells the team how long this stopgap will survive.'}
+  else{c.innerHTML='';const F=[['Invoicing',92],['Customer lookup',85],['Order entry',60],['Inventory',41],['Reports',22],['Bulk pricing wizard',3]];
+    F.forEach((f,i)=>{const y=20+i*33;s.appendChild(el('text',{x:170,y:y+17,'text-anchor':'end','font-size':12,fill:'var(--ink)'},f[0]));s.appendChild(el('rect',{x:180,y,width:f[1]*4.3,height:24,rx:4,fill:f[1]<10?'var(--bad)':'var(--blue)',opacity:.8}));s.appendChild(el('text',{x:186+f[1]*4.3,y:y+17,'font-size':11,fill:'var(--muted)',class:'t-mono'},f[1]+'%'))});
+    $('#csTxt').textContent='Usage logged from the old desktop app for a few weeks (illustrative numbers). Analysts had specified the app for years without knowing what people used. Invoicing and customer lookup go first; an expensive, barely used feature is left behind.'}}
+seg('[data-cs]',b=>{csM=b.dataset.cs;$('#csCtl').innerHTML='';cs()});cs();
+
+/* ingredients */
+function ing(){const n=$$('.ing').filter(c=>c.checked).length;$('#ingTxt').innerHTML=n===3?'<b class="okc">That is a fitness function.</b> Objective, fast feedback, continuously applied.':`<b>${n} of 3.</b> ${n===0?'Right now it is just a tool.':'Closer, but still something people check when they remember.'}`}
+$$('.ing').forEach(c=>c.addEventListener('change',ing));ing();
+
+/* logs */
+const SV=['orders','payments','shipping','inventory'];let LOGS=[];let seed=7;function rnd(){seed=(seed*9301+49297)%233280;return seed/233280}
+function addLogs(n){for(let i=0;i<n;i++){const s=SV[Math.floor(rnd()*4)];const rogue=rnd()<.15;let a='orchestrator',b=s;if(rnd()<.5){a=s;b='orchestrator'}if(rogue){a=s;b=SV[(SV.indexOf(s)+1)%4]}
+  const t=new Date(Date.UTC(2026,0,5,8,Math.floor(rnd()*60),Math.floor(rnd()*60)));LOGS.push([a,b,['jdoe','amira','kenji','sol'][Math.floor(rnd()*4)],'C'+Math.floor(rnd()*9000+1000),t.toISOString().slice(11,19),Math.floor(rnd()*400+20)])}renderLogs(false)}
+function renderLogs(mark){$('#logs tbody').innerHTML=LOGS.slice(-8).map(l=>{const bad=mark&&l[0]!=='orchestrator'&&l[1]!=='orchestrator';return `<tr class="${bad?'bad':''}">${l.map(x=>`<td>${x}</td>`).join('')}</tr>`}).join('')}
+$('#addLog').addEventListener('click',()=>{addLogs(4);$('#scanTxt').textContent='New traffic logged. Not checked yet.'});
+$('#scan').addEventListener('click',()=>{renderLogs(true);const v=LOGS.filter(l=>l[0]!=='orchestrator'&&l[1]!=='orchestrator');$('#scanTxt').innerHTML=v.length?`<b class="badc">Fitness function failed:</b> ${v.length} direct service-to-service call${v.length>1?'s':''} in ${LOGS.length} entries (e.g. ${v[0][0]} → ${v[0][1]}). The orchestrator's view of workflow state can no longer be trusted.`:'<b class="okc">Passed:</b> every call goes through the orchestrator.'});addLogs(8);
+
+/* reliability */
+function rel(m){const s=$('#relSvg');s.innerHTML='';const sent=100,lostW=m==='wire'?4:0,lostS=m==='svc'?3:0;const ain=sent-lostW,aout=ain-lostS;
+  [[40,'TestTaker',`in 100 · out ${sent}`],[420,'AutoGrader',`in ${ain} · out ${aout}`]].forEach(b=>{s.appendChild(el('rect',{x:b[0],y:60,width:180,height:70,rx:10,fill:'var(--surface)',stroke:'var(--blue)','stroke-width':2}));s.appendChild(el('text',{x:b[0]+90,y:90,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--ink)'},b[1]));s.appendChild(el('text',{x:b[0]+90,y:112,'text-anchor':'middle','font-size':11,fill:'var(--muted)',class:'t-mono'},b[2]))});
+  s.appendChild(el('line',{x1:220,y1:95,x2:420,y2:95,stroke:'var(--blue)','stroke-width':2,class:'flow'}));s.appendChild(el('text',{x:320,y:85,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},'async queue'));
+  if(lostW)s.appendChild(el('text',{x:320,y:120,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--bad)'},`✕ ${lostW} lost in transit`));if(lostS)s.appendChild(el('text',{x:510,y:150,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--bad)'},`✕ ${lostS} never stored`));
+  s.appendChild(el('rect',{x:600,y:70,width:30,height:50,rx:4,fill:'var(--paper)',stroke:'var(--line)'}));s.appendChild(el('text',{x:615,y:100,'text-anchor':'middle','font-size':9,fill:'var(--muted)'},'DB'));
+  const c1=lostS===0,c2=lostW+lostS===0;$('#relL').innerHTML=`<span class="lamp ${c1?'pass':'fail'}">● per-container counts: ${c1?'pass':'fail'}</span><span class="lamp ${c2?'pass':'fail'}">● correlation IDs: ${c2?'pass':'fail'} (${100-lostW-lostS}/100 resolved)</span>`;
+  $('#relTxt').textContent=m==='wire'?'Each service passes its own count check, yet four answers vanished. Only the end-to-end correlation check sees it.':m==='svc'?'Both checks catch a loss inside a service.':'Both pass.'}
+seg('[data-drop]',b=>rel(b.dataset.drop));rel('none');
+
+/* chaos */
+const MK=[['Latency Monkey','lat'],['Chaos Monkey','one'],['Chaos Gorilla','dc'],['Chaos Kong','zone']];let hit=null;
+$('#monk').innerHTML=MK.map(m=>`<button class="btn" data-mk="${m[1]}">${m[0]}</button>`).join('')+'<button class="btn" data-mk="">Calm</button>';
+function chaos(){const r=$('#resil').checked,s=$('#chSvg');s.innerHTML='';const Z=['zone A','zone B','zone C'];let down=0,slow=false;
+  Z.forEach((z,i)=>{const x=20+i*210;const out=(hit==='zone'&&i===0)||(hit==='dc'&&i===1);s.appendChild(el('rect',{x,y:20,width:190,height:170,rx:10,fill:out?'var(--bad-soft)':'var(--paper)',stroke:out?'var(--bad)':'var(--line)','stroke-dasharray':out?'6 4':''}));s.appendChild(el('text',{x:x+95,y:40,'text-anchor':'middle','font-size':11,fill:'var(--muted)',class:'t-mono'},out?z+' · OFFLINE':z));
+    ['catalog','cart','pay'].forEach((n,k)=>{const present=r||i===k;if(!present)return;const dead=out||(hit==='one'&&i===0&&k===0);if(dead)down++;
+      s.appendChild(el('rect',{x:x+20,y:55+k*42,width:150,height:32,rx:6,fill:dead?'var(--paper)':'var(--blue-soft)',stroke:dead?'var(--bad)':'var(--blue)',opacity:dead?.5:1}));s.appendChild(el('text',{x:x+95,y:76+k*42,'text-anchor':'middle','font-size':12,'font-weight':600,fill:dead?'var(--bad)':'var(--ink)'},n+(dead?' ✕':'')+(hit==='lat'&&k===1?' (slow)':'')))})});
+  const svc=['catalog','cart','pay'];const alive=svc.filter((n,k)=>[0,1,2].some(i=>{const present=r||i===k;const out=(hit==='zone'&&i===0)||(hit==='dc'&&i===1)||(hit==='one'&&i===0&&k===0);return present&&!out}));
+  const up=alive.length===3&&!(hit==='lat'&&!r);$('#chTxt').innerHTML=!hit?'All calm. Pick a monkey.':up?`<b class="okc">Site still up.</b> ${hit==='lat'?'Timeouts and fallbacks absorb the slow cart service.':'Surviving copies in other zones take the traffic.'}`:`<b class="badc">Customers see errors:</b> ${hit==='lat'?'calls pile up behind the slow cart service with no timeouts.':svc.filter(x=>!alive.includes(x)).join(', ')+' has no surviving copy.'} Better to learn this from a monkey than from an outage.`}
+$$('[data-mk]').forEach(b=>b.addEventListener('click',()=>{hit=b.dataset.mk||null;chaos()}));$('#resil').addEventListener('change',chaos);chaos();
+cards('#army',[{t:'Chaos Monkey',c:'d1',d:'Randomly disrupts instances: higher latency, lower reliability.'},{t:'Chaos Gorilla',c:'d1',d:'Simulates losing an entire data center.'},{t:'Chaos Kong',c:'d1',d:'Simulates losing a whole availability region.'},{t:'Latency Monkey',c:'d2',d:'Stresses one specific, common cloud fault: slow resource resolution.'},{t:'Doctor Monkey',c:'d2',d:'Checks health (CPU, disk) and raises alarms when resources run short.'},{t:'Janitor Monkey',c:'d3',d:'Finds services nobody routes to any more and removes them, saving cloud resources.'},{t:'Conformity Monkey',c:'d4',d:'A platform for custom governance, such as calling REST endpoints like a client and checking verbs, errors and metadata.'},{t:'Security Monkey',c:'d4',d:'Conformity for security: open debug ports, missing authentication and other automatable checks.'}]);
+
+/* enterprise */
+function ent(m){const s=$('#entSvg');s.innerHTML='';const apps=[110,320,530],svc=[];for(let i=0;i<8;i++)svc.push(50+i*77);
+  apps.forEach(x=>{s.appendChild(el('rect',{x:x-60,y:15,width:120,height:34,rx:8,fill:'var(--blue)'}));s.appendChild(el('text',{x,y:37,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--surface)'},'application'))});
+  svc.forEach(x=>{s.appendChild(el('circle',{cx:x,cy:215,r:16,fill:'var(--surface)',stroke:'var(--muted)'}))});
+  if(m==='adhoc'){apps.forEach((a,i)=>svc.forEach((x,k)=>{if((i+k)%2===0||k%3===i)s.appendChild(el('line',{x1:a,y1:49,x2:x,y2:199,stroke:'var(--pencil)','stroke-width':1.2,opacity:.7}))}));$('#entTxt').textContent='Every application knows how many services fit together. A change in any service can break any application.'}
+  else{[[90,[0,1,2]],[320,[3,4]],[550,[5,6,7]]].forEach((p,i)=>{s.appendChild(el('rect',{x:p[0]-85,y:105,width:170,height:44,rx:10,fill:'var(--ok-soft)',stroke:'var(--ok)','stroke-width':2}));s.appendChild(el('text',{x:p[0],y:125,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--ink)'},['Customer platform','Pricing platform','Fulfilment platform'][i]));s.appendChild(el('text',{x:p[0],y:141,'text-anchor':'middle','font-size':10,fill:'var(--ok)'},'contract + fitness functions'));
+    p[1].forEach(k=>s.appendChild(el('line',{x1:p[0],y1:149,x2:svc[k],y2:199,stroke:'var(--muted)'})))});
+    apps.forEach((a,i)=>[90,320,550].forEach((p,k)=>{if(i===k||(i+k)===2)s.appendChild(el('line',{x1:a,y1:49,x2:p,y2:105,stroke:'var(--blue)','stroke-width':1.6}))}));$('#entTxt').textContent='Applications see only stable platform contracts. How each platform is built stays hidden and can change.'}}
+seg('[data-ent]',b=>ent(b.dataset.ent));ent('adhoc');
+cards('#entCards',[{t:'Keeps enterprise architects out of tech choices',c:'d2',d:'They understand long-term strategy best but are often far from current implementation trends. Encoding strategy as platform fitness functions lets domain architects choose technology within guardrails, and grows the next generation of architects.'},{t:'The Frozen Caveman',c:'bad',d:'An architect who drags every design back to one old fear ("but what if we lose Italy?") after a freak incident years ago. Real risk assessment needs to separate genuine risk from perceived risk.'},{t:'The "evolutionary architect" role',c:'d1',d:'Some companies have someone who harvests fitness functions from projects, makes them generic, and builds reusable platforms with clear quantum boundaries and contracts.'}]);
+
+/* scientist */
+let fixed=false;
+function sci(run){const p=+$('#smp').value;$('#smpV').textContent=p;const bug=$('#bug').checked&&!fixed;const N=96;let both=0,mis=0;const R=[];
+  for(let i=0;i<N;i++){const sample=((i*37)%100)<p*4;let k='ctl';if(run&&sample){both++;if(bug&&(i%7===3)){k='mis';mis++}else k='both'}R.push(`<i class="${k}">${k==='mis'?'≠':k==='both'?'=':'·'}</i>`)}
+  $('#reqs').innerHTML=R.join('');
+  $('#sciTxt').innerHTML=!run?'Each square is a batch of requests. Blue: control only. Green: both ran and agreed. Red: results differed (logged, not shown to users).':mis?`<b class="badc">${mis} mismatch${mis>1?'es':''}</b> in ${both} sampled batches. Every user still got the control's correct answer; developers get the logged differences to investigate. At GitHub's scale even 1% sampling surfaced edge cases quickly.`:`<b class="okc">${both} sampled batches, no mismatches, no slow cases.</b> After long enough with clean results, delete the old path and keep the new one.`}
+$('#runSci').addEventListener('click',()=>sci(true));$('#fixSci').addEventListener('click',()=>{fixed=true;$('#bug').checked=false;sci(true)});$('#bug').addEventListener('change',()=>{fixed=!$('#bug').checked;sci(false)});$('#smp').addEventListener('input',()=>sci(false));sci(false);
+
+/* docs */
+const DOC={adr:[`ADR 014: Domain services talk only to the orchestrator
+
+Status:    Accepted
+Context:   The orchestrator owns workflow state...
+Decision:  No direct calls between domain services.
+
+Governance:
+  - Fitness function: nightly log scan (pipeline stage "governance")
+  - Fails build on any non-orchestrator call
+  - Owner: platform architecture`,'Many teams already write Architecture Decision Records. Adding a "Governance" section says how the decision is checked.'],
+ bdd:[`Feature: Contracts stay backward compatible
+  Scenario: A new provider version is published
+    Given the published contract for "invoice" v3
+    When a provider build is produced
+    Then every registered consumer contract passes`,'Readable by non-programmers, and each line maps to executable code. The catch: BDD tools were made for requirements, so the fit is imperfect.'],
+ nb:[`## Rule: entities live in the model package
+(text explaining why, for humans)
+
+[cell] MATCH (e:Entity)<-[:CONTAINS]-(p:Package)
+       WHERE p.name <> "model"
+       RETURN e.name, p.name
+
+[output] 2 misplaced entities found`,'Literate programming revived: a code analyzer loads structure into a graph database, and a notebook holds the explanation and the query side by side, runnable on demand.']};
+function doc(k){$('#docCode').textContent=DOC[k][0];$('#docTxt').textContent=DOC[k][1]}seg('[data-doc]',b=>doc(b.dataset.doc));doc('adr');
+(function(){const s=$('#rail');const T=[['asphalt','var(--muted)'],['cobblestone','var(--d3)'],['gravel','var(--d2)']];T.forEach((t,i)=>{const x=20+i*205;s.appendChild(el('rect',{x,y:55,width:195,height:60,fill:t[1],opacity:.25}));
+  if(i===1)for(let a=0;a<12;a++)for(let b=0;b<3;b++)s.appendChild(el('rect',{x:x+4+a*16,y:59+b*19,width:13,height:15,rx:3,fill:t[1],opacity:.5}));if(i===2)for(let a=0;a<60;a++)s.appendChild(el('circle',{cx:x+5+(a*37)%190,cy:60+(a*13)%52,r:2,fill:t[1]}));
+  s.appendChild(el('text',{x:x+97,y:150,'text-anchor':'middle','font-size':11,fill:'var(--muted)'},t[0]))});
+  [40,130].forEach(y=>{s.appendChild(el('line',{x1:15,y1:y,x2:625,y2:y,stroke:'var(--ok)','stroke-width':4}));for(let x=25;x<625;x+=40)s.appendChild(el('line',{x1:x,y1:y,x2:x,y2:y+(y<100?12:-12),stroke:'var(--ok)','stroke-width':3}))});
+  s.appendChild(el('text',{x:320,y:24,'text-anchor':'middle','font-size':11,'font-weight':700,fill:'var(--ok)'},'fitness functions'))})();
+
+quiz('#qz','#qScore',[
+ {q:'What turns a monitor into a fitness function?',o:['A prettier dashboard','An objective threshold with an alert','Running it monthly'],a:1,why:'Objective measure plus fast feedback, applied continuously.'},
+ {q:'Messages vanish between two services that each count in = out. Which check notices?',o:['Per-container counts','End-to-end correlation IDs','Neither'],a:1,why:'Only an end-to-end check sees losses in transit.'},
+ {q:'What does Scientist return to the caller?',o:['The candidate result','The control result','Whichever is faster'],a:1,why:'Users always get the existing behavior; differences are only logged.'},
+ {q:'Why did chaos tools make Netflix robust?',o:['They ran tests before releases','They injected faults continuously in production','They replaced the cloud provider'],a:1,why:'Constant real faults forced resilient design.'},
+ {q:'What should enterprise architects mostly govern?',o:['Which framework each team uses','Platform capabilities and contracts via fitness functions','Code formatting'],a:1,why:'Capabilities, not technologies, leaving tech choices to closer teams.'}]);
+
+})();
+</script>
+</body>
+</html>

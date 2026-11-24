@@ -1,0 +1,516 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Storage Types and Relational Stores</title>
+<meta name="description" content="Before picking a database, know how bytes are stored. Then meet the relational database: tables, transactions, the engine inside, and how to make it fast and big.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the System Design on AWS companion. Layout: a drafting-table reading column on blueprint grid paper.
+   Blue ink = structure and data paths, orange pencil = clients and requests, green = healthy, red = failure.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:minmax(14rem,1fr) minmax(0,auto);gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* additions */
+button.tag.theme{cursor:pointer;margin-left:auto}
+button.tag.theme:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;max-width:100%;white-space:pre}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:5em;max-height:14em;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.pill{display:inline-block;font-family:var(--mono);font-size:.75rem;padding:2px 8px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.pill.ok{border-color:var(--ok);color:var(--ok);background:var(--ok-soft)} .pill.bad{border-color:var(--bad);color:var(--bad);background:var(--bad-soft)}
+input[type=number],input[type=text]{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+.sheet>.seg,.stack>.seg{align-self:flex-start}
+
+/* page */
+
+.dbt{border-collapse:collapse;font-size:.85rem;width:100%}
+.dbt th,.dbt td{border:1px solid var(--line);padding:5px 8px;text-align:left}
+.dbt th{background:var(--paper);font-family:var(--mono);font-size:.72rem}
+.dbt tr.hl td{background:var(--blue-soft)}
+.dbt tr.hl2 td{background:var(--pencil-soft)}
+.dbt td.dup{background:var(--bad-soft);color:var(--bad)}
+.tabs3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+@media (max-width:700px){.tabs3{grid-template-columns:1fr}}
+.acct{display:flex;gap:14px;flex-wrap:wrap}
+.acct .stat{flex:1;min-width:130px}
+.parts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.parts>div{border:1px solid var(--line);border-radius:8px;padding:8px;background:var(--paper);min-height:120px;display:flex;flex-direction:column;gap:4px}
+.parts b{font-family:var(--mono);font-size:.75rem;color:var(--muted)}
+.parts .k{display:flex;flex-wrap:wrap;gap:3px}
+.parts .k i{font-style:normal;font-family:var(--mono);font-size:.72rem;padding:1px 5px;border-radius:4px;background:var(--blue-soft);border:1px solid var(--blue)}
+@media (max-width:520px){.parts{grid-template-columns:1fr 1fr}}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">System Design on AWS · visual companion</a><span class="tag">Part I · Chapter 2 of 21</span><button class="tag theme" type="button" id="themeBtn" aria-label="Toggle light or dark theme">Theme</button></div>
+  <h1>Storage Types and Relational Stores</h1>
+  <p class="lede">Before picking a database, know how bytes are stored. Then meet the relational database: tables, transactions, the engine inside, and how to make it fast and big.</p>
+  <nav class="toc" aria-label="Sections"><a href="#formats">File, block, object</a><a href="#model">Tables & keys</a><a href="#acid">ACID</a><a href="#normal">Normalization</a><a href="#engine">Inside the RDBMS</a><a href="#index">Indexes</a><a href="#partition">Partitioning</a><a href="#replication">Replication</a><a href="#oss">MySQL vs PostgreSQL</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="formats" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Three ways to store bytes</h2></div>
+  <p>Hardware changes; applications should not care. Storage systems hide disks behind one of three abstractions. Pick one to see how data is addressed, what it suits, and which AWS service provides it (Chapter 10 goes deeper).</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Storage type"><button data-st="file" aria-pressed="true">File</button><button data-st="block" aria-pressed="false">Block</button><button data-st="object" aria-pressed="false">Object</button></div>
+    <div class="svgbox"><svg id="stSvg" viewBox="0 0 640 210" role="img" aria-label="How each storage type addresses data"></svg></div>
+    <div class="detail" id="stTxt" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="model" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Tables, keys and relationships</h2></div>
+  <p>A relational database stores data in <b>tables</b> of rows and typed columns. A <b>primary key</b> identifies each row; a <b>foreign key</b> points at a row in another table, which is how relationships are expressed. Around that core sit <b>indexes</b> (fast lookup), <b>constraints</b> (rules such as NOT NULL or UNIQUE), <b>views</b> (saved queries) and <b>transactions</b>. Click an order to follow its keys.</p>
+  <div class="sheet">
+    <div class="two">
+      <div class="tbl"><table class="dbt" id="tOrders"></table></div>
+      <div class="stack" style="gap:10px"><div class="tbl"><table class="dbt" id="tCust"></table></div><div class="tbl"><table class="dbt" id="tProd"></table></div></div>
+    </div>
+    <pre class="code" id="joinSql"></pre>
+  </div>
+  <p class="small">SQL splits into sublanguages: DDL defines structure (CREATE, ALTER), DML changes data (INSERT, UPDATE, DELETE), DQL reads it (SELECT), DCL controls access (GRANT, REVOKE) and TCL manages transactions (COMMIT, ROLLBACK).</p>
+</section>
+
+<section id="acid" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>ACID transactions</h2></div>
+  <p>A transaction groups statements into one unit. <b>Atomicity</b>: all or nothing. <b>Consistency</b>: the database moves only between valid states, respecting constraints. <b>Isolation</b>: concurrent transactions do not see each other's half-done work. <b>Durability</b>: once committed, it survives a crash, thanks to the write-ahead log. Transfer $100 from Alice to Bob, and pull the plug halfway.</p>
+  <div class="sheet">
+    <div class="row"><div class="seg" role="group" aria-label="Transactions"><button data-tx="1" aria-pressed="true">Inside a transaction</button><button data-tx="0" aria-pressed="false">No transaction</button></div></div>
+    <div class="acct"><div class="stat"><span>Alice</span><b class="big blue" id="aBal"></b></div><div class="stat"><span>Bob</span><b class="big blue" id="bBal"></b></div><div class="stat"><span>Total money</span><b class="big" id="tBal"></b></div></div>
+    <div class="row"><button class="btn primary" id="txRun">Run transfer</button><button class="btn" id="txCrash">Run and crash after debit</button><button class="btn" id="txReset">Reset</button></div>
+    <div class="log" id="txLog" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="normal" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Normalization and its opposite</h2></div>
+  <p>Repeating a customer's email on every order wastes space and invites contradictions: change one copy and the others are wrong. <b>Normalization</b> moves repeated facts into their own table and links them by key. The opposite, <b>denormalization</b>, deliberately copies data back to avoid joins, because reads often outnumber writes 100:1 or more.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Schema"><button data-nm="d" aria-pressed="true">One wide table</button><button data-nm="n" aria-pressed="false">Normalized</button></div>
+    <div class="tbl" id="nTbl"></div>
+    <p id="nTxt" class="small" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="engine" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>What happens to a query</h2></div>
+  <p>An RDBMS is a pipeline. Step through a <code>SELECT</code> to see which component does what.</p>
+  <div class="sheet stepper" id="eStep">
+    <div class="svgbox"><svg id="eSvg" viewBox="0 0 660 260" role="img" aria-label="RDBMS components"></svg></div>
+  </div>
+</section>
+
+<section id="index" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Indexes and the B+ tree</h2></div>
+  <p>Without an index, finding one phone number means reading every row. A <b>B+ tree</b> index keeps keys sorted in a short, wide, balanced tree; leaves hold pointers to rows and are linked so range scans are cheap. Each level divides the search space by the fan-out, so depth grows with the logarithm of the table size.</p>
+  <div class="sheet">
+    <label class="rng"><span>Rows in table: <b id="rowsV"></b></span><input type="range" id="rows" min="3" max="10" value="6" step="0.5"></label>
+    <label class="rng"><span>Fan-out per node: <b id="foV"></b></span><input type="range" id="fo" min="4" max="500" value="100"></label>
+    <div class="bars" id="ixBars"></div>
+    <div class="svgbox"><svg id="btSvg" viewBox="0 0 640 170" role="img" aria-label="B+ tree levels"></svg></div>
+    <p class="small">The trade: every index costs storage and slows writes, since each insert must update it. Index the columns you filter and join on, not everything.</p>
+  </div>
+  <div class="cardgrid" id="tuneCards"></div>
+</section>
+
+<section id="partition" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Partitioning and sharding</h2></div>
+  <p><b>Vertical partitioning</b> splits a table by columns. <b>Horizontal partitioning</b> splits it by rows, either by <b>range</b> (A–F here, G–M there) or by <b>hash</b> of a key. Put partitions on different servers and you have <b>shards</b>. Insert some customers and compare.</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Scheme"><button data-pm="range" aria-pressed="true">Range by first letter</button><button data-pm="hash" aria-pressed="false">Hash of name</button></div><div class="row"><button class="btn" id="pAdd">Add 10 customers</button><button class="btn" id="pHot">Add 10 "S" names</button><button class="btn" id="pClr">Clear</button></div></div>
+    <div class="parts" id="parts"></div>
+    <p id="pTxt" class="small" aria-live="polite"></p>
+  </div>
+  <div class="callout"><b class="h">Sharding has a bill</b><span>Cross-shard joins and transactions get hard, a popular key can create a hot shard, and adding a server forces data to move. Consistent hashing (Chapter 3) keeps that movement small.</span></div>
+</section>
+
+<section id="replication" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Synchronous or asynchronous replication</h2></div>
+  <p>Replicas give read scale and disaster recovery. The question is when the leader says "committed". <b>Synchronous</b>: after the replica confirms, so a failover loses nothing but every write waits. <b>Asynchronous</b>: immediately, so writes are fast but a replica may lag, and if the leader dies, the tail of recent writes can vanish.</p>
+  <div class="sheet">
+    <div class="row between"><div class="seg" role="group" aria-label="Mode"><button data-rm="sync" aria-pressed="true">Synchronous</button><button data-rm="async" aria-pressed="false">Asynchronous</button></div><label class="rng" style="min-width:200px"><span>Replica round trip: <b id="rtV"></b></span><input type="range" id="rt" min="1" max="80" value="20"></label></div>
+    <div class="kpis" id="rK"></div>
+    <div class="row"><button class="btn primary" id="rW">Write 5 rows</button><button class="btn" id="rF">Leader dies now</button></div>
+    <div class="log" id="rLog" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="oss" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>MySQL and PostgreSQL</h2></div>
+  <p>The two open source workhorses. Both run on Amazon RDS and Aurora. Pick a dimension.</p>
+  <div class="sheet">
+    <div class="seg" id="ossSeg" role="group" aria-label="Dimension"></div>
+    <div class="cmp two" id="ossOut"></div>
+  </div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">10</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qs"></span></div><div class="quiz" id="qq"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>System Design on AWS: Building and Scaling Enterprise Solutions</i> by Jayanth Kumar and Mandeep Singh (O'Reilly, 2025). Explanations, examples, code snippets and drawings are original summaries, not copied from the book. AWS limits and prices change; check current AWS documentation before relying on a number.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch01-tradeoffs.html"><span>Previous · Chapter 1</span><b>System Design Trade-offs and Guidelines</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch03-nonrelational.html"><span>Next · Chapter 3</span><b>Nonrelational Stores</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('sda:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('sda:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle */
+(function(){const b=document.getElementById('themeBtn');if(!b)return;const r=document.documentElement;
+ const cur=store.get('theme',null);if(cur)r.setAttribute('data-theme',cur);
+ b.addEventListener('click',()=>{const dark=r.getAttribute('data-theme')?r.getAttribute('data-theme')==='dark':matchMedia('(prefers-color-scheme: dark)').matches;const n=dark?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n)});})();
+/* code blocks */
+
+
+const ST={file:['Hierarchy of folders and paths','Data lives in files inside directories; you address it by path, like a filing cabinet. Many machines can share one file system. Good for shared content, home directories, lift-and-shift apps. Scaling a deep hierarchy gets hard.','Amazon EFS'],
+ block:['Fixed-size blocks with addresses','A volume is a sequence of numbered blocks; the OS (or a database) builds its own structure on top. Lowest latency and fine-grained updates, attached to one server at a time. Ideal for databases and boot disks.','Amazon EBS'],
+ object:['Flat namespace of objects','Each object is data + metadata + a unique key in a flat bucket, reached over an HTTP API. Practically unlimited scale and very high durability, but you replace whole objects instead of editing bytes. Ideal for media, backups, data lakes.','Amazon S3']};
+function drawSt(k){const s=$('#stSvg');s.innerHTML='';
+ if(k==='file'){const nodes=[[320,25,'/'],[180,85,'/photos'],[460,85,'/docs'],[110,150,'beach.jpg'],[250,150,'cat.jpg'],[460,150,'cv.pdf']];[[0,1],[0,2],[1,3],[1,4],[2,5]].forEach(([a,b])=>s.appendChild(el('line',{x1:nodes[a][0],y1:nodes[a][1]+14,x2:nodes[b][0],y2:nodes[b][1]-14,class:'st-muted','stroke-width':1.5})));nodes.forEach(([x,y,t],i)=>{s.appendChild(el('rect',{x:x-55,y:y-14,width:110,height:28,rx:5,class:i<3?'s-bluesoft st-blue':'s-surface st-blue'}));s.appendChild(el('text',{x,y:y+5,'text-anchor':'middle','font-size':12,class:'s-ink t-mono'},t))});s.appendChild(el('text',{x:320,y:200,'text-anchor':'middle','font-size':12,class:'s-muted'},'read /photos/cat.jpg'))}
+ if(k==='block'){for(let i=0;i<24;i++){const x=30+(i%12)*50,y=50+Math.floor(i/12)*56;const used=[2,3,4,9,14,15,20].includes(i);s.appendChild(el('rect',{x,y,width:44,height:44,rx:3,fill:used?'var(--blue)':'var(--paper)',stroke:'var(--line)'}));s.appendChild(el('text',{x:x+22,y:y+27,'text-anchor':'middle','font-size':11,class:'t-mono',fill:used?'var(--surface)':'var(--muted)'},i))}s.appendChild(el('text',{x:320,y:190,'text-anchor':'middle','font-size':12,class:'s-muted'},'read blocks 2–4, 9 → the file system or DB knows they form one record'))}
+ if(k==='object'){[['photos/cat.jpg','image/jpeg · 2 MB'],['logs/2025-01-01.gz','owner=ops'],['backup/db.dump','class=Glacier']].forEach(([t,m],i)=>{const x=30+i*205;s.appendChild(el('rect',{x,y:40,width:190,height:110,rx:10,class:'s-surface st-blue','stroke-width':1.5}));s.appendChild(el('text',{x:x+12,y:66,'font-size':11,class:'s-muted'},'key'));s.appendChild(el('text',{x:x+12,y:84,'font-size':12,class:'s-ink t-mono'},t));s.appendChild(el('rect',{x:x+12,y:94,width:166,height:20,rx:3,class:'s-bluesoft'}));s.appendChild(el('text',{x:x+18,y:108,'font-size':10,class:'s-ink'},'data bytes'));s.appendChild(el('text',{x:x+12,y:136,'font-size':11,class:'s-muted'},m))});s.appendChild(el('text',{x:320,y:190,'text-anchor':'middle','font-size':12,class:'s-muted t-mono'},'GET https://bucket.s3.amazonaws.com/photos/cat.jpg'))}
+ const d=ST[k];$('#stTxt').innerHTML=`<span class="eyebrow">AWS: ${d[2]}</span><h3 class="blue">${d[0]}</h3><p>${d[1]}</p>`}
+seg('[data-st]',b=>drawSt(b.dataset.st));drawSt('file');
+
+/* tables */
+const cust=[[1,'Ana','ana@x.io'],[2,'Ben','ben@x.io'],[3,'Chi','chi@x.io']],prod=[[10,'Lamp',30],[11,'Desk',220],[12,'Mug',8]],ord=[[100,1,11,1],[101,3,12,4],[102,1,12,2],[103,2,10,1]];
+function tbl(id,head,rows){$(id).innerHTML='<tr>'+head.map(h=>`<th>${h}</th>`).join('')+'</tr>'+rows.map((r,i)=>`<tr data-i="${i}">${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')}
+tbl('#tOrders',['order_id PK','customer_id FK','product_id FK','qty'],ord);tbl('#tCust',['customer_id PK','name','email'],cust);tbl('#tProd',['product_id PK','name','price'],prod);
+function pickO(i){$$('#tOrders tr,#tCust tr,#tProd tr').forEach(r=>r.classList.remove('hl','hl2'));const o=ord[i];$(`#tOrders tr[data-i="${i}"]`).classList.add('hl');$(`#tCust tr[data-i="${cust.findIndex(c=>c[0]===o[1])}"]`).classList.add('hl2');$(`#tProd tr[data-i="${prod.findIndex(p=>p[0]===o[2])}"]`).classList.add('hl2');
+ const c=cust.find(c=>c[0]===o[1]),p=prod.find(p=>p[0]===o[2]);
+ $('#joinSql').innerHTML=`<span class="k">SELECT</span> c.name, p.name, o.qty * p.price <span class="k">AS</span> total\n<span class="k">FROM</span> orders o\n<span class="k">JOIN</span> customers c <span class="k">ON</span> c.customer_id = o.customer_id\n<span class="k">JOIN</span> products  p <span class="k">ON</span> p.product_id  = o.product_id\n<span class="k">WHERE</span> o.order_id = ${o[0]};   <span class="c">-- → ${c[1]}, ${p[1]}, ${o[3]*p[2]}</span>`}
+$$('#tOrders tr[data-i]').forEach(r=>{r.style.cursor='pointer';r.tabIndex=0;r.addEventListener('click',()=>pickO(+r.dataset.i));r.addEventListener('keydown',e=>{if(e.key==='Enter')pickO(+r.dataset.i)})});pickO(0);
+
+/* ACID */
+let A=500,B=200,tx=true,busy=false;
+function showBal(){$('#aBal').textContent='$'+A;$('#bBal').textContent='$'+B;const t=A+B;$('#tBal').textContent='$'+t;$('#tBal').className='big '+(t===700?'okc':'badc')}
+function log(m){$('#txLog').textContent+=m+'\n';$('#txLog').scrollTop=1e6}
+function run(crash){if(busy)return;busy=true;$('#txLog').textContent='';const snapA=A,snapB=B;const steps=[];
+ if(tx)steps.push(()=>log('BEGIN;  -- write-ahead log opens a record'));
+ steps.push(()=>{A-=100;showBal();log("UPDATE accounts SET bal = bal - 100 WHERE name='Alice';")});
+ if(crash){steps.push(()=>log('*** power loss ***'));steps.push(()=>{if(tx){A=snapA;B=snapB;showBal();log('Restart: recovery manager finds no COMMIT in the log → undo.\nAtomicity holds: no money vanished.')}else{log('Restart: the debit was already applied on its own.\n$100 has disappeared. Without a transaction there is nothing to undo.')}busy=false})}
+ else{steps.push(()=>{B+=100;showBal();log("UPDATE accounts SET bal = bal + 100 WHERE name='Bob';")});steps.push(()=>{log(tx?'COMMIT;  -- log flushed to disk: durable even if we crash now':'(each statement committed separately)');busy=false})}
+ steps.forEach((f,i)=>setTimeout(f,i*650))}
+seg('[data-tx]',b=>{tx=b.dataset.tx==='1'});$('#txRun').addEventListener('click',()=>run(false));$('#txCrash').addEventListener('click',()=>run(true));$('#txReset').addEventListener('click',()=>{A=500;B=200;showBal();$('#txLog').textContent='';busy=false});showBal();
+
+/* normalization */
+const wide=[[100,'Ana','ana@x.io','Lisbon','Desk'],[101,'Chi','chi@x.io','Osaka','Mug'],[102,'Ana','ana@x.io','Lisbon','Mug'],[103,'Ben','ben@x.io','Lagos','Lamp'],[104,'Ana','ana@x.io','Lisbon','Lamp']];
+function drawN(m){if(m==='d'){const seen={};$('#nTbl').innerHTML='<table class="dbt"><tr><th>order</th><th>name</th><th>email</th><th>city</th><th>item</th></tr>'+wide.map(r=>{const dup=seen[r[1]];seen[r[1]]=1;return `<tr>${r.map((c,i)=>`<td class="${dup&&i>0&&i<4?'dup':''}">${c}</td>`).join('')}</tr>`}).join('')+'</table>';$('#nTxt').textContent='Ana\'s details are stored three times (red). If she moves, every copy must change, or the data contradicts itself. One read, no join.'}
+ else{$('#nTbl').innerHTML='<div class="two"><table class="dbt"><tr><th>order</th><th>customer_id</th><th>item</th></tr>'+wide.map(r=>`<tr><td>${r[0]}</td><td>${{Ana:1,Ben:2,Chi:3}[r[1]]}</td><td>${r[4]}</td></tr>`).join('')+'</table><table class="dbt"><tr><th>customer_id</th><th>name</th><th>email</th><th>city</th></tr><tr><td>1</td><td>Ana</td><td>ana@x.io</td><td>Lisbon</td></tr><tr><td>2</td><td>Ben</td><td>ben@x.io</td><td>Lagos</td></tr><tr><td>3</td><td>Chi</td><td>chi@x.io</td><td>Osaka</td></tr></table></div>';$('#nTxt').textContent='Each fact is stored once. Updates touch one row. Reading an order with its customer now needs a join.'}}
+seg('[data-nm]',b=>drawN(b.dataset.nm));drawN('d');
+
+/* engine */
+const comps=[['client','SQL client',330,24,140],['parser','Query parser',190,84,150],['opt','Query optimizer',470,84,150],['exec','Execution engine',330,144,170],['buf','Buffer manager',90,214,140],['txm','Transaction mgr',250,214,140],['cc','Concurrency ctl',410,214,140],['rec','Recovery mgr',570,214,140]];
+const eS=$('#eSvg');const eG={};
+eS.appendChild(el('rect',{x:10,y:186,width:640,height:62,rx:10,fill:'none',stroke:'var(--line)','stroke-dasharray':'5 4'}));eS.appendChild(el('text',{x:20,y:200,'font-size':10,class:'s-muted'},'storage engine'));
+[['client','parser'],['parser','opt'],['opt','exec'],['exec','buf'],['exec','txm'],['exec','cc'],['exec','rec']].forEach(([a,b])=>{const A=comps.find(c=>c[0]===a),B=comps.find(c=>c[0]===b);eS.appendChild(el('line',{x1:A[2],y1:A[3]+14,x2:B[2],y2:B[3]-14,class:'st-line','stroke-width':1.5}))});
+comps.forEach(([id,t,x,y,w])=>{const g=el('g');g.appendChild(el('rect',{x:x-w/2,y:y-14,width:w,height:28,rx:6,fill:'var(--surface)',stroke:'var(--blue)','stroke-width':1.4}));g.appendChild(el('text',{x,y:y+5,'text-anchor':'middle','font-size':12,class:'s-ink'},t));eS.appendChild(g);eG[id]=g});
+const eSteps=[['client','The client sends <code>SELECT name FROM customers WHERE phone = \'555-0101\'</code>.'],['parser','The <b>parser</b> checks syntax and meaning (does the column exist?) and builds an abstract syntax tree.'],['opt','The <b>optimizer</b> uses statistics such as row counts and value spread to choose a plan: here, an index lookup beats a full scan.'],['exec','The <b>execution engine</b> runs the plan, calling into the storage engine.'],['buf','The <b>buffer manager</b> serves pages from memory when it can, and reads from disk only on a miss. A cache manager keeps hot results and plans.'],['txm','For writes, the <b>transaction manager</b> tracks BEGIN and COMMIT, and the <b>concurrency control</b> manager uses locks or versions so parallel transactions stay isolated.'],['rec','The <b>recovery manager</b> appends every change to a log before applying it, so after a crash it can redo committed work and undo the rest.']];
+$('#eStep').insertAdjacentHTML('beforeend',stepHTML());
+stepper('#eStep',eSteps.map(s=>s[1]),i=>{const on=new Set(eSteps.slice(0,i+1).map(s=>s[0]));if(i===5)on.add('cc');Object.entries(eG).forEach(([k,g])=>{g.style.opacity=on.has(k)?1:.25;g.querySelector('rect').setAttribute('stroke-width',k===eSteps[i][0]||(i===5&&k==='cc')?3:1.4)})});
+
+/* index */
+function drawIx(){const n=Math.round(Math.pow(10,+$('#rows').value)),f=+$('#fo').value;$('#rowsV').textContent=n.toLocaleString();$('#foV').textContent=f;
+ const depth=Math.max(1,Math.ceil(Math.log(n)/Math.log(f)));const scan=n/2;
+ bars('#ixBars',[{l:'Full scan (avg rows read)',v:Math.log10(scan+1),c:'bad',txt:Math.round(scan).toLocaleString()},{l:'B+ tree (pages read)',v:Math.log10(depth+1),c:'ok',txt:depth}],10);
+ const s=$('#btSvg');s.innerHTML='';for(let d=0;d<Math.min(depth,4);d++){const cnt=Math.min(Math.pow(3,d),9);for(let k=0;k<cnt;k++){const w=Math.min(120,560/cnt-8),x=320-(cnt*(w+8))/2+k*(w+8),y=12+d*40;s.appendChild(el('rect',{x,y,width:w,height:26,rx:4,fill:k===Math.floor(cnt/2)?'var(--blue-soft)':'var(--paper)',stroke:k===Math.floor(cnt/2)?'var(--blue)':'var(--line)'}));}
+  s.appendChild(el('text',{x:10,y:30+d*40,'font-size':10,class:'s-muted'},d===depth-1?'leaves':'level '+(d+1)))}
+ if(depth>4)s.appendChild(el('text',{x:320,y:175,'text-anchor':'middle','font-size':11,class:'s-muted'},'… '+depth+' levels'));
+ if(depth<=4){const y=12+(depth-1)*40+26;s.appendChild(el('line',{x1:40,y1:y+12,x2:600,y2:y+12,stroke:'var(--blue)','stroke-dasharray':'3 3'}));s.appendChild(el('text',{x:320,y:y+28,'text-anchor':'middle','font-size':10,class:'s-muted'},'leaves linked left-to-right for range scans'))}}
+['rows','fo'].forEach(i=>$('#'+i).addEventListener('input',drawIx));drawIx();
+cards('#tuneCards',[{t:'Profile first',d:'Benchmark and read the execution plan before changing anything. Find the slow query, then fix it.'},{t:'SQL tuning',d:'Select only needed columns, avoid functions on indexed columns, batch big updates so they do not lock tables for long.'},{t:'Denormalize hot reads',d:'Precompute or copy data to skip expensive joins on read-heavy paths, accepting extra work on writes.'},{t:'Query federation',d:'Split one huge query into smaller ones run on different servers, then combine results, often with data split by function.'}]);
+
+/* partitioning */
+let pm='range',keys=[];const NM=['Ana','Ben','Chi','Dev','Eli','Fay','Gus','Hal','Ivy','Jon','Kai','Lea','Max','Nia','Oli','Pia','Quin','Rae','Sam','Tia','Uma','Vic','Wes','Xia','Yan','Zoe','Sara','Sol','Sue','Sky','Sid','Sia'];
+function hash(s){let h=7;for(const c of s)h=(h*31+c.charCodeAt(0))>>>0;return h}
+function partOf(k){if(pm==='hash')return hash(k)%4;const c=k[0];return c<='F'?0:c<='M'?1:c<='S'?2:3}
+function drawP(){const P=[[],[],[],[]];keys.forEach(k=>P[partOf(k)].push(k));const lab=pm==='range'?['A–F','G–M','N–S','T–Z']:['hash%4=0','=1','=2','=3'];
+ $('#parts').innerHTML=P.map((p,i)=>`<div><b>Shard ${i+1} · ${lab[i]} · ${p.length}</b><div class="k">${p.map(k=>`<i>${k}</i>`).join('')}</div></div>`).join('');
+ const mx=Math.max(...P.map(p=>p.length)),avg=keys.length/4;$('#pTxt').textContent=keys.length?`Busiest shard holds ${mx} of ${keys.length} (${avg?Math.round(mx/avg*100):0}% of an even share). `+(pm==='range'?'Range keeps neighbours together, great for "all names from G to K", but skewed keys pile onto one shard.':'Hashing spreads keys evenly, but a range query must now ask every shard.'):'Empty. Add some customers.'}
+seg('[data-pm]',b=>{pm=b.dataset.pm;drawP()});$('#pAdd').addEventListener('click',()=>{for(let i=0;i<10;i++)keys.push(NM[Math.floor(Math.random()*26)]+(keys.length%9));drawP()});$('#pHot').addEventListener('click',()=>{for(let i=0;i<10;i++)keys.push(['Sara','Sol','Sue','Sky','Sid','Sia','Sam'][i%7]+(keys.length%9));drawP()});$('#pClr').addEventListener('click',()=>{keys=[];drawP()});drawP();
+
+/* replication */
+let rm='sync',acked=[],repl=[],rTimers=[];
+function rK(){const rt=+$('#rt').value;$('#rtV').textContent=rt+' ms';const lat=rm==='sync'?2+rt:2;$('#rK').innerHTML=`<div class="stat"><span class="big blue" style="font-size:1.5rem">${lat} ms</span><span>write latency</span></div><div class="stat"><span class="big ${rm==='sync'?'okc':'badc'}" style="font-size:1.5rem">${rm==='sync'?'0':'up to lag'}</span><span>data lost on failover</span></div>`}
+function rlog(m){$('#rLog').textContent+=m+'\n';$('#rLog').scrollTop=1e6}
+$('#rW').addEventListener('click',()=>{rTimers.forEach(clearTimeout);$('#rLog').textContent='';acked=[];repl=[];const rt=+$('#rt').value*12;
+ for(let i=1;i<=5;i++){const t=i*250;if(rm==='sync'){rTimers.push(setTimeout(()=>{repl.push(i);acked.push(i);rlog(`row ${i}: replica confirmed → ack client`)},t+rt))}else{rTimers.push(setTimeout(()=>{acked.push(i);rlog(`row ${i}: ack client immediately`)},t));rTimers.push(setTimeout(()=>{repl.push(i);rlog(`        row ${i} reaches replica`)},t+rt+400))}}});
+$('#rF').addEventListener('click',()=>{rTimers.forEach(clearTimeout);const lost=acked.filter(x=>!repl.includes(x));rlog(`\n*** leader fails. Replica promoted with ${repl.length} rows. ${lost.length?'LOST acknowledged rows: '+lost.join(', '):'No acknowledged write lost.'}`)});
+seg('[data-rm]',b=>{rm=b.dataset.rm;rK()});$('#rt').addEventListener('input',rK);rK();
+
+/* mysql vs pg */
+const OSS=[['Model','Classic relational database, released 1995. Lean feature set aimed at speed and simplicity.','Object-relational database, released 1996. Adds custom types, inheritance and a very rich SQL dialect.'],
+ ['JSON','JSON column type stored in an internal binary format; index it indirectly through a generated column.','Both json (exact text) and jsonb (decomposed binary, slower to write, faster to query, directly indexable).'],
+ ['Indexes','Primary, unique, single and multicolumn (up to 16 columns), plus spatial.','Same basics, multicolumn up to 32, plus expression indexes and partial indexes on a subset of rows.'],
+ ['Replication','Asynchronous primary-to-secondary replication, of all databases, some, or individual tables.','Supports synchronous replication so a commit is safe on two nodes.'],
+ ['Connections','Thread per connection: cheap, handles many connections well.','Process per connection: heavier; large connection counts usually need a pooler.'],
+ ['Speed','Very fast for highly concurrent, read-mostly workloads.','Parallel query plans and strong concurrent-write support; good for complex queries and mixed OLTP/analytics.']];
+$('#ossSeg').innerHTML=OSS.map((o,i)=>`<button data-o="${i}" aria-pressed="${i===0}">${o[0]}</button>`).join('');
+function showO(i){$('#ossOut').innerHTML=`<div class="detail"><h3 class="blue">MySQL</h3><p>${OSS[i][1]}</p></div><div class="detail" style="border-left-color:var(--d2)"><h3 style="color:var(--d2)">PostgreSQL</h3><p>${OSS[i][2]}</p></div>`}
+seg('#ossSeg button',b=>showO(+b.dataset.o));showO(0);
+
+quiz('#qq','#qs',[
+ {q:'Which storage type suits a database\'s data volume attached to one server?',o:['File','Block','Object'],a:1,why:'Block storage gives low-latency, fine-grained reads and writes; on AWS that is EBS.'},
+ {q:'A crash happens between the debit and the credit of a transfer. Which ACID property ensures neither applies?',o:['Atomicity','Isolation','Durability'],a:0,why:'All or nothing: the recovery manager undoes the incomplete transaction.'},
+ {q:'Why can a B+ tree find one row among a billion in a handful of reads?',o:['It is stored in RAM','High fan-out makes the tree very shallow','It hashes keys'],a:1,why:'With fan-out in the hundreds, three or four levels cover billions of keys.'},
+ {q:'Which scheme makes "all customers G to K" a single-shard query?',o:['Hash partitioning','Range partitioning','Vertical partitioning'],a:1,why:'Range partitioning keeps adjacent keys together.'},
+ {q:'Asynchronous replication risks…',o:['Slower writes','Losing recent acknowledged writes on failover','Write conflicts'],a:1,why:'The leader acknowledges before the replica has the data.'}]);
+
+})();
+</script>
+</body>
+</html>

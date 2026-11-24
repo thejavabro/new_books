@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Performance and Scalability</title>
+<meta name="description" content="Threads are meant to make things faster. Whether they do depends on how much of the work must run one-at-a-time, and in Java that serial part is usually a lock.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Java Concurrency in Practice companion. A lab-notebook reading column on blueprint grid paper.
+   Blue ink = threads and structure, orange pencil = shared state and locks, green = safe, red = broken.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code */
+pre.code{margin:0;background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--blue);border-radius:0 8px 8px 0;padding:12px 14px;overflow-x:auto;font-family:var(--mono);font-size:.82rem;line-height:1.55;tab-size:2;max-width:100%}
+pre.code.bad{border-left-color:var(--bad)} pre.code.good{border-left-color:var(--ok)}
+pre.code .k{color:var(--d5);font-weight:600} pre.code .c{color:var(--muted);font-style:italic} pre.code .s{color:var(--d2)} pre.code .a{color:var(--pencil)} pre.code .n{color:var(--d3)}
+pre.code .hl{background:var(--mid-soft);border-radius:3px;box-shadow:0 0 0 2px var(--mid-soft)}
+code{font-family:var(--mono);font-size:.88em;background:var(--blue-soft);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+pre code{background:none;padding:0;font-size:inherit;overflow-wrap:normal}
+.codecap{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;display:flex;gap:8px;align-items:center}
+.codecap b{color:var(--ok)} .codecap b.x{color:var(--bad)}
+.rule{border:1.5px solid var(--blue);border-radius:10px;padding:12px 16px;background:var(--blue-soft);font-weight:600;max-width:66ch}
+.rule::before{content:"Rule of thumb";display:block;font-family:var(--mono);font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:var(--blue);font-weight:600;margin-bottom:2px}
+/* thread lanes */
+.lanes{display:flex;flex-direction:column;gap:8px}
+.lane{display:grid;grid-template-columns:5.5rem minmax(0,1fr);gap:10px;align-items:center}
+.lane>b{font-family:var(--mono);font-size:.8rem}
+.lane .ops{display:flex;flex-wrap:wrap;gap:6px;min-height:34px;align-items:center}
+.op{font-family:var(--mono);font-size:.78rem;padding:4px 8px;border-radius:6px;border:1px solid var(--line);background:var(--paper)}
+.op.on{border-color:var(--blue);background:var(--blue-soft)}
+.op.badop{border-color:var(--bad);background:var(--bad-soft);color:var(--bad)}
+.op.okop{border-color:var(--ok);background:var(--ok-soft);color:var(--ok)}
+.memcell{display:inline-flex;flex-direction:column;align-items:center;gap:2px;border:1.5px solid var(--pencil);border-radius:8px;padding:6px 14px;background:var(--pencil-soft);font-family:var(--mono)}
+.memcell span{font-size:.7rem;color:var(--muted)}
+.memcell b{font-size:1.3rem}
+.themebtn{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted)}
+.themebtn:hover{border-color:var(--blue);color:var(--blue)}
+.sec-head h2,h1{min-width:0;overflow-wrap:break-word}
+
+/* page */
+
+.chart text{font-size:11px}
+.tech{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+@media (max-width:620px){.tech{grid-template-columns:1fr 1fr}}
+.tech button{border:1.5px solid var(--line);background:var(--surface);border-radius:10px;padding:10px;text-align:left;font-size:.88rem;display:flex;flex-direction:column;gap:2px}
+.tech button b{font-family:var(--display)}
+.tech button[aria-pressed="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Java Concurrency in Practice · visual companion</a><span class="tag">Part III · Chapter 11 of 16</span><button class="themebtn" type="button">Theme: auto</button></div>
+  <h1>Performance and Scalability</h1>
+  <p class="lede">Threads are meant to make things faster. Whether they do depends on how much of the work must run one-at-a-time, and in Java that serial part is usually a lock.</p>
+  <nav class="toc" aria-label="Sections"><a href="#thinking">Performance vs scalability</a><a href="#amdahl">Amdahl's law</a><a href="#costs">Costs of threads</a><a href="#contention">Reducing contention</a><a href="#cpu">CPU utilization</a><a href="#pooling">Object pooling</a><a href="#maps">Map comparison</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="thinking" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Performance is two questions</h2></div>
+  <p>Threads are meant to make programs faster by using more of the machine. But performance has two sides. <b>How fast</b> is service time and latency for one unit of work. <b>How much</b> is throughput and capacity. <b>Scalability</b> is how throughput grows as you add resources like CPUs. For servers, how much usually matters more than how fast, and the two pull in different directions: a design tuned for single-thread speed (doing everything in one pass) often can't be split up, while a scalable design pays coordination overhead that makes one request slower.</p>
+  <p>Every performance decision is a trade-off, usually against complexity and safety. The book's advice before optimizing: know what "faster" means for you, under what conditions, with measurements, and whether you're trading away safety for it.</p>
+  <div class="rule">Make it right, then make it fast, and only if your measurements say you must. Measure, don't guess.</div>
+</section>
+
+<section id="amdahl" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Amdahl's law</h2></div>
+  <p>Some fraction <b>F</b> of almost every computation must run serially (taking a task off a shared queue, combining results). Amdahl's law caps the speedup on <b>N</b> processors:</p>
+  <div class="callout blue"><b class="h">Speedup ≤ 1 / (F + (1 − F) / N)</b><span>As N grows without limit, speedup approaches 1/F. Ten percent serial means at most 10×, however many CPUs you buy.</span></div>
+  <div class="sheet">
+    <div class="two">
+      <label class="rng"><span>Serial fraction F: <b id="fV"></b>%</span><input type="range" id="f" min="0" max="50" step="0.5" value="10"></label>
+      <label class="rng"><span>Processors N: <b id="nV"></b></span><input type="range" id="n" min="1" max="7" value="5"></label>
+    </div>
+    <div class="row"><div class="stat"><span>max speedup at N</span><b class="big blue" id="spV"></b></div><div class="stat"><span>utilization (speedup / N)</span><b class="big pencil" id="utV"></b></div><div class="stat"><span>ceiling as N → ∞</span><b class="big" id="ceil"></b></div></div>
+    <div class="svgbox"><svg id="aSvg" class="chart" viewBox="0 0 640 260" role="img" aria-label="Speedup versus number of processors"></svg></div>
+  </div>
+  <p>Serialization hides in unexpected places. The book compares two thread-safe queues as worker threads take tasks from them: a <code>synchronizedList</code>-wrapped <code>LinkedList</code> flattens out quickly, while <code>ConcurrentLinkedQueue</code>, which serializes only the pointer updates, keeps scaling. Same job, different serial fraction.</p>
+</section>
+
+<section id="costs" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>What threads cost</h2></div>
+  <div class="cardgrid" id="costCards"></div>
+  <p>Contention is what hurts. <b>Uncontended</b> synchronization is cheap and getting cheaper: the JVM can remove locks on objects that never escape a thread (escape analysis), merge adjacent locks (lock coarsening), and skip locks it can prove are thread-local. Don't worry much about uncontended synchronization. Worry about <b>contended</b> locks, which serialize threads and make them block.</p>
+  <div class="sheet"><div class="row between"><h3>Can the JVM optimize this lock away?</h3><span class="score" id="eScore"></span></div><div class="quiz" id="eQuiz"></div></div>
+</section>
+
+<section id="contention" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Reducing lock contention</h2></div>
+  <p>The main threat to scalability in concurrent Java code is the exclusive resource lock. Contention depends on two things: <b>how often</b> the lock is requested and <b>how long</b> it is held. There are three ways to reduce it: hold locks for less time, request them less often, or replace exclusive locks with something that allows more concurrency. Pick a technique and see how throughput scales in a simple model.</p>
+  <div class="sheet">
+    <div class="tech" id="tech"></div>
+    <pre class="code" id="techCode"></pre>
+    <div class="svgbox"><svg id="cSvg" class="chart" viewBox="0 0 640 230" role="img" aria-label="Throughput versus threads"></svg></div>
+    <p id="techTxt" aria-live="polite"></p>
+  </div>
+  <div class="callout"><b class="h">Avoid hot fields</b><span>A cached element count looks like a nice optimization for a single-threaded map. In a concurrent one, every insert and remove must update it, making it a <b>hot field</b> that serializes everything again. <code>ConcurrentHashMap</code> instead keeps a count per stripe and adds them up when asked.</span></div>
+</section>
+
+<section id="cpu" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Reading CPU utilization</h2></div>
+  <p>Testing for scalability usually means trying to keep the processors busy. If they are not fully used on a multiprocessor under load, find out why. Tools like <code>vmstat</code> and <code>mpstat</code> (or perfmon on Windows) show it; asymmetric utilization (some CPUs hot, others idle) is a hint that work isn't being spread. The usual suspects:</p>
+  <div class="sheet"><div class="row between"><h3>Diagnose the symptom</h3><span class="score" id="dScore"></span></div><div class="quiz" id="dQuiz"></div></div>
+</section>
+
+<section id="pooling" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Just say no to object pooling</h2></div>
+  <p>In early JVMs, allocation was slow, so people pooled objects. Today, allocation is extremely fast (roughly ten instructions on the common path) and garbage collection of short-lived objects is cheap. In concurrent code, pooling is worse than useless: the pool itself needs synchronization, which creates contention that's far more expensive than an allocation. Allocating is usually cheaper than synchronizing. Only very expensive objects (threads, connections) are worth pooling.</p>
+</section>
+
+<section id="maps" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Example: comparing map performance</h2></div>
+  <p>The book benchmarks a read-mostly workload: single-threaded, <code>ConcurrentHashMap</code> and a <code>synchronizedMap</code> perform about the same. As soon as several threads compete, the synchronized map's throughput collapses (each operation takes the single lock, and contended locks cost context switches), while the concurrent map's throughput keeps rising with the thread count. The illustrative shape:</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="mapSvg" class="chart" viewBox="0 0 640 220" role="img" aria-label="Throughput of two maps versus threads"></svg></div>
+    <p class="small">Shape of the result, not the book's measured numbers.</p>
+  </div>
+  <p><b>Reducing context switches.</b> Many tasks block briefly for I/O or locks, and each block costs a context switch. Moving the blocking into one dedicated thread helps: a logger that writes to disk from every request thread causes contention on the output stream; a logger that queues messages for one background writer keeps request threads running. Fewer switches, shorter service time.</p>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Java Concurrency in Practice</i> by Brian Goetz with Tim Peierls, Joshua Bloch, Joseph Bowbeer, David Holmes and Doug Lea (Addison-Wesley, 2006). Explanations, code snippets and drawings are original summaries, not copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch10-avoiding-liveness-hazards.html"><span>Previous · Chapter 10</span><b>Avoiding Liveness Hazards</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch12-testing-concurrent-programs.html"><span>Next · Chapter 12</span><b>Testing Concurrent Programs</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('jcip:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('jcip:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: auto -> light -> dark */
+(function(){const r=document.documentElement;let m=store.get('theme','auto');
+  function ap(){if(m==='auto')r.removeAttribute('data-theme');else r.setAttribute('data-theme',m);$$('.themebtn').forEach(b=>b.textContent='Theme: '+m)}
+  ap();$$('.themebtn').forEach(b=>b.addEventListener('click',()=>{m=m==='auto'?'light':m==='light'?'dark':'auto';store.set('theme',m);ap()}))})();
+/* tiny Java highlighter for <pre class="code">. Lines starting with "!!" are highlighted. */
+(function(){const KW='abstract|boolean|break|case|catch|class|char|continue|default|do|double|else|enum|extends|final|finally|for|if|implements|import|instanceof|int|interface|long|new|null|private|protected|public|return|static|super|switch|synchronized|this|throw|throws|true|false|try|var|void|volatile|while|byte|short|float';
+  const re=new RegExp('(//[^\\n]*|/\\*[\\s\\S]*?\\*/)|("(?:[^"\\\\\\n]|\\\\.)*"|\'(?:[^\'\\\\\\n]|\\\\.)*\')|(@[A-Za-z]+)|\\b('+KW+')\\b|\\b(\\d[\\d_]*L?)\\b','g');
+  const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  window.hlJava=function(p){const src=p.textContent.replace(/^\n/,'').replace(/\s+$/,'');
+    const lines=src.split('\n').map(l=>{const mark=l.startsWith('!!');if(mark)l=l.slice(2);
+      let out='',last=0;l.replace(re,(m,c,s,a,k,n,off)=>{out+=esc(l.slice(last,off));const cls=c?'c':s?'s':a?'a':k?'k':'n';out+=`<span class="${cls}">${esc(m)}</span>`;last=off+m.length;return m});out+=esc(l.slice(last));
+      return mark?`<span class="hl">${out}</span>`:out});
+    p.innerHTML='<code>'+lines.join('\n')+'</code>'};
+  $$('pre.code').forEach(hlJava)})();
+
+
+function axes(s,W,H,L,B,xmax,ymax,xl,yl,xticks,yticks){s.appendChild(el('line',{x1:L,y1:H-B,x2:W-10,y2:H-B,stroke:'var(--muted)'}));s.appendChild(el('line',{x1:L,y1:10,x2:L,y2:H-B,stroke:'var(--muted)'}));
+  xticks.forEach(t=>{const x=L+(W-10-L)*t[0]/xmax;s.appendChild(el('text',{x,y:H-B+15,'text-anchor':'middle',class:'s-muted'},t[1]))});
+  yticks.forEach(v=>{const y=H-B-(H-B-10)*v/ymax;s.appendChild(el('line',{x1:L,y1:y,x2:W-10,y2:y,stroke:'var(--grid)'}));s.appendChild(el('text',{x:L-6,y:y+4,'text-anchor':'end',class:'s-muted'},v))});
+  s.appendChild(el('text',{x:(L+W)/2,y:H-2,'text-anchor':'middle',class:'s-muted'},xl));s.appendChild(el('text',{x:L+8,y:24,class:'s-muted'},yl))}
+function amd(F,N){return 1/(F+(1-F)/N)}
+function drawA(){const F=+$('#f').value/100,N=2**(+$('#n').value-1);$('#fV').textContent=(F*100).toFixed(1);$('#nV').textContent=N;
+  const sp=amd(F,N);$('#spV').textContent=sp.toFixed(1)+'×';$('#utV').textContent=Math.round(sp/N*100)+'%';$('#ceil').textContent=F?(1/F).toFixed(0)+'×':'∞';
+  const s=$('#aSvg');s.innerHTML='';const W=640,H=260,L=44,B=30,xm=6,ym=64;
+  const lx=n=>L+(W-10-L)*Math.log2(n)/xm,ly=v=>H-B-(H-B-10)*Math.min(v,ym)/ym;
+  axes(s,W,H,L,B,xm,ym,'processors (log scale)','speedup',[1,2,4,8,16,32,64].map(n=>[Math.log2(n),n]),[0,16,32,48,64]);
+  s.appendChild(el('path',{d:Array.from({length:61},(_,i)=>{const n=2**(i/10);return(i?'L':'M')+lx(n)+','+ly(n)}).join(''),stroke:'var(--muted)','stroke-dasharray':'4 4',fill:'none'}));
+  [[0.01,'var(--d2)'],[0.05,'var(--d3)'],[0.25,'var(--d4)']].forEach(([f,c])=>s.appendChild(el('path',{d:Array.from({length:61},(_,i)=>{const n=2**(i/10);return(i?'L':'M')+lx(n)+','+ly(amd(f,n))}).join(''),stroke:c,fill:'none','stroke-width':1.2,opacity:.55})));
+  s.appendChild(el('path',{d:Array.from({length:61},(_,i)=>{const n=2**(i/10);return(i?'L':'M')+lx(n)+','+ly(amd(F,n))}).join(''),stroke:'var(--blue)',fill:'none','stroke-width':3}));
+  s.appendChild(el('circle',{cx:lx(N),cy:ly(sp),r:6,fill:'var(--pencil)'}));
+  s.appendChild(el('text',{x:lx(40),y:ly(40)-6,class:'s-muted','text-anchor':'end'},'ideal'));
+  [['1%','var(--d2)',0.01],['5%','var(--d3)',0.05],['25%','var(--d4)',0.25]].forEach(([t,c,f])=>s.appendChild(el('text',{x:W-14,y:ly(amd(f,64))-4,'text-anchor':'end',fill:c,'font-weight':700},t)))}
+['f','n'].forEach(id=>$('#'+id).addEventListener('input',drawA));drawA();
+
+cards('#costCards',[
+ {t:'Context switching',d:'When more threads are runnable than CPUs, the OS preempts one to run another. That costs scheduler time, and the new thread starts with cold caches. Threads that block often (on I/O or locks) switch more and lose more.',c:'blue'},
+ {t:'Memory synchronization',d:'synchronized and volatile use memory barriers that flush or invalidate caches and stop the compiler and CPU reordering instructions. The cost is mostly paid by contended accesses.',c:'pencil'},
+ {t:'Blocking',d:'A contended lock makes the loser either spin (keep trying) or be suspended by the OS. Suspension means two extra context switches plus OS work. The JVM picks based on past behaviour.',c:'bad'}]);
+
+quiz('#eQuiz','#eScore',[
+ {q:'synchronized (new Object()) { ... }',a:0,why:'No other thread can ever see that object, so the lock is useless and can be removed.'},
+ {q:'A local Vector that never escapes, used with add then toString',a:0,why:'Escape analysis can eliminate all four lock acquisitions.'},
+ {q:'A static synchronized counter hammered by 32 threads',a:1,why:'Shared and contended: the lock is real.'},
+ {q:'Several adjacent synchronized blocks on the same lock',a:0,why:'Lock coarsening can merge them into one acquisition.'}],['Likely','No']);
+
+const TECH=[['Coarse lock','One lock, held during slow work',`synchronized void userLoggedIn(String user, String loc) {
+  String key = "users." + user + ".location";   // no shared state
+  attributes.put(key, loc);
+}`,0.2,1,'The whole method holds the lock, including work that touches no shared state. Throughput stops climbing early.'],
+ ['Narrow scope','Get in, get out',`void userLoggedIn(String user, String loc) {
+  String key = "users." + user + ".location";
+  synchronized (this) { attributes.put(key, loc); }
+}`,0.06,1,'Hold the lock only around the shared access. Less time held means less serial work. (Or delegate to a thread-safe map entirely.)'],
+ ['Lock splitting','Independent state, separate locks',`// users and queries are unrelated: one lock each
+public void addUser(String u)  { synchronized (users)   { users.add(u); } }
+public void addQuery(String q) { synchronized (queries) { queries.add(q); } }`,0.06,2,'Two independent sets each get their own lock, halving the request rate on each. Works best on locks with moderate contention.'],
+ ['Lock striping','N locks over N slices',`private final Object[] locks = new Object[16];
+Object get(Object key) {
+  int h = hash(key);
+  synchronized (locks[h % 16]) { ... bucket h ... }
+}`,0.06,16,'Split one lock over a variable-sized set of objects, as ConcurrentHashMap does with 16 stripes. Operations that need the whole map (resizing, clear) must take all of them.']];
+$('#tech').innerHTML=TECH.map((t,i)=>`<button data-i="${i}" aria-pressed="${i===0}"><b>${t[0]}</b><span class="small">${t[1]}</span></button>`).join('');
+function drawTech(i){const t=TECH[i],c=$('#techCode');c.textContent=t[2];hlJava(c);$('#techTxt').textContent=t[5];
+  const s=$('#cSvg');s.innerHTML='';const W=640,H=230,L=44,B=30;axes(s,W,H,L,B,32,20,'threads','relative throughput',[1,8,16,24,32].map(n=>[n,n]),[0,5,10,15,20]);
+  const x=n=>L+(W-10-L)*n/32,y=v=>H-B-(H-B-10)*Math.min(v,20)/20;
+  const curve=(F,k)=>Array.from({length:32},(_,j)=>{const n=j+1;return n/(1+F*(n-1)/k)});
+  TECH.forEach((tt,k)=>{if(k===i)return;s.appendChild(el('path',{d:curve(tt[3],tt[4]).map((v,j)=>(j?'L':'M')+x(j+1)+','+y(v)).join(''),stroke:'var(--line)',fill:'none','stroke-width':1.5}))});
+  s.appendChild(el('path',{d:curve(t[3],t[4]).map((v,j)=>(j?'L':'M')+x(j+1)+','+y(v)).join(''),stroke:'var(--blue)',fill:'none','stroke-width':3}));
+  const end=curve(t[3],t[4])[31];s.appendChild(el('text',{x:x(32)-4,y:y(end)-8,'text-anchor':'end',fill:'var(--blue)','font-weight':700},end.toFixed(1)+'× at 32 threads'))}
+seg('#tech button',b=>drawTech(+b.dataset.i));drawTech(0);
+
+quiz('#dQuiz','#dScore',[
+ {q:'The test client itself is maxed out and can\'t generate enough requests',a:0,why:'Insufficient load: add more client machines.'},
+ {q:'Threads mostly wait on disk or network',a:1,why:'I/O-bound: check with iostat or network monitoring.'},
+ {q:'Throughput stuck while a database or web service is slow',a:2,why:'Externally bound: profile the dependency.'},
+ {q:'Thread dumps show many threads "waiting to lock" the same monitor',a:3,why:'Lock contention: a hot lock serializes the threads.'}],['Too little load','I/O-bound','External','Contention']);
+
+(function(){const s=$('#mapSvg');const W=640,H=220,L=44,B=30;axes(s,W,H,L,B,64,10,'threads','throughput',[1,8,16,32,64].map(n=>[n,n]),[0,2,4,6,8,10]);
+  const x=n=>L+(W-10-L)*n/64,y=v=>H-B-(H-B-10)*v/10;const N=Array.from({length:64},(_,i)=>i+1);
+  const chm=n=>Math.min(9.5,1+Math.log2(n)*1.4),sync=n=>n===1?1:Math.max(0.25,1.25/Math.sqrt(n-0.5));
+  s.appendChild(el('path',{d:N.map((n,i)=>(i?'L':'M')+x(n)+','+y(chm(n))).join(''),stroke:'var(--ok)',fill:'none','stroke-width':3}));
+  s.appendChild(el('path',{d:N.map((n,i)=>(i?'L':'M')+x(n)+','+y(sync(n))).join(''),stroke:'var(--bad)',fill:'none','stroke-width':3}));
+  s.appendChild(el('text',{x:x(60),y:y(chm(60))-8,'text-anchor':'end',fill:'var(--ok)','font-weight':700},'ConcurrentHashMap'));
+  s.appendChild(el('text',{x:x(60),y:y(sync(60))-8,'text-anchor':'end',fill:'var(--bad)','font-weight':700},'synchronizedMap'))})();
+
+quiz('#qQuiz','#qScore',[
+ {q:'With 20% serial work, the best possible speedup on unlimited CPUs is…',o:['5×','20×'],a:0,why:'1 / 0.2 = 5.'},
+ {q:'Scalability means…',o:['single-request latency','throughput growing with resources'],a:1,why:'"How much", not "how fast".'},
+ {q:'Which costs more?',o:['An uncontended lock','A contended lock'],a:1,why:'Contention causes blocking and context switches.'},
+ {q:'A shared counter updated by every operation in a concurrent map is a…',o:['hot field','striped lock'],a:0,why:'It re-serializes the operations.'},
+ {q:'Pool objects to avoid allocation in concurrent code?',o:['Usually yes','Usually no'],a:1,why:'Allocation is cheap; pool synchronization isn\'t.'}]);
+
+})();
+</script>
+</body>
+</html>

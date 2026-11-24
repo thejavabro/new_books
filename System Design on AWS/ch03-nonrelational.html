@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Nonrelational Stores</title>
+<meta name="description" content="When a fixed schema or a single machine becomes the bottleneck, NoSQL stores trade some guarantees for flexibility and scale. Four families, each shaped by its data model.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the System Design on AWS companion. Layout: a drafting-table reading column on blueprint grid paper.
+   Blue ink = structure and data paths, orange pencil = clients and requests, green = healthy, red = failure.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:minmax(14rem,1fr) minmax(0,auto);gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* additions */
+button.tag.theme{cursor:pointer;margin-left:auto}
+button.tag.theme:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;max-width:100%;white-space:pre}
+pre.code .c{color:var(--muted)} pre.code .k{color:var(--blue);font-weight:600} pre.code .s{color:var(--ok)}
+code{font-family:var(--mono);font-size:.88em;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.log{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:5em;max-height:14em;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.pill{display:inline-block;font-family:var(--mono);font-size:.75rem;padding:2px 8px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.pill.ok{border-color:var(--ok);color:var(--ok);background:var(--ok-soft)} .pill.bad{border-color:var(--bad);color:var(--bad);background:var(--bad-soft)}
+input[type=number],input[type=text]{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%;min-width:0}
+.sheet>.seg,.stack>.seg{align-self:flex-start}
+
+/* page */
+
+.kv{border-collapse:collapse;width:100%;font-size:.85rem}
+.kv th,.kv td{border:1px solid var(--line);padding:5px 8px;text-align:left}
+.kv th{background:var(--paper);font-family:var(--mono);font-size:.72rem}
+.kv tr.hit td{background:var(--ok-soft)}
+.kv td.pk{color:var(--blue);font-family:var(--mono)} .kv td.sk{color:var(--pencil);font-family:var(--mono)}
+.qz{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+@media (max-width:600px){.qz{grid-template-columns:1fr}}
+.flowq{display:flex;flex-direction:column;gap:10px}
+.flowq .qb{border:1px solid var(--line);background:var(--paper);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">System Design on AWS · visual companion</a><span class="tag">Part I · Chapter 3 of 21</span><button class="tag theme" type="button" id="themeBtn" aria-label="Toggle light or dark theme">Theme</button></div>
+  <h1>Nonrelational Stores</h1>
+  <p class="lede">When a fixed schema or a single machine becomes the bottleneck, NoSQL stores trade some guarantees for flexibility and scale. Four families, each shaped by its data model.</p>
+  <nav class="toc" aria-label="Sections"><a href="#why">Why NoSQL</a><a href="#base">BASE</a><a href="#keyvalue">Key-value</a><a href="#ring">Consistent hashing</a><a href="#quorum">Quorums</a><a href="#document">Document</a><a href="#columnar">Wide-column</a><a href="#graph">Graph</a><a href="#choose">Choosing</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="why" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Same data, four shapes</h2></div>
+  <p>Nonrelational ("NoSQL") stores drop the fixed table schema. Each family is built around one data model, chosen to make a particular access pattern cheap, and most are designed from day one to spread across many machines. Here is the same tiny social app stored four ways.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Data model"><button data-dm="kv" aria-pressed="true">Key-value</button><button data-dm="doc" aria-pressed="false">Document</button><button data-dm="col" aria-pressed="false">Wide-column</button><button data-dm="graph" aria-pressed="false">Graph</button></div>
+    <div class="two"><pre class="code" id="dmCode"></pre><div class="detail" id="dmTxt" aria-live="polite"></div></div>
+  </div>
+</section>
+
+<section id="base" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>BASE instead of ACID</h2></div>
+  <p>Distributed NoSQL stores usually pick availability over strict consistency (the A side of CAP). The resulting promise is <b>BASE</b>: <b>B</b>asically <b>A</b>vailable (always answer, perhaps with partial or stale data), <b>S</b>oft state (the state may change even without new input, as replicas sync), <b>E</b>ventually consistent (given time without writes, all copies agree). Many modern stores also offer ACID transactions or strong reads as an option, at a cost.</p>
+  <div class="two">
+    <div class="sheet"><h3 class="blue">Relational (ACID)</h3><ul class="plain small"><li>Fixed schema, enforced on write</li><li>Joins and ad hoc queries are natural</li><li>Strong consistency by default</li><li>Usually scales up; scaling out takes work</li><li>Best for: transactions, reporting, integrity</li></ul></div>
+    <div class="sheet"><h3 class="pencil">Nonrelational (BASE)</h3><ul class="plain small"><li>Flexible schema, items can differ</li><li>Model data around known queries; joins are costly</li><li>Eventual consistency by default, often tunable</li><li>Scales out horizontally by design</li><li>Best for: huge volume, low latency, evolving shape</li></ul></div>
+  </div>
+</section>
+
+<section id="keyvalue" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Key-value stores: partition and sort keys</h2></div>
+  <p>A key-value store is a giant distributed hash map. The <b>partition key</b> decides which node holds an item. An optional <b>sort key</b> orders items that share a partition key, so you can fetch a slice. Together they form the primary key. Operations are simple: <code>GetItem</code>, <code>PutItem</code>, <code>UpdateItem</code>, <code>DeleteItem</code>, plus <code>Query</code> within one partition. Try it.</p>
+  <div class="sheet">
+    <div class="row"><label class="small">Partition key <select id="kvPk"><option>user#ana</option><option>user#ben</option></select></label><label class="small">Sort key <select id="kvSk"><option value="">(any)</option><option value="order#">begins_with order#</option><option value="order#2025-02">begins_with order#2025-02</option><option value="profile">= profile</option></select></label></div>
+    <pre class="code" id="kvCall"></pre>
+    <div class="tbl"><table class="kv" id="kvT"></table></div>
+    <p class="small" id="kvTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="ring" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Consistent hashing</h2></div>
+  <p>With <code>hash(key) mod N</code>, adding one server changes N and moves almost every key. <b>Consistent hashing</b> places servers and keys on a ring; each key belongs to the next server clockwise. Adding or removing a server only moves the keys in one arc. Virtual nodes (many points per server) smooth out the load.</p>
+  <div class="sheet">
+    <div class="row between"><div class="row"><button class="btn primary" id="rAdd">Add server</button><button class="btn" id="rDel">Remove server</button></div><label class="small"><input type="checkbox" id="rV"> 3 virtual nodes each</label></div>
+    <div class="svgbox fit"><svg id="rSvg" viewBox="0 0 640 330" role="img" aria-label="Hash ring with servers and keys"></svg></div>
+    <div class="kpis" id="rK"></div>
+  </div>
+</section>
+
+<section id="quorum" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Leaderless replication and quorums</h2></div>
+  <p>Dynamo-style stores have no leader: any replica accepts writes and clients (or a coordinator) talk to several at once. Each item lives on <b>N</b> replicas. A write succeeds when <b>W</b> replicas confirm; a read asks <b>R</b> and takes the newest. If <b>W + R &gt; N</b>, every read set overlaps every write set, so a read always sees the latest acknowledged write. Lower values buy speed and availability.</p>
+  <div class="sheet">
+    <div class="three">
+      <label class="rng"><span>N replicas: <b id="nV"></b></span><input type="range" id="qN" min="1" max="7" value="3"></label>
+      <label class="rng"><span>W (write acks): <b id="wV"></b></span><input type="range" id="qW" min="1" max="7" value="2"></label>
+      <label class="rng"><span>R (read replies): <b id="rdV"></b></span><input type="range" id="qR" min="1" max="7" value="2"></label>
+    </div>
+    <div class="svgbox"><svg id="qSvg" viewBox="0 0 640 150" role="img" aria-label="Replicas touched by writes and reads"></svg></div>
+    <p id="qTxt" aria-live="polite"></p>
+  </div>
+  <div class="cardgrid" id="dynCards"></div>
+</section>
+
+<section id="document" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Document stores</h2></div>
+  <p>A document store keeps self-contained JSON-like documents grouped into collections. Nested fields and arrays mean one read fetches a whole entity, and secondary indexes let you query any field. A typical cluster has a primary that takes writes and secondaries that replicate it and take over by election. MongoDB is the best-known example; Amazon DocumentDB is compatible with its API.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Query"><button data-dq="0" aria-pressed="true">Filter</button><button data-dq="1" aria-pressed="false">Projection</button><button data-dq="2" aria-pressed="false">Array match</button></div>
+    <div class="two"><pre class="code" id="dqCode"></pre><pre class="code" id="dqOut"></pre></div>
+  </div>
+  <div class="callout"><b class="h">The flip side of no schema</b><span>Nothing stops two documents from spelling a field differently. Validation moves into the application, and data duplicated across documents must be kept in step by you.</span></div>
+</section>
+
+<section id="columnar" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>Wide-column stores and the write path</h2></div>
+  <p>Wide-column stores such as Apache Cassandra group columns into families and rows into partitions (by <b>partition key</b>), sorted inside by a <b>clustering key</b>. They are built for very fast writes: nothing is updated in place. Step through a write and a read.</p>
+  <div class="sheet stepper" id="wStep"><div class="svgbox"><svg id="wSvg" viewBox="0 0 660 240" role="img" aria-label="Commit log, memtable and SSTables"></svg></div></div>
+  <div class="cardgrid" id="cassCards"></div>
+</section>
+
+<section id="graph" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Graph databases</h2></div>
+  <p>When the relationships are the data (friends, fraud rings, recommendations), store them directly. Nodes and edges both carry properties, and queries <i>traverse</i> edges instead of joining tables, so cost depends on the neighbourhood you touch, not the size of the database. Click a person to see "friends of friends you don't yet follow".</p>
+  <div class="sheet">
+    <div class="svgbox"><svg id="gSvg" viewBox="0 0 640 280" role="img" aria-label="Social graph"></svg></div>
+    <pre class="code" id="gCode"></pre>
+  </div>
+</section>
+
+<section id="choose" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Which database?</h2></div>
+  <p>The chapter ends with a decision flow. Answer the questions.</p>
+  <div class="sheet flowq" id="flow"></div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">10</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qs"></span></div><div class="quiz" id="qq"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>System Design on AWS: Building and Scaling Enterprise Solutions</i> by Jayanth Kumar and Mandeep Singh (O'Reilly, 2025). Explanations, examples, code snippets and drawings are original summaries, not copied from the book. AWS limits and prices change; check current AWS documentation before relying on a number.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch02-relational.html"><span>Previous · Chapter 2</span><b>Storage Types and Relational Stores</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch04-caching.html"><span>Next · Chapter 4</span><b>Caching Policies and Strategies</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('sda:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('sda:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+
+/* theme toggle */
+(function(){const b=document.getElementById('themeBtn');if(!b)return;const r=document.documentElement;
+ const cur=store.get('theme',null);if(cur)r.setAttribute('data-theme',cur);
+ b.addEventListener('click',()=>{const dark=r.getAttribute('data-theme')?r.getAttribute('data-theme')==='dark':matchMedia('(prefers-color-scheme: dark)').matches;const n=dark?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n)});})();
+/* code blocks */
+
+
+const DM={kv:['<span class="c">// key → opaque value, found by key only</span>\n"user#ana"        → {name:"Ana", city:"Lisbon"}\n"user#ana#follows" → ["ben","chi"]\n"post#901"        → {by:"ana", text:"hi"}','Key-value','Fastest, simplest model: lookups by exact key in single-digit milliseconds at any scale. Querying by anything other than the key needs a second table or index. Examples: DynamoDB, Redis.'],
+ doc:['{\n  "_id": "ana",\n  "name": "Ana",\n  "city": "Lisbon",\n  "follows": ["ben", "chi"],\n  "posts": [\n    {"id": 901, "text": "hi", "likes": 3}\n  ]\n}','Document','A whole entity in one nested document. Rich queries on any field with secondary indexes. Natural for catalogs, profiles, content. Examples: MongoDB, DocumentDB.'],
+ col:['partition key: user = ana\n┌───────────────┬─────────┬───────┐\n│ posted_at ↓   │ post_id │ text  │\n├───────────────┼─────────┼───────┤\n│ 2025-03-02    │ 917     │ "yo"  │\n│ 2025-02-11    │ 901     │ "hi"  │\n└───────────────┴─────────┴───────┘\n(rows sorted by clustering key)','Wide-column','Huge partitions of sorted rows, each row free to have different columns. Superb write throughput and time-ordered reads. Examples: Cassandra, Amazon Keyspaces, HBase.'],
+ graph:['(ana:Person)-[:FOLLOWS]->(ben:Person)\n(ana)-[:FOLLOWS]->(chi:Person)\n(ana)-[:WROTE]->(p:Post {id:901})\n(ben)-[:LIKED]->(p)','Graph','Nodes and typed edges with properties. Multi-hop questions ("who liked posts by people I follow?") are cheap traversals. Examples: Neo4j, Amazon Neptune.']};
+seg('[data-dm]',b=>{const d=DM[b.dataset.dm];$('#dmCode').innerHTML=d[0];$('#dmTxt').innerHTML=`<h3 class="blue">${d[1]}</h3><p>${d[2]}</p>`});$('[data-dm]').click();
+
+/* kv */
+const KV=[['user#ana','profile','{name:"Ana"}'],['user#ana','order#2025-01-14#a1','{total:42}'],['user#ana','order#2025-02-03#b7','{total:18}'],['user#ana','order#2025-02-27#c2','{total:65}'],['user#ben','profile','{name:"Ben"}'],['user#ben','order#2025-02-09#d4','{total:12}']];
+function kvRun(){const pk=$('#kvPk').value,sk=$('#kvSk').value;const hit=r=>r[0]===pk&&(!sk||(sk==='profile'?r[1]==='profile':r[1].startsWith(sk)));
+ $('#kvT').innerHTML='<tr><th>partition key</th><th>sort key</th><th>attributes</th></tr>'+KV.map(r=>`<tr class="${hit(r)?'hit':''}"><td class="pk">${r[0]}</td><td class="sk">${r[1]}</td><td>${r[2]}</td></tr>`).join('');
+ $('#kvCall').innerHTML=sk==='profile'?`GetItem(Key = { pk: "${pk}", sk: "profile" })`:`Query(KeyCondition = pk = "${pk}"${sk?` AND begins_with(sk, "${sk}")`:''})`;
+ $('#kvTxt').textContent=`${KV.filter(hit).length} item(s). Only one partition is touched, so the cost does not grow with the table. A sort key that embeds a date turns "orders this month" into a cheap range read.`}
+['kvPk','kvSk'].forEach(i=>$('#'+i).addEventListener('change',kvRun));kvRun();
+
+/* ring */
+let servers=['A','B','C'],prevOwner=null;const KEYS=Array.from({length:40},(_,i)=>'k'+i);
+function h(s){let x=2166136261;for(const c of s){x^=c.charCodeAt(0);x=Math.imul(x,16777619)}x^=x>>>16;x=Math.imul(x,0x85ebca6b);x^=x>>>13;x=Math.imul(x,0xc2b2ae35);x^=x>>>16;return (x>>>0)/4294967296}
+function owners(srv,virt){const pts=[];srv.forEach(s=>{for(let v=0;v<(virt?3:1);v++)pts.push([h(s+'#'+v),s])});pts.sort((a,b)=>a[0]-b[0]);const o={};KEYS.forEach(k=>{const p=h(k);const n=pts.find(q=>q[0]>=p)||pts[0];o[k]=n[1]});return{o,pts}}
+const COL=['d1','d2','d3','d4','d5','pencil','ok'];
+function drawRing(){const virt=$('#rV').checked;const {o,pts}=owners(servers,virt);const s=$('#rSvg');s.innerHTML='';const cx=200,cy=165,R=130;
+ s.appendChild(el('circle',{cx,cy,r:R,fill:'none',stroke:'var(--line)','stroke-width':6}));
+ const moved=prevOwner?KEYS.filter(k=>prevOwner[k]!==o[k]).length:0;
+ KEYS.forEach(k=>{const a=h(k)*2*Math.PI-Math.PI/2;const ci=servers.indexOf(o[k]);s.appendChild(el('circle',{cx:cx+Math.cos(a)*(R-18),cy:cy+Math.sin(a)*(R-18),r:4.5,fill:`var(--${COL[ci%7]})`,stroke:prevOwner&&prevOwner[k]!==o[k]?'var(--ink)':'none','stroke-width':2}))});
+ pts.forEach(([p,sv])=>{const a=p*2*Math.PI-Math.PI/2;const ci=servers.indexOf(sv);s.appendChild(el('rect',{x:cx+Math.cos(a)*R-12,y:cy+Math.sin(a)*R-12,width:24,height:24,rx:5,fill:`var(--${COL[ci%7]})`}));s.appendChild(el('text',{x:cx+Math.cos(a)*R,y:cy+Math.sin(a)*R+5,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--surface)'},sv))});
+ const cnt={};servers.forEach(x=>cnt[x]=0);KEYS.forEach(k=>cnt[o[k]]++);
+ servers.forEach((sv,i)=>{const y=40+i*30;s.appendChild(el('rect',{x:380,y,width:cnt[sv]*6,height:20,rx:3,fill:`var(--${COL[i%7]})`}));s.appendChild(el('text',{x:370,y:y+15,'text-anchor':'end','font-size':12,class:'s-ink'},sv));s.appendChild(el('text',{x:386+cnt[sv]*6,y:y+15,'font-size':11,class:'s-muted'},cnt[sv]+' keys'))});
+ const modMoved=prevOwner&&prevOwner.__n?KEYS.filter(k=>Math.floor(h(k)*1e6)%prevOwner.__n!==Math.floor(h(k)*1e6)%servers.length).length:null;
+ $('#rK').innerHTML=`<div class="stat"><span class="big blue" style="font-size:1.6rem">${prevOwner?moved:'–'}</span><span>keys moved by last change (ring)</span></div><div class="stat"><span class="big badc" style="font-size:1.6rem">${modMoved==null?'–':modMoved}</span><span>keys that would move with mod N</span></div>`;
+ prevOwner=Object.assign({},o,{__n:servers.length})}
+const NAMES='ABCDEFG';
+$('#rAdd').addEventListener('click',()=>{if(servers.length<7){servers.push(NAMES.split('').find(c=>!servers.includes(c)));drawRing()}});
+$('#rDel').addEventListener('click',()=>{if(servers.length>1){servers.splice(1,1);drawRing()}});
+$('#rV').addEventListener('change',()=>{prevOwner=null;drawRing()});drawRing();
+
+/* quorum */
+function drawQ(){let N=+$('#qN').value;['qW','qR'].forEach(i=>{$('#'+i).max=N;if(+$('#'+i).value>N)$('#'+i).value=N});const W=+$('#qW').value,R=+$('#qR').value;$('#nV').textContent=N;$('#wV').textContent=W;$('#rdV').textContent=R;
+ const s=$('#qSvg');s.innerHTML='';const w=Math.min(70,560/N-10);
+ for(let i=0;i<N;i++){const x=40+i*(w+10);const inW=i<W,inR=i>=N-R;s.appendChild(el('rect',{x,y:40,width:w,height:56,rx:6,fill:inW&&inR?'var(--ok-soft)':'var(--paper)',stroke:inW&&inR?'var(--ok)':'var(--line)','stroke-width':inW&&inR?2.5:1}));
+  if(inW)s.appendChild(el('rect',{x:x+4,y:46,width:w-8,height:14,rx:3,fill:'var(--blue)'}));if(inR)s.appendChild(el('rect',{x:x+4,y:76,width:w-8,height:14,rx:3,fill:'var(--pencil)'}));
+  s.appendChild(el('text',{x:x+w/2,y:116,'text-anchor':'middle','font-size':11,class:'s-muted'},'r'+(i+1)))}
+ s.appendChild(el('text',{x:40,y:24,'font-size':12,fill:'var(--blue)'},'■ has the new write (W)'));s.appendChild(el('text',{x:240,y:24,'font-size':12,fill:'var(--pencil)'},'■ asked on read (R)'));
+ const ok=W+R>N;$('#qTxt').innerHTML=ok?`<b class="okc">W + R = ${W+R} &gt; ${N}.</b> At least one replica answering the read has the latest write (green), so reads are up to date. Can tolerate ${N-W} replica(s) down for writes and ${N-R} for reads.`:`<b class="badc">W + R = ${W+R} ≤ ${N}.</b> The read can miss every replica that has the new write and return stale data: eventual consistency, but lower latency and more tolerance of failures.`}
+['qN','qW','qR'].forEach(i=>$('#'+i).addEventListener('input',drawQ));drawQ();
+cards('#dynCards',[{t:'Sloppy quorum and hinted handoff',d:'If a home replica is down, a neighbour accepts the write and holds a "hint", handing it over when the owner returns. Writes keep succeeding.'},{t:'Vector clocks',d:'Each version carries a per-node counter so the system can tell "newer" from "concurrent" and surface real conflicts.'},{t:'Merkle trees',d:'Replicas compare hash trees of their data to find exactly which ranges differ, then repair only those (anti-entropy).'},{t:'Gossip',d:'Nodes periodically swap membership and health info with random peers, so the cluster learns who is up without a central master.'}]);
+
+/* document */
+const DQ=[['db.users.find(\n  { city: "Lisbon", age: { $gte: 30 } }\n)','[ { _id: "ana", name: "Ana", city: "Lisbon", age: 34, tags: ["dev","ops"] } ]'],['db.users.find(\n  { city: "Lisbon" },\n  { name: 1, _id: 0 }   // projection\n)','[ { name: "Ana" }, { name: "Rui" } ]\n\n// only requested fields cross the network'],['db.users.find(\n  { tags: "ops" }   // matches inside arrays\n)','[ { _id: "ana", tags: ["dev","ops"] },\n  { _id: "kim", tags: ["ops"] } ]']];
+seg('[data-dq]',b=>{const d=DQ[+b.dataset.dq];$('#dqCode').textContent=d[0];$('#dqOut').textContent=d[1]});$('[data-dq]').click();
+
+/* columnar write path */
+const wS=$('#wSvg');const box=(id,x,y,w,h,t,c)=>{const g=el('g',{id});g.appendChild(el('rect',{x,y,width:w,height:h,rx:6,fill:'var(--surface)',stroke:`var(--${c})`,'stroke-width':1.5}));g.appendChild(el('text',{x:x+w/2,y:y+18,'text-anchor':'middle','font-size':12,'font-weight':600,class:'s-ink'},t));wS.appendChild(g);return g};
+const W={c:box('wc',10,95,90,40,'write','pencil'),log:box('wl',140,20,170,50,'Commit log (disk)','blue'),mem:box('wm',140,150,170,50,'Memtable (RAM)','blue'),s1:box('ws1',380,20,110,40,'SSTable 1','d2'),s2:box('ws2',380,80,110,40,'SSTable 2','d2'),s3:box('ws3',380,140,110,40,'SSTable 3','d2'),m:box('wmg',530,80,120,40,'Merged SSTable','d3'),bf:box('wbf',380,195,270,36,'Bloom filter: "maybe here" / "not here"','d5')};
+const wSteps=[['c','A write arrives for partition <code>user=ana</code>.'],['log','First it is appended to the <b>commit log</b>, a sequential write-ahead log on disk, for durability.'],['mem','Then it goes into the <b>memtable</b>, a sorted in-memory structure. The client gets its ack: no random disk I/O at all.'],['s1','When the memtable fills, it is flushed as an immutable, sorted <b>SSTable</b> file. Over time many SSTables pile up.'],['bf','A read checks the memtable, then SSTables. <b>Bloom filters</b> say "definitely not in this file" so most files are skipped.'],['m','<b>Compaction</b> merges SSTables in the background (size-tiered or leveled), dropping overwritten values and expired <b>tombstones</b>, the markers a delete leaves behind.']];
+$('#wStep').insertAdjacentHTML('beforeend',stepHTML());
+stepper('#wStep',wSteps.map(s=>s[1]),i=>{const show={c:0,log:1,mem:2,s1:3,s2:3,s3:3,bf:4,m:5};Object.entries(W).forEach(([k,g])=>{g.style.opacity=show[k]<=i?1:.15;g.querySelector('rect').setAttribute('stroke-width',show[k]===i?3:1.5)})});
+cards('#cassCards',[{t:'Masterless ring',d:'Every Cassandra node is equal; data is placed by consistent hashing with virtual nodes. No single point of failure.'},{t:'Tunable consistency',d:'Choose per query: ONE, QUORUM, ALL (and LOCAL_ variants per data center). Trade latency for freshness call by call.'},{t:'Linear scale',d:'Double the nodes, roughly double the throughput. Popular for time series, IoT and messaging.'},{t:'Multi-data-center replication',d:'Set a replication factor per data center; replicas are placed across racks and regions.'}]);
+
+/* graph */
+const GN=[['ana',100,140],['ben',250,60],['chi',250,220],['dev',420,40],['eli',420,140],['fay',420,240],['gus',570,140]];
+const GE=[['ana','ben'],['ana','chi'],['ben','dev'],['ben','eli'],['chi','eli'],['chi','fay'],['eli','gus'],['dev','gus']];
+function drawG(me){const s=$('#gSvg');s.innerHTML='';const P={};GN.forEach(n=>P[n[0]]=n);const f1=GE.filter(e=>e[0]===me).map(e=>e[1]);const f2=[...new Set(GE.filter(e=>f1.includes(e[0])).map(e=>e[1]))].filter(x=>x!==me&&!f1.includes(x));
+ GE.forEach(([a,b])=>{const on=(a===me)||(f1.includes(a)&&f2.includes(b));const A=P[a],B=P[b];const dx=B[1]-A[1],dy=B[2]-A[2],L=Math.hypot(dx,dy);s.appendChild(el('line',{x1:A[1]+dx/L*24,y1:A[2]+dy/L*24,x2:B[1]-dx/L*28,y2:B[2]-dy/L*28,stroke:on?'var(--blue)':'var(--line)','stroke-width':on?2.5:1.5,class:on?'flow':''}));s.appendChild(el('polygon',{points:`${B[1]-dx/L*24},${B[2]-dy/L*24} ${B[1]-dx/L*34-dy/L*5},${B[2]-dy/L*34+dx/L*5} ${B[1]-dx/L*34+dy/L*5},${B[2]-dy/L*34-dx/L*5}`,fill:on?'var(--blue)':'var(--line)'}))});
+ GN.forEach(([id,x,y])=>{const g=el('g',{tabindex:0,role:'button',style:'cursor:pointer'});const c=id===me?'pencil':f2.includes(id)?'ok':f1.includes(id)?'blue':'muted';g.appendChild(el('circle',{cx:x,cy:y,r:22,fill:'var(--surface)',stroke:`var(--${c})`,'stroke-width':id===me||f2.includes(id)?3:1.5}));g.appendChild(el('text',{x,y:y+5,'text-anchor':'middle','font-size':13,'font-weight':600,class:'s-ink'},id));g.addEventListener('click',()=>drawG(id));g.addEventListener('keydown',e=>{if(e.key==='Enter')drawG(id)});s.appendChild(g)});
+ $('#gCode').innerHTML=`<span class="k">MATCH</span> (me:Person {name:"${me}"})-[:FOLLOWS]->(f)-[:FOLLOWS]->(fof)\n<span class="k">WHERE NOT</span> (me)-[:FOLLOWS]->(fof) <span class="k">AND</span> fof &lt;&gt; me\n<span class="k">RETURN DISTINCT</span> fof.name   <span class="c">// → ${f2.length?f2.join(', '):'nobody'}</span>`}
+drawG('ana');
+
+/* decision flow */
+const FL={start:['Do you need multi-row transactions, joins and a fixed schema with strong integrity?',[['Yes','R'],['No','q2']]],q2:['Are relationships between items the main thing you query (many hops)?',[['Yes','G'],['No','q3']]],q3:['Is access almost always by a known key, at very high scale and low latency?',[['Yes','K'],['No','q4']]],q4:['Is the data rich, nested and queried by many different fields?',[['Yes','D'],['No','C']]],
+ R:['Relational: Amazon RDS or Aurora (MySQL, PostgreSQL…)'],G:['Graph: Amazon Neptune or Neo4j'],K:['Key-value: Amazon DynamoDB (or ElastiCache for pure in-memory)'],D:['Document: Amazon DocumentDB or MongoDB'],C:['Wide-column: Amazon Keyspaces or Cassandra, for heavy writes and time-ordered data']};
+function flow(path){const f=$('#flow');f.innerHTML='';path.forEach((k,i)=>{const n=FL[k];const d=document.createElement('div');d.className='qb';if(n[1]){d.innerHTML=`<b>${n[0]}</b><div class="row">${n[1].map(o=>`<button class="btn ${path[i+1]===o[1]?'primary':''}" data-go="${o[1]}">${o[0]}</button>`).join('')}</div>`;d.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>flow(path.slice(0,i+1).concat(b.dataset.go))))}else{d.style.borderColor='var(--ok)';d.style.background='var(--ok-soft)';d.innerHTML=`<span class="eyebrow">Suggestion</span><b>${n[0]}</b><button class="btn" style="align-self:flex-start" data-r>Start over</button>`;d.querySelector('[data-r]').addEventListener('click',()=>flow(['start']))}f.appendChild(d)})}
+flow(['start']);
+
+quiz('#qq','#qs',[
+ {q:'With N=3, which setting guarantees reads see the latest write?',o:['W=1, R=1','W=2, R=2','W=1, R=2'],a:1,why:'2 + 2 = 4 > 3, so the read and write sets overlap.'},
+ {q:'Adding a fourth server to a consistent-hash ring of three moves roughly…',o:['All keys','About a quarter of keys','No keys'],a:1,why:'Only keys in the arc the new server takes over move.'},
+ {q:'Why are wide-column writes so fast?',o:['They skip durability','Append to a log and a memtable, no in-place update','They are cached in the client'],a:1,why:'Sequential log write plus an in-memory insert; SSTables are flushed later.'},
+ {q:'A delete in Cassandra first writes…',o:['A tombstone','Nothing','A compaction'],a:0,why:'A marker that hides the data until compaction removes both.'},
+ {q:'"Find friends of friends who bought this" fits best in a…',o:['Key-value store','Graph database','Columnar store'],a:1,why:'Multi-hop relationship traversal is what graph stores optimize.'}]);
+
+})();
+</script>
+</body>
+</html>

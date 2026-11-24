@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cancellation and Shutdown</title>
+<meta name="description" content="Starting threads is easy; stopping them cleanly is not. Java offers no safe way to force a thread to stop, only interruption: a polite request that well-written code agrees to honour.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for the Java Concurrency in Practice companion. A lab-notebook reading column on blueprint grid paper.
+   Blue ink = threads and structure, orange pencil = shared state and locks, green = safe, red = broken.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* code */
+pre.code{margin:0;background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--blue);border-radius:0 8px 8px 0;padding:12px 14px;overflow-x:auto;font-family:var(--mono);font-size:.82rem;line-height:1.55;tab-size:2;max-width:100%}
+pre.code.bad{border-left-color:var(--bad)} pre.code.good{border-left-color:var(--ok)}
+pre.code .k{color:var(--d5);font-weight:600} pre.code .c{color:var(--muted);font-style:italic} pre.code .s{color:var(--d2)} pre.code .a{color:var(--pencil)} pre.code .n{color:var(--d3)}
+pre.code .hl{background:var(--mid-soft);border-radius:3px;box-shadow:0 0 0 2px var(--mid-soft)}
+code{font-family:var(--mono);font-size:.88em;background:var(--blue-soft);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+pre code{background:none;padding:0;font-size:inherit;overflow-wrap:normal}
+.codecap{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;display:flex;gap:8px;align-items:center}
+.codecap b{color:var(--ok)} .codecap b.x{color:var(--bad)}
+.rule{border:1.5px solid var(--blue);border-radius:10px;padding:12px 16px;background:var(--blue-soft);font-weight:600;max-width:66ch}
+.rule::before{content:"Rule of thumb";display:block;font-family:var(--mono);font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:var(--blue);font-weight:600;margin-bottom:2px}
+/* thread lanes */
+.lanes{display:flex;flex-direction:column;gap:8px}
+.lane{display:grid;grid-template-columns:5.5rem minmax(0,1fr);gap:10px;align-items:center}
+.lane>b{font-family:var(--mono);font-size:.8rem}
+.lane .ops{display:flex;flex-wrap:wrap;gap:6px;min-height:34px;align-items:center}
+.op{font-family:var(--mono);font-size:.78rem;padding:4px 8px;border-radius:6px;border:1px solid var(--line);background:var(--paper)}
+.op.on{border-color:var(--blue);background:var(--blue-soft)}
+.op.badop{border-color:var(--bad);background:var(--bad-soft);color:var(--bad)}
+.op.okop{border-color:var(--ok);background:var(--ok-soft);color:var(--ok)}
+.memcell{display:inline-flex;flex-direction:column;align-items:center;gap:2px;border:1.5px solid var(--pencil);border-radius:8px;padding:6px 14px;background:var(--pencil-soft);font-family:var(--mono)}
+.memcell span{font-size:.7rem;color:var(--muted)}
+.memcell b{font-size:1.3rem}
+.themebtn{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted)}
+.themebtn:hover{border-color:var(--blue);color:var(--blue)}
+.sec-head h2,h1{min-width:0;overflow-wrap:break-word}
+
+/* page */
+
+.flag{display:inline-flex;align-items:center;gap:8px;border:2px solid var(--line);border-radius:10px;padding:8px 14px;font-family:var(--mono);background:var(--surface)}
+.flag.on{border-color:var(--bad);background:var(--bad-soft);color:var(--bad);font-weight:700}
+.log{font-family:var(--mono);font-size:.82rem;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:8px 12px;min-height:5.5em;white-space:pre-wrap;overflow-wrap:anywhere}
+.belt{display:flex;gap:6px;flex-wrap:wrap;min-height:40px;align-items:center;padding:6px;border:1.5px dashed var(--line);border-radius:10px;background:var(--paper)}
+.belt i{width:30px;height:30px;border-radius:6px;background:var(--blue);display:inline-grid;place-items:center;color:var(--surface);font-style:normal;font-size:.7rem;font-family:var(--mono)}
+.belt i.pill{background:var(--bad);border-radius:50%}
+.thr{display:flex;flex-wrap:wrap;gap:8px}
+.thr button{border:1.5px solid var(--blue);border-radius:10px;padding:8px 12px;background:var(--surface);font-family:var(--mono);font-size:.82rem;text-align:left}
+.thr button.d{border-style:dashed;border-color:var(--muted);color:var(--muted)}
+.thr button.x{opacity:.35;text-decoration:line-through}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">Java Concurrency in Practice · visual companion</a><span class="tag">Part II · Chapter 7 of 16</span><button class="themebtn" type="button">Theme: auto</button></div>
+  <h1>Cancellation and Shutdown</h1>
+  <p class="lede">Starting threads is easy; stopping them cleanly is not. Java offers no safe way to force a thread to stop, only interruption: a polite request that well-written code agrees to honour.</p>
+  <nav class="toc" aria-label="Sections"><a href="#cancel">Cancellation</a><a href="#interruption">Interruption</a><a href="#future">Future.cancel</a><a href="#noninterruptible">Non-interruptible</a><a href="#services">Stopping services</a><a href="#abnormal">Thread death</a><a href="#jvm">JVM shutdown</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="cancel" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Why stopping is hard</h2></div>
+  <p>Activities get cancelled for many reasons: the user clicks Cancel, a time limit passes, one of several parallel searches finds the answer, an error occurs, or the application shuts down. Java has no safe way to force a thread to stop. The old <code>Thread.stop</code> and <code>suspend</code> were deprecated because they could leave shared state corrupted. What Java offers is <b>cooperation</b>: code asks, and the task checks and agrees to stop at a safe point.</p>
+  <p>The simplest approach is a <code>volatile boolean cancelled</code> flag that the task polls. It works for a loop that only computes. But if the task can <b>block</b>, it may never get round to checking the flag. Compare a task that just computes with one that puts results into a full <code>BlockingQueue</code>.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Task"><button data-c="loop" aria-pressed="true">Computing loop + flag</button><button data-c="block" aria-pressed="false">Blocks in put() + flag</button><button data-c="intr" aria-pressed="false">Blocks in put() + interrupt</button></div>
+    <div class="lanes"><div class="lane"><b class="blue">Worker</b><div class="ops" id="cW"></div></div><div class="lane"><b class="pencil">Canceller</b><div class="ops" id="cC"></div></div></div>
+    <div class="stepper" id="cStep"></div>
+  </div>
+  <div class="rule">A task should have a cancellation policy: how others request it, when the task checks, and what it does in response.</div>
+</section>
+
+<section id="interruption" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Interruption: the standard cancellation mechanism</h2></div>
+  <p>Each thread has a boolean <b>interrupted status</b>. Calling <code>interrupt()</code> sets it. That doesn't stop anything by itself; it's a message saying "please stop when convenient". Blocking library methods like <code>sleep</code>, <code>wait</code> and <code>BlockingQueue.put</code> check it, and when set they <b>clear it and throw</b> <code>InterruptedException</code>. Try the calls on a thread.</p>
+  <div class="sheet">
+    <div class="row"><span class="flag" id="iflag">interrupted = false</span><span class="small" id="iState">thread is running normal code</span></div>
+    <div class="row"><button class="btn" id="iInt">t.interrupt()</button><button class="btn" id="iIs">t.isInterrupted()</button><button class="btn" id="iStatic">Thread.interrupted()</button><button class="btn" id="iSleep">t calls sleep(1000)</button></div>
+    <div class="log" id="ilog" aria-live="polite"></div>
+  </div>
+  <div class="callout"><b class="h">Careful with the static one</b><span><code>Thread.interrupted()</code> returns <i>and clears</i> the current thread's status. If you call it and get true, you must act on it or re-raise it, or the request is lost.</span></div>
+  <p>Interruption is usually the most sensible way to implement cancellation. A well-behaved thread has an <b>interruption policy</b>: what it does when interrupted. Tasks don't own the thread they run in (the pool does), so a task should preserve the interrupted status for the owner. That's why library code should either <b>propagate</b> <code>InterruptedException</code> or <b>restore</b> the status with <code>Thread.currentThread().interrupt()</code>. Only code that implements the thread's policy may swallow it. A task that can't be cancelled but calls interruptible methods should save the interruption and restore it just before returning, not right away (that would make it spin).</p>
+  <div class="rule">Because each thread has its own interruption policy, you should not interrupt a thread unless you know what interruption means to that thread.</div>
+</section>
+
+<section id="future" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Timed runs and cancelling via Future</h2></div>
+  <p>Want to run a task for at most N seconds? Don't schedule an interrupt against a borrowed thread. Submit it to an executor and use its <code>Future</code>:</p>
+  <pre class="code good">
+Future&lt;?&gt; task = exec.submit(r);
+try {
+  task.get(timeout, unit);
+} catch (TimeoutException e) {
+  // fall through to finally
+} catch (ExecutionException e) {
+  throw launderThrowable(e.getCause());  // rethrow the real cause
+} finally {
+!!  task.cancel(true);   // harmless if already done
+}</pre>
+  <p><code>cancel(true)</code> interrupts the task if it is running; <code>cancel(false)</code> only prevents it starting. Standard executor threads have a policy that lets tasks be cancelled by interrupt, so <code>cancel(true)</code> is safe for tasks submitted to them.</p>
+</section>
+
+<section id="noninterruptible" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Blocking that ignores interrupts</h2></div>
+  <p>Not everything responds to interruption. A thread stuck in classic socket I/O or waiting for an intrinsic lock just sets its status and keeps waiting. To unblock it you need to know <i>why</i> it's blocked. Match each case to its remedy.</p>
+  <div class="sheet"><div class="row between"><h3>How do you unblock it?</h3><span class="score" id="nScore"></span></div><div class="quiz" id="nQuiz"></div></div>
+  <p>You can wrap such nonstandard cancellation in a thread subclass that overrides <code>interrupt()</code> to also close its socket, or, for tasks in a pool, override <code>newTaskFor</code> so that <code>Future.cancel</code> runs your custom cancel logic.</p>
+</section>
+
+<section id="services" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Stopping a thread-based service</h2></div>
+  <p>An application owns a service; the service owns its worker threads. So the service, not the app, should offer lifecycle methods to stop them. The book's example is a logging service: callers put messages on a queue and a background thread writes them out. How do you shut it down without losing messages or leaving callers blocked forever?</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Design"><button data-lg="0" aria-pressed="true">Interrupt the writer</button><button data-lg="1" aria-pressed="false">Flag + check in log()</button><button data-lg="2" aria-pressed="false">Flag + reservation count</button><button data-lg="3" aria-pressed="false">ExecutorService</button></div>
+    <div class="detail" id="lgTxt" aria-live="polite"></div>
+  </div>
+  <p>A <b>poison pill</b> is another clean way: a special object put on the queue meaning "stop when you get here". Consumers finish everything ahead of it in FIFO order. It only works when the number of producers and consumers is known: each producer sends one pill per consumer, or the consumer waits for one pill per producer.</p>
+  <div class="sheet">
+    <div class="belt" id="belt"></div>
+    <div class="row"><button class="btn" id="bAdd">producer: put work</button><button class="btn" id="bPill">producer: put pill</button><button class="btn primary" id="bTake">consumer: take()</button></div>
+    <p class="small" id="bTxt"></p>
+  </div>
+  <p><code>shutdownNow</code> returns tasks that never started but can't tell you which running tasks were interrupted midway. The book's <code>TrackingExecutor</code> records tasks cancelled after starting, so a web crawler can save its unfinished pages and resume later.</p>
+</section>
+
+<section id="abnormal" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>Handling abnormal thread termination</h2></div>
+  <p>When a thread dies from an uncaught exception, the default is to print a stack trace to the console that nobody reads. In a pool, one dead worker can quietly shrink capacity, or in a GUI app freeze everything. Threads that call unknown code (like a pool worker running tasks) should catch <code>RuntimeException</code> in a try/finally and report the failure.</p>
+  <p>Also set an <code>UncaughtExceptionHandler</code>, through a <code>ThreadFactory</code> for pool threads, to log failures properly. One subtlety: exceptions from tasks run with <code>execute</code> reach the handler; tasks run with <code>submit</code> have their exception captured in the Future and rethrown (wrapped in <code>ExecutionException</code>) by <code>get</code>.</p>
+</section>
+
+<section id="jvm" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>JVM shutdown, hooks and daemon threads</h2></div>
+  <p>The JVM shuts down in an orderly way when the last normal (non-daemon) thread ends, when <code>System.exit</code> is called, or on Ctrl-C. Then it runs registered <b>shutdown hooks</b> concurrently: they must be thread-safe, quick and not depend on services other hooks may already have stopped (the book suggests one hook that shuts things down in order). Abrupt shutdown (<code>Runtime.halt</code>, kill -9) runs nothing.</p>
+  <p><b>Daemon threads</b> don't keep the JVM alive. When only daemons are left, the JVM just stops: no finally blocks, no stack unwinding. Fine for housekeeping like expiring cache entries, dangerous for anything doing I/O. Tap a thread to end it and see when the JVM exits.</p>
+  <div class="sheet">
+    <div class="thr" id="thr"></div>
+    <p id="thrTxt" aria-live="polite"></p>
+    <button class="btn" id="thrReset">reset</button>
+  </div>
+  <div class="callout"><b class="h">Avoid finalizers</b><span>Finalizers run in a JVM-managed thread at an unpredictable time, may never run, cost performance and are hard to write correctly. Use finally blocks and explicit close methods instead.</span></div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Java Concurrency in Practice</i> by Brian Goetz with Tim Peierls, Joshua Bloch, Joseph Bowbeer, David Holmes and Doug Lea (Addison-Wesley, 2006). Explanations, code snippets and drawings are original summaries, not copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch06-task-execution.html"><span>Previous · Chapter 6</span><b>Task Execution</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch08-applying-thread-pools.html"><span>Next · Chapter 8</span><b>Applying Thread Pools</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every chapter page. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('jcip:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('jcip:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: auto -> light -> dark */
+(function(){const r=document.documentElement;let m=store.get('theme','auto');
+  function ap(){if(m==='auto')r.removeAttribute('data-theme');else r.setAttribute('data-theme',m);$$('.themebtn').forEach(b=>b.textContent='Theme: '+m)}
+  ap();$$('.themebtn').forEach(b=>b.addEventListener('click',()=>{m=m==='auto'?'light':m==='light'?'dark':'auto';store.set('theme',m);ap()}))})();
+/* tiny Java highlighter for <pre class="code">. Lines starting with "!!" are highlighted. */
+(function(){const KW='abstract|boolean|break|case|catch|class|char|continue|default|do|double|else|enum|extends|final|finally|for|if|implements|import|instanceof|int|interface|long|new|null|private|protected|public|return|static|super|switch|synchronized|this|throw|throws|true|false|try|var|void|volatile|while|byte|short|float';
+  const re=new RegExp('(//[^\\n]*|/\\*[\\s\\S]*?\\*/)|("(?:[^"\\\\\\n]|\\\\.)*"|\'(?:[^\'\\\\\\n]|\\\\.)*\')|(@[A-Za-z]+)|\\b('+KW+')\\b|\\b(\\d[\\d_]*L?)\\b','g');
+  const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  window.hlJava=function(p){const src=p.textContent.replace(/^\n/,'').replace(/\s+$/,'');
+    const lines=src.split('\n').map(l=>{const mark=l.startsWith('!!');if(mark)l=l.slice(2);
+      let out='',last=0;l.replace(re,(m,c,s,a,k,n,off)=>{out+=esc(l.slice(last,off));const cls=c?'c':s?'s':a?'a':k?'k':'n';out+=`<span class="${cls}">${esc(m)}</span>`;last=off+m.length;return m});out+=esc(l.slice(last));
+      return mark?`<span class="hl">${out}</span>`:out});
+    p.innerHTML='<code>'+lines.join('\n')+'</code>'};
+  $$('pre.code').forEach(hlJava)})();
+
+
+const CS={loop:[[[['compute prime','on']],[],'The worker loops: while (!cancelled) compute the next prime.'],
+   [[['compute',''],['compute','on']],[['cancelled = true','on']],'The canceller sets the volatile flag.'],
+   [[['compute',''],['compute',''],['check flag: true → exit','okop']],[['cancelled = true','']],'At the top of the next iteration the worker sees the flag and exits. <b class="okc">Works</b>, if the loop never blocks.']],
+ block:[[[['queue.put(p)','on']],[],'The queue is full because the consumer stopped consuming. The worker blocks inside put().'],
+   [[['blocked in put()','']],[['cancelled = true','on']],'The consumer sets the flag and stops taking from the queue.'],
+   [[['blocked in put()… forever','badop']],[['cancelled = true','']],'The worker never returns from put(), so it never checks the flag. <b class="badc">It hangs forever.</b>']],
+ intr:[[[['queue.put(p)','on']],[],'Same situation, but the worker\'s loop is while (!Thread.currentThread().isInterrupted()).'],
+   [[['blocked in put()','']],[['worker.interrupt()','on']],'The canceller calls interrupt().'],
+   [[['put() throws InterruptedException','okop'],['exit','okop']],[['worker.interrupt()','']],'put() notices the interrupt, throws, and the worker exits cleanly. Interruption reaches into blocking calls; a flag can\'t.']]};
+function setC(k){$('#cStep').innerHTML=stepHTML();const S=CS[k];stepper('#cStep',S.map(s=>s[2]),i=>{const f=a=>a.map(o=>`<span class="op ${o[1]}">${o[0]}</span>`).join('');$('#cW').innerHTML=f(S[i][0]);$('#cC').innerHTML=f(S[i][1])})}
+seg('[data-c]',b=>setC(b.dataset.c));setC('loop');
+
+let iflag=false;const lines=[];
+function ilog(t){lines.unshift(t);$('#ilog').textContent=lines.slice(0,5).join('\n');$('#iflag').textContent='interrupted = '+iflag;$('#iflag').className='flag'+(iflag?' on':'')}
+$('#iInt').addEventListener('click',()=>{iflag=true;ilog('interrupt(): status set. The thread keeps running until it checks.')});
+$('#iIs').addEventListener('click',()=>ilog(`isInterrupted() → ${iflag} (status unchanged)`));
+$('#iStatic').addEventListener('click',()=>{const was=iflag;iflag=false;ilog(`Thread.interrupted() → ${was}${was?' and the status is now CLEARED':''}`)});
+$('#iSleep').addEventListener('click',()=>{if(iflag){iflag=false;ilog('sleep() sees the status, clears it, throws InterruptedException at once.')}else ilog('sleep(1000) blocks… (interrupting now would wake it early).')});
+ilog('Thread t is running.');
+
+quiz('#nQuiz','#nScore',[
+ {q:'Blocked reading from a java.io socket InputStream',a:0,why:'Closing the socket makes the blocked read throw SocketException.'},
+ {q:'Blocked on an InterruptibleChannel (java.nio)',a:1,why:'Interrupting throws ClosedByInterruptException and closes the channel.'},
+ {q:'Blocked in Selector.select',a:2,why:'wakeup() makes select return early.'},
+ {q:'Waiting to enter a synchronized block',a:3,why:'Nothing can stop it waiting for an intrinsic lock. Lock.lockInterruptibly (chapter 13) exists for this.'}],['Close the socket','interrupt()','wakeup()','Nothing works']);
+
+const LG=[['bad','Interrupt the writer thread','The writer stops, but messages still in the queue are lost, and producers blocked in put() because the queue is full stay blocked forever.'],
+ ['bad','Set a shutdown flag; log() refuses new messages once it\'s set','A check-then-act race: a producer can check the flag, then be preempted while the service shuts down, then put() and block forever.'],
+ ['good','Flag plus a count of reserved messages, both under one lock','log() atomically checks the flag and increments a reservation count. The writer exits only when the flag is set and the count is zero, so nothing is lost and nothing blocks.'],
+ ['good','Delegate to a single-thread ExecutorService','Let the executor own the thread. stop() calls shutdown() then awaitTermination(). Simplest of all: reuse the lifecycle someone else got right.']];
+function showLG(i){const l=LG[i];$('#lgTxt').style.borderLeftColor=`var(--${l[0]==='good'?'ok':'bad'})`;$('#lgTxt').innerHTML=`<span class="eyebrow">${l[0]==='good'?'Works':'Broken'}</span><h3 class="${l[0]==='good'?'okc':'badc'}">${l[1]}</h3><p>${l[2]}</p>`}
+seg('[data-lg]',b=>showLG(+b.dataset.lg));showLG(0);
+
+let belt=['w1','w2'],wn=3,cdone=false,handled=0;
+function drawB(msg){$('#belt').innerHTML=belt.map(x=>x==='pill'?'<i class="pill">☠</i>':`<i>${x}</i>`).join('')||'<span class="small">empty</span>';$('#bTxt').textContent=msg||`${handled} items processed.`}
+$('#bAdd').addEventListener('click',()=>{belt.push('w'+wn++);drawB()});
+$('#bPill').addEventListener('click',()=>{belt.push('pill');drawB('Pill queued. Work ahead of it will still be processed.')});
+$('#bTake').addEventListener('click',()=>{if(cdone)return drawB('Consumer has already stopped.');if(!belt.length)return drawB('Queue empty: the consumer blocks in take().');const x=belt.shift();if(x==='pill'){cdone=true;drawB(`Consumer took the pill and exited after ${handled} items. Nothing ahead of the pill was lost.`)}else{handled++;drawB()}});
+drawB();
+
+const TH=[['main',0],['worker-1',0],['cache-reaper',1],['GC helper',1]];let alive=TH.map(()=>true);
+function drawThr(){$('#thr').innerHTML=TH.map((t,i)=>`<button class="${t[1]?'d':''} ${alive[i]?'':'x'}" data-i="${i}">${t[0]}<br><span class="small">${t[1]?'daemon':'normal'}</span></button>`).join('');
+  $$('#thr button').forEach(b=>b.addEventListener('click',()=>{alive[+b.dataset.i]=false;drawThr()}));
+  const normal=TH.some((t,i)=>!t[1]&&alive[i]);$('#thrTxt').innerHTML=normal?'JVM keeps running: at least one normal thread is alive.':'<b class="badc">Only daemon threads left: the JVM exits now.</b> Hooks run; the daemons are abandoned mid-step, with no finally blocks.'}
+$('#thrReset').addEventListener('click',()=>{alive=TH.map(()=>true);drawThr()});drawThr();
+
+quiz('#qQuiz','#qScore',[
+ {q:'Does interrupt() stop the target thread immediately?',o:['Yes','No, it sets a status the thread may check'],a:1,why:'Interruption is a request; the thread decides when to respond.'},
+ {q:'Your Runnable catches InterruptedException and can\'t rethrow it. You should…',o:['ignore it','call Thread.currentThread().interrupt()'],a:1,why:'Restore the status so the thread\'s owner can see it.'},
+ {q:'Which unblocks a thread waiting to enter a synchronized block?',o:['interrupt()','Nothing'],a:1,why:'Intrinsic lock waits are not interruptible.'},
+ {q:'With 3 producers and 1 consumer, how many poison pills should the consumer wait for?',o:['1','3'],a:1,why:'One per producer, so no producer\'s work is cut off.'},
+ {q:'Do finally blocks run in daemon threads when the JVM exits?',o:['Yes','No'],a:1,why:'Daemons are simply abandoned.'}]);
+
+})();
+</script>
+</body>
+</html>

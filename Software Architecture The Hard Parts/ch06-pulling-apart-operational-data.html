@@ -1,0 +1,599 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pulling Apart Operational Data</title>
+<meta name="description" content="Splitting the code is the easy half. Data has its own forces for and against breaking apart, a careful five-step migration, and a whole menu of database types to land in.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Shared base for The Hard Parts companion. Layout: a reading column on blueprint grid paper.
+   Blue ink = structure and services, orange pencil = coupling and data, green = good trade-off, red = bad trade-off.
+   Each section is one idea with one interactive drawing. */
+:root{
+  --paper:#f3f6fa; --surface:#ffffff; --ink:#12243a; --muted:#55677b; --grid:#dfe7f1; --line:#c8d5e3;
+  --blue:#1d5ea8; --blue-soft:#e1ebf8; --pencil:#c2410c; --pencil-soft:#fbe7da;
+  --ok:#2c7a45; --ok-soft:#e0f1e5; --bad:#b42318; --bad-soft:#fbe4e1; --mid:#a16207; --mid-soft:#fbf0d4;
+  --d1:#1d5ea8; --d2:#0f7a6e; --d3:#b26205; --d4:#b8216b; --d5:#6d4fc2;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1623; --surface:#122030; --ink:#e3ebf5; --muted:#94a6ba; --grid:#16263a; --line:#263a51;
+  --blue:#6ea9ee; --blue-soft:#15304f; --pencil:#f39a69; --pencil-soft:#3b2416;
+  --ok:#76cf91; --ok-soft:#163222; --bad:#f2877c; --bad-soft:#3d1b18; --mid:#e8c060; --mid-soft:#3a2f12;
+  --d1:#6ea9ee; --d2:#4fc9b9; --d3:#f1b458; --d4:#f27cb3; --d5:#b39cf5; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background-color:var(--paper);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px;color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 96px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+h1,h2,h3{font-family:var(--display);line-height:1.12;margin:0;text-wrap:balance}
+h1{font-size:clamp(2.1rem,6vw,3.4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:clamp(1.5rem,3.6vw,2rem);font-weight:800;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:600}
+p{margin:0;max-width:66ch}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;max-width:66ch}
+a{color:var(--blue);text-underline-offset:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stack{display:flex;flex-direction:column;gap:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;height:auto;min-width:520px}
+.svgbox.fit svg{min-width:0}
+.small{font-size:.92rem;color:var(--muted)}
+.key{font-weight:700}
+.blue{color:var(--blue)} .pencil{color:var(--pencil)} .okc{color:var(--ok)} .badc{color:var(--bad)} .midc{color:var(--mid)}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two,.three{grid-template-columns:1fr}}
+
+/* header */
+header{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.15rem;color:var(--muted)}
+.stamp{display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tag{font-family:var(--mono);font-size:.72rem;padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:var(--surface);color:var(--muted);text-decoration:none}
+a.tag:hover{border-color:var(--blue);color:var(--blue)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px}
+nav.toc a{font-size:.88rem;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+nav.toc a:hover{border-color:var(--blue);color:var(--blue)}
+
+/* section heading with step number */
+.sec-head{display:flex;gap:14px;align-items:baseline}
+.num{font-family:var(--mono);font-size:.85rem;color:var(--blue);border:1.5px solid var(--blue);border-radius:50%;width:2.1em;height:2.1em;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+
+/* controls */
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--paper);max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 13px;font-size:.92rem;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--blue);color:var(--surface);font-weight:600}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:7px 13px;font-size:.92rem}
+.btn:hover:not(:disabled){border-color:var(--blue)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--surface);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.row.between{justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--blue)}
+label.rng{display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+label.rng span b{font-family:var(--mono)}
+select{font:inherit;font-size:.92rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);max-width:100%}
+
+/* svg classes */
+.s-ink{fill:var(--ink)} .s-muted{fill:var(--muted)} .s-surface{fill:var(--surface)} .s-paper{fill:var(--paper)}
+.s-blue{fill:var(--blue)} .s-bluesoft{fill:var(--blue-soft)} .s-pencil{fill:var(--pencil)} .s-pencilsoft{fill:var(--pencil-soft)}
+.s-ok{fill:var(--ok)} .s-bad{fill:var(--bad)} .s-oksoft{fill:var(--ok-soft)} .s-badsoft{fill:var(--bad-soft)}
+.st-blue{stroke:var(--blue)} .st-ink{stroke:var(--ink)} .st-line{stroke:var(--line)} .st-pencil{stroke:var(--pencil)} .st-muted{stroke:var(--muted)}
+svg text{font-family:var(--body)}
+.t-mono{font-family:var(--mono)!important}
+.fade{transition:opacity .45s ease}
+.off{opacity:.12}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.flow{stroke-dasharray:6 6;animation:dash 1s linear infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+
+/* detail panel */
+.detail{border-left:4px solid var(--d1);padding:4px 0 4px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.callout{border-left:4px solid var(--pencil);background:var(--pencil-soft);padding:12px 16px;border-radius:0 8px 8px 0;display:flex;flex-direction:column;gap:6px}
+.callout.blue{border-color:var(--blue);background:var(--blue-soft);color:inherit}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b.h{font-family:var(--display);font-size:1.02rem}
+
+/* quiz rows */
+.quiz{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.q{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.q .opts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.q .opts button{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:4px 12px;font-size:.88rem}
+.q .fb{grid-column:1/-1;font-size:.92rem;padding:8px 12px;border-radius:6px}
+.fb.good{background:var(--ok-soft);color:var(--ok)} .fb.badf{background:var(--bad-soft);color:var(--bad)}
+.q .opts button.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.q .opts button.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+@media (max-width:560px){.q{grid-template-columns:1fr}.q .opts{justify-content:flex-start}}
+.score{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
+
+/* stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.step-cap{min-height:3.2em}
+.dots{display:flex;gap:6px}
+.dots i{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.dots i.on{background:var(--blue)}
+
+/* cards that open */
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.flip{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:92px;transition:border-color .2s,background .2s}
+.flip:hover{border-color:var(--blue)}
+.flip b{font-family:var(--display);font-size:1.02rem}
+.flip .more{font-size:.92rem;color:var(--muted)}
+.flip[aria-expanded="false"] .more{display:none}
+.flip[aria-expanded="false"]::after{content:"tap to open";font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:auto}
+.flip[aria-expanded="true"]{border-color:var(--blue);background:var(--blue-soft)}
+
+/* html bars */
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) 1fr auto;gap:10px;align-items:center;font-size:.92rem}
+.bar .track{height:18px;background:var(--paper);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;width:0;background:var(--blue);transition:width .9s cubic-bezier(.2,.8,.2,1)}
+.bar .val{font-family:var(--mono);font-size:.85rem;min-width:3.5em;text-align:right}
+@media (max-width:520px){.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;grid-row:2}}
+
+/* likert */
+.lk{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.lk .it{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+.lk .sc{display:flex;gap:3px}
+.lk .sc button{width:30px;height:30px;border:1px solid var(--line);background:var(--paper);border-radius:6px;font-size:.8rem;font-family:var(--mono);padding:0}
+.lk .sc button[aria-pressed="true"]{background:var(--blue);color:var(--surface);border-color:var(--blue)}
+@media (max-width:560px){.lk .it{grid-template-columns:1fr}}
+
+/* chips, recap */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.82rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--paper)}
+.recap{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.recap>div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.recap b{font-family:var(--display);font-size:1.02rem}
+.recap span{font-size:.93rem;color:var(--muted)}
+.big{font-family:var(--display);font-weight:800;font-size:clamp(2rem,6vw,2.8rem);line-height:1}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.stat span{font-size:.9rem;color:var(--muted)}
+table.t{border-collapse:collapse;width:100%;font-size:.92rem}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.t th{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tbl{overflow-x:auto}
+
+/* graph diagrams (box = measured construct, arrow = predicts) */
+.gnode{cursor:pointer}
+.gnode rect{transition:stroke-width .2s,opacity .3s}
+.gnode.sel rect{stroke-width:3}
+.gedge{transition:opacity .3s}
+.gdim{opacity:.15}
+
+/* chapter footer nav */
+.pager{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:20px}
+.pager a{text-decoration:none;display:flex;flex-direction:column;gap:2px;color:var(--ink);font-size:.95rem}
+.pager a span{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.pager a:hover b{color:var(--blue)}
+.pager .nx{text-align:right;align-items:flex-end}
+.pager .home{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+footer.src{font-size:.85rem;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.flow,.pulse{animation:none}.bar .fill{transition:none}html{scroll-behavior:auto}}
+
+/* additions for The Hard Parts */
+button.tag.theme{cursor:pointer;margin-left:auto}
+button.tag.theme:hover{border-color:var(--blue);color:var(--blue)}
+pre.code{margin:0;font-family:var(--mono);font-size:.82rem;line-height:1.55;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;color:var(--ink)}
+pre.code .k{color:var(--blue);font-weight:600} pre.code .c{color:var(--muted);font-style:italic} pre.code .s{color:var(--ok)}
+.rate{display:inline-flex;gap:3px;vertical-align:middle}
+.rate .dot{width:10px;height:10px;border-radius:50%;border:1.5px solid var(--blue);display:inline-block}
+.rate .dot.on{background:var(--blue)}
+.pc{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.pc>div{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--surface);display:flex;flex-direction:column;gap:6px}
+.pc h3{font-size:.95rem}.pc ul{margin:0;padding-left:1.1em;font-size:.92rem;display:flex;flex-direction:column;gap:4px}
+.pc .pro{border-top:4px solid var(--ok)}.pc .con{border-top:4px solid var(--bad)}
+@media (max-width:560px){.pc{grid-template-columns:1fr}}
+.adr{border:1px solid var(--line);border-radius:10px;background:var(--surface);overflow:hidden}
+.adr>div{padding:12px 16px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:4px}
+.adr>div:first-child{border-top:0;background:var(--blue-soft)}
+.adr b{font-family:var(--mono);font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.adr p{font-size:.95rem}
+.saga{border-left:4px solid var(--pencil);padding:10px 16px;background:var(--surface);border-radius:0 10px 10px 0;display:flex;flex-direction:column;gap:8px;font-size:.95rem}
+.saga .who{font-family:var(--mono);font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--pencil)}
+@media (min-width:561px){.q{grid-template-columns:minmax(200px,1fr) auto}}
+.q .opts{max-width:480px}.q .opts button{text-align:left;max-width:100%}
+.tabs{display:flex;flex-wrap:wrap;gap:6px}
+.tabs button{border:1px solid var(--line);background:var(--paper);border-radius:999px;padding:5px 12px;font-size:.88rem}
+.tabs button[aria-pressed="true"]{background:var(--blue);border-color:var(--blue);color:var(--surface)}
+
+/* page */
+
+.map3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.map3>div{border:1px solid var(--line);border-radius:10px;background:var(--surface);padding:12px;display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+.map3 b{font-family:var(--display)} .map3 .arr{color:var(--pencil);font-family:var(--mono);font-size:.8rem}
+@media (max-width:560px){.map3{grid-template-columns:1fr}}
+.drv{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.drv button{border:1px solid var(--line);background:var(--paper);border-radius:8px;padding:8px 10px;text-align:left;font-size:.88rem;display:flex;flex-direction:column;gap:2px}
+.drv button i{font-style:normal;font-size:.8rem;color:var(--muted)}
+.drv button[aria-pressed="true"].dis{background:var(--blue-soft);border-color:var(--blue)}
+.drv button[aria-pressed="true"].int{background:var(--pencil-soft);border-color:var(--pencil)}
+@media (max-width:520px){.drv{grid-template-columns:1fr}}
+.qt{display:flex;flex-direction:column;gap:4px}
+.qt .r{display:grid;grid-template-columns:34px 1fr 90px 60px;gap:8px;align-items:center;font-size:.9rem}
+.qt .r .mono{font-size:.8rem}
+.qt .r button{width:26px;height:26px;padding:0;border:1px solid var(--line);border-radius:6px;background:var(--paper)}
+.qt .bar2{height:14px;border:1px solid var(--line);border-radius:4px;background:var(--paper);position:relative;overflow:hidden}
+.qt .bar2 i{position:absolute;left:0;top:0;bottom:0;background:var(--blue);opacity:.35}
+.qt .bar2 em{position:absolute;left:0;top:0;bottom:0;background:var(--blue)}
+.tchips{display:flex;flex-wrap:wrap;gap:6px}
+.tchips button{font-family:var(--mono);font-size:.78rem;border:1.5px solid var(--line);background:var(--surface);border-radius:6px;padding:4px 8px}
+.tchips button.sel{outline:2px solid var(--ink)}
+.dz{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.dz button{border:2px dashed var(--line);border-radius:10px;background:var(--paper);min-height:70px;padding:8px;text-align:left;font-size:.85rem;display:flex;flex-direction:column;gap:4px}
+.dz button b{font-family:var(--display)}
+@media (max-width:560px){.dz{grid-template-columns:1fr 1fr}}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="stamp"><a class="tag" href="index.html">The Hard Parts · visual companion</a><span class="tag">Part I · Chapter 6 of 15</span><button class="tag theme" id="themeBtn" type="button" aria-label="Toggle light or dark theme">Theme</button></div>
+  <h1>Pulling Apart Operational Data</h1>
+  <p class="lede">Splitting the code is the easy half. Data has its own forces for and against breaking apart, a careful five-step migration, and a whole menu of database types to land in.</p>
+  <nav class="toc" aria-label="Sections"><a href="#harder">Why harder</a><a href="#drivers">Drivers</a><a href="#change">Change control</a><a href="#conn">Connections</a><a href="#ft">Fault tolerance</a><a href="#integrators">Integrators</a><a href="#five">Five steps</a><a href="#domains">Data domains</a><a href="#types">Database types</a><a href="#poly">Polyglot</a><a href="#quiz">Quick check</a></nav>
+</header>
+
+<section id="harder" class="stack">
+  <div class="sec-head"><span class="num">1</span><h2>Data is harder to split than code</h2></div>
+  <p>The Sysops Squad now runs as domain services, all on one database. Addison starts on the data, and immediately learns the first lesson: bring the data architect and DBAs in from day one. Data is usually the company's most important asset, so the risk is higher, and data is tightly coupled to functionality, so seams are harder to find. Microservices insist on splitting it; service-based architecture lets services share it. Luckily, the code techniques translate.</p>
+  <div class="map3">
+    <div><span class="arr">component →</span><b>Data domain</b><span class="small">a group of related tables used together</span></div>
+    <div><span class="arr">class file →</span><b>Table</b><span class="small">the unit you move between domains</span></div>
+    <div><span class="arr">class coupling →</span><b>Foreign keys, views, triggers, stored procedures</b><span class="small">the ties you must cut</span></div>
+  </div>
+</section>
+
+<section id="drivers" class="stack">
+  <div class="sec-head"><span class="num">2</span><h2>Disintegrators versus integrators</h2></div>
+  <p>Six <b>data disintegrators</b> argue for breaking data apart; two <b>data integrators</b> argue for keeping it together. Getting data granularity right means balancing them for your system. Switch on the forces that apply to you.</p>
+  <div class="sheet">
+    <div class="drv" id="drv"></div>
+    <div class="svgbox"><svg id="balSvg" viewBox="0 0 640 190" role="img" aria-label="Balance between disintegrators and integrators"></svg></div>
+    <p id="balTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="change" class="stack">
+  <div class="sec-head"><span class="num">3</span><h2>Change control and the forgotten service</h2></div>
+  <p>Adding a table or column rarely breaks anything. Dropping or renaming a column, or changing its type, is a <b>breaking change</b>: every service whose SQL touches it must be changed, tested and deployed with the database. The real danger is the service nobody remembered. Try a change on a shared database.</p>
+  <div class="sheet">
+    <div class="row"><label class="rng" style="flex:1;min-width:180px"><span>Services sharing the database: <b id="svV"></b></span><input type="range" id="sv" min="3" max="40" value="12"></label>
+    <div class="seg" role="group" aria-label="Change"><button data-ch="add" aria-pressed="true">Add a column</button><button data-ch="drop" aria-pressed="false">Drop a column</button></div></div>
+    <div class="svgbox fit"><svg id="chSvg" viewBox="0 0 600 200" role="img" aria-label="Services affected by a schema change"></svg></div>
+    <p id="chTxt" aria-live="polite"></p>
+  </div>
+  <p>A bounded context fixes this: the service that <b>owns</b> (writes) the data is the only one touching its tables; everyone else asks it through a contract. Because the contract is not the schema, the owner can absorb a breaking change.</p>
+  <div class="two">
+    <pre class="code"><span class="c">-- owner's private table</span>
+<span class="k">CREATE TABLE</span> wishlist (
+  customer_id  VARCHAR(10),
+  item_id      VARCHAR(20),
+  qty          INT,
+  <span id="dropCol">expires_on   DATE</span>
+);</pre>
+    <pre class="code"><span class="c">// contract other services see</span>
+{ "custId": "C123",
+  "itemId": "SKU-9",
+  "quantity": 2,
+  "expiresAt": <span id="cv">1767139200000</span> }</pre>
+  </div>
+  <div class="row"><button class="btn" id="dropBtn">Business stops expiring items: drop the column</button><span class="small" id="dropTxt" aria-live="polite"></span></div>
+</section>
+
+<section id="conn" class="stack">
+  <div class="sec-head"><span class="num">4</span><h2>Connection management and scalability</h2></div>
+  <p>In a monolith, the app server owns one connection pool. In a distributed system, every <i>instance</i> of every service brings its own pool. Slide the numbers to see why a shared database runs out.</p>
+  <div class="sheet">
+    <div class="drv" style="grid-template-columns:repeat(auto-fill,minmax(200px,1fr))">
+      <label class="rng"><span>Services: <b id="c1v"></b></span><input type="range" id="c1" min="5" max="80" value="50"></label>
+      <label class="rng"><span>Connections per pool: <b id="c2v"></b></span><input type="range" id="c2" min="2" max="20" value="10"></label>
+      <label class="rng"><span>Instances per service: <b id="c3v"></b></span><input type="range" id="c3" min="1" max="6" value="2"></label>
+    </div>
+    <div class="bars" id="cBars"></div>
+    <p id="cTxt" class="small" aria-live="polite"></p>
+  </div>
+  <p>One remedy while still sharing: a <b>connection quota</b> per service, kept in external configuration. Start with even quotas, measure with fitness functions, then rebalance. Five services share 100 connections; move capacity until nobody waits.</p>
+  <div class="sheet">
+    <div class="qt" id="qt"></div>
+    <p id="qtTxt" class="small" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="ft" class="stack">
+  <div class="sec-head"><span class="num">5</span><h2>Fault tolerance, quanta and database type</h2></div>
+  <p>A shared database is a single point of failure and, as Chapter 2 showed, forces every service into one architecture quantum. Splitting the data lets two services with different needs form their own quantum, and lets some data move to a better-suited database type, for example key-value reference data like country codes.</p>
+  <div class="sheet">
+    <div class="row"><div class="seg" role="group" aria-label="Topology"><button data-db="one" aria-pressed="true">One shared database</button><button data-db="two" aria-pressed="false">Split into two</button></div><button class="btn" id="crash">Crash a database</button></div>
+    <div class="svgbox"><svg id="ftSvg" viewBox="0 0 660 220" role="img" aria-label="Services, databases and quantum boundaries"></svg></div>
+    <p id="ftTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="integrators" class="stack">
+  <div class="sec-head"><span class="num">6</span><h2>What holds data together</h2></div>
+  <p>Foreign keys, views, triggers and stored procedures exist for integrity. Telling your DBA that every cross-domain one must go is a hard conversation, and yet a database-per-service demands it. And when one business action writes to tables in two databases, there is no single ACID transaction any more. Step through what is lost.</p>
+  <div class="sheet stepper" id="ig"><div class="svgbox"><svg id="igSvg" viewBox="0 0 660 200" role="img" aria-label="Tables, foreign keys and transactions across a split"></svg></div></div>
+  <div class="saga"><span class="who">Sysops Squad</span><span>Dana, the data architect, is skeptical. Addison shows logs: reporting queries run in parallel threads, grab every connection, and ticket creation times out waiting. Devon shows the projected services and instances, each with its own pool. Connection management, scalability and fault tolerance win the argument.</span></div>
+</section>
+
+<section id="five" class="stack">
+  <div class="sec-head"><span class="num">7</span><h2>The five-step process</h2></div>
+  <p>An evolutionary, iterative way to go from one database to many, using the <b>data domain</b> as the vehicle. Picture the database as a soccer ball: each white hexagon a data domain. Relationships inside a hexagon stay; the ones crossing seams must be cut.</p>
+  <div class="sheet stepper" id="fs"><div class="svgbox"><svg id="fsSvg" viewBox="0 0 660 270" role="img" aria-label="Five-step database decomposition"></svg></div></div>
+  <div class="pc"><div class="pro"><h3>Data sovereignty per service: benefits</h3><ul><li>Change a schema without affecting other domains.</li><li>Each service can choose the best database type.</li></ul></div><div class="con"><h3>Shortcomings</h3><ul><li>Slow when a service needs large volumes of others' data.</li><li>No referential integrity across domains: data quality risk.</li><li>Stored procedures that span domains must move into services.</li></ul></div></div>
+</section>
+
+<section id="domains" class="stack">
+  <div class="sec-head"><span class="num">8</span><h2>Assign the Sysops Squad tables</h2></div>
+  <p>Step 1 in practice. Tap a table, then tap the data domain it belongs to.</p>
+  <div class="sheet">
+    <div class="tchips" id="tch"></div>
+    <div class="dz" id="dz"></div>
+    <div class="row between"><span class="small" id="dzTxt" aria-live="polite">Pick a table.</span><b class="score" id="dzScore"></b></div>
+  </div>
+</section>
+
+<section id="types" class="stack">
+  <div class="sec-head"><span class="num">9</span><h2>Choosing a database type</h2></div>
+  <p>Since around 2005 the database world has exploded, a real paradox of choice. The authors compare types on learning curve, ease of modeling, scalability, availability and partition tolerance, consistency, ecosystem maturity, and read or write priority. Explore the families.</p>
+  <div class="sheet">
+    <div class="tabs" id="dbt" role="group" aria-label="Database type"></div>
+    <div class="detail" id="dbInfo" aria-live="polite"></div>
+  </div>
+  <div class="callout blue"><b class="h">Aggregates and "schema-less"</b><span>NoSQL stores are aggregate-oriented: a ticket and everything that belongs to it travels as one unit, which spreads easily across a cluster and avoids joins, but aggregate boundaries are hard to change and cross-aggregate analysis is hard. And "schema-less" is misleading: the schema is still there, just implicit, and the application must cope with several versions of it.</span></div>
+  <div class="sheet"><div class="row between"><h3>Which type fits?</h3><span class="score" id="tyScore"></span></div><div class="quiz" id="tyQuiz"></div></div>
+</section>
+
+<section id="poly" class="stack">
+  <div class="sec-head"><span class="num">10</span><h2>Sysops Squad: surveys in a document database</h2></div>
+  <p>Marketing wants to change surveys quickly, and rendering relational survey tables is a pain for the UI team. The product owner confirms the business need, so surveys move to a document store. The open question is aggregate shape.</p>
+  <div class="sheet">
+    <div class="seg" role="group" aria-label="Aggregate design"><button data-ag="one" aria-pressed="true">Single aggregate, questions embedded</button><button data-ag="split" aria-pressed="false">Survey and question aggregates</button></div>
+    <pre class="code" id="agCode"></pre>
+    <p id="agTxt" aria-live="polite"></p>
+  </div>
+</section>
+
+<section id="quiz" class="stack">
+  <div class="sec-head"><span class="num">11</span><h2>Quick check</h2></div>
+  <div class="sheet"><div class="row between"><h3>Five questions</h3><span class="score" id="qScore"></span></div><div class="quiz" id="qQuiz"></div></div>
+</section>
+
+<div class="stack">
+  <footer class="src">Companion notes for <i>Software Architecture: The Hard Parts</i> by Neal Ford, Mark Richards, Pramod Sadalage and Zhamak Dehghani (O'Reilly, 2021). Explanations, examples, code and drawings are original summaries, not copied from the book.</footer>
+  <nav class="pager" aria-label="Chapters"><a class="pv" href="ch05-component-decomposition-patterns.html"><span>Previous · Chapter 5</span><b>Component-Based Decomposition Patterns</b></a><a class="home" href="index.html">All chapters</a><a class="nx" href="ch07-service-granularity.html"><span>Next · Chapter 7</span><b>Service Granularity</b></a></nav>
+</div>
+</div>
+<script>
+(function(){
+/* Shared helpers for every page of The Hard Parts companion. */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const NS='http://www.w3.org/2000/svg';
+function el(tag,attrs,txt){const e=document.createElementNS(NS,tag);for(const k in (attrs||{}))e.setAttribute(k,attrs[k]);if(txt!=null)e.textContent=txt;return e}
+function press(group,btn){group.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b===btn?'true':'false'))}
+function seg(sel,fn){$$(sel).forEach(b=>b.addEventListener('click',()=>{press(b.parentNode,b);fn(b)}))}
+const store={get(k,d){try{const v=localStorage.getItem('hp:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('hp:'+k,JSON.stringify(v))}catch(e){}}};
+function quiz(root,scoreEl,items,labels){
+  let right=0;root=typeof root==='string'?$(root):root;scoreEl=typeof scoreEl==='string'?$(scoreEl):scoreEl;
+  items.forEach(it=>{const L=it.o||labels;
+    const row=document.createElement('div');row.className='q';
+    row.innerHTML=`<span>${it.q}</span><div class="opts">${L.map((l,i)=>`<button data-i="${i}">${l}</button>`).join('')}</div>`;
+    const fb=document.createElement('div');fb.className='fb';fb.hidden=true;row.appendChild(fb);
+    row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+      if(row.dataset.done)return;row.dataset.done=1;const ok=+b.dataset.i===it.a;if(ok)right++;
+      b.classList.add(ok?'right':'wrong');if(!ok)row.querySelector(`[data-i="${it.a}"]`).classList.add('right');
+      fb.hidden=false;fb.className='fb '+(ok?'good':'badf');fb.textContent=(ok?'Right. ':'Not quite. ')+it.why;
+      scoreEl.textContent=`${right} / ${items.length}`;}));
+    root.appendChild(row);});
+  scoreEl.textContent=`0 / ${items.length}`;
+}
+/* stepper: root holds .step-cap, .dots, [data-prev], [data-next]; apply(i) updates the drawing */
+function stepper(id,steps,apply){
+  const r=$(id);let i=0;const cap=r.querySelector('.step-cap'),dots=r.querySelector('.dots'),prev=r.querySelector('[data-prev]'),next=r.querySelector('[data-next]');
+  dots.innerHTML=steps.map(()=>'<i></i>').join('');
+  function go(n){i=Math.max(0,Math.min(steps.length-1,n));cap.innerHTML=`<b>Step ${i+1} of ${steps.length}.</b> ${steps[i]}`;dots.querySelectorAll('i').forEach((d,k)=>d.classList.toggle('on',k<=i));prev.disabled=i===0;next.textContent=i===steps.length-1?'Replay':'Next step';apply(i)}
+  prev.addEventListener('click',()=>go(i-1));next.addEventListener('click',()=>go(i===steps.length-1?0:i+1));go(0);return go;
+}
+function stepHTML(){return '<div class="step-cap"></div><div class="row between"><div class="dots"></div><div class="row"><button class="btn" data-prev>Back</button><button class="btn primary" data-next>Next step</button></div></div>'}
+/* cards: [{t,d}] into a grid of tap-to-open cards */
+function cards(sel,list){const r=$(sel);r.innerHTML=list.map(c=>`<button class="flip" aria-expanded="false"${c.c?` style="border-top:4px solid var(--${c.c})"`:''}><b>${c.t}</b><span class="more">${c.d}</span></button>`).join('');
+  r.querySelectorAll('.flip').forEach(f=>f.addEventListener('click',()=>f.setAttribute('aria-expanded',f.getAttribute('aria-expanded')==='true'?'false':'true')))}
+/* html bars: [{l,v,c,txt}] with max */
+function bars(sel,data,max,fmt){const r=typeof sel==='string'?$(sel):sel;fmt=fmt||(v=>v);
+  r.innerHTML=data.map(d=>`<div class="bar"><span>${d.l}</span><div class="track"><div class="fill" style="background:var(--${d.c||'blue'})"></div></div><span class="val">${d.txt!=null?d.txt:fmt(d.v)}</span></div>`).join('');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>r.querySelectorAll('.fill').forEach((f,i)=>f.style.width=Math.max(0,Math.min(100,data[i].v/max*100))+'%')))}
+/* likert: statements -> 1..7 buttons, cb(mean, answers) */
+function likert(sel,items,cb,init){const r=$(sel);const ans=items.map((_,i)=>init?init[i]:4);
+  r.innerHTML=items.map((t,i)=>`<div class="it"><span>${t}</span><div class="sc" role="group" aria-label="Agreement 1 to 7">${[1,2,3,4,5,6,7].map(n=>`<button data-i="${i}" data-n="${n}" aria-pressed="${ans[i]===n}">${n}</button>`).join('')}</div></div>`).join('');
+  r.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ans[+b.dataset.i]=+b.dataset.n;press(b.parentNode,b);cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans)}));
+  cb(ans.reduce((a,b)=>a+b,0)/ans.length,ans);}
+/* box-and-arrow research model. spec {nodes:[{id,x,y,w,h,t,c}], edges:[[from,to,neg]], info:{id:html}, start} */
+function graph(svgSel,spec,infoSel){
+  const svg=$(svgSel),info=infoSel?$(infoSel):null;svg.innerHTML='';
+  const N={};spec.nodes.forEach(n=>{n.w=n.w||150;n.h=n.h||52;N[n.id]=n});
+  const gE=el('g'),gN=el('g');svg.appendChild(gE);svg.appendChild(gN);
+  function clip(n,dx,dy){const hw=n.w/2+5,hh=n.h/2+5;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return[n.x+dx*t,n.y+dy*t]}
+  const edges=spec.edges.map(([f,t,neg])=>{const a=N[f],b=N[t];const dx=b.x-a.x,dy=b.y-a.y;const L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const p=clip(a,ux,uy),q=clip(b,-ux,-uy);const col=neg?'var(--bad)':'var(--muted)';
+    const g=el('g',{class:'gedge'});const ln=el('line',{x1:p[0],y1:p[1],x2:q[0]-ux*6,y2:q[1]-uy*6,stroke:col,'stroke-width':2});
+    if(neg)ln.setAttribute('stroke-dasharray','5 4');
+    const hx=q[0],hy=q[1],px=-uy,py=ux;const head=el('polygon',{points:`${hx},${hy} ${hx-ux*11+px*5.5},${hy-uy*11+py*5.5} ${hx-ux*11-px*5.5},${hy-uy*11-py*5.5}`,fill:col});
+    g.appendChild(ln);g.appendChild(head);
+    if(neg){const m=el('text',{x:(p[0]+q[0])/2+px*10,y:(p[1]+q[1])/2+py*10+4,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--bad)'},'−');g.appendChild(m)}
+    gE.appendChild(g);return{f,t,g,ln}});
+  const nodes=spec.nodes.map(n=>{const g=el('g',{class:'gnode',tabindex:0,role:'button'});const c=n.c||'blue';
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:n.w,height:n.h,rx:8,fill:`var(--surface)`,stroke:`var(--${c})`,'stroke-width':1.6}));
+    g.appendChild(el('rect',{x:n.x-n.w/2,y:n.y-n.h/2,width:5,height:n.h,rx:2,fill:`var(--${c})`}));
+    const lines=n.t.split('\n');lines.forEach((l,i)=>g.appendChild(el('text',{x:n.x+2,y:n.y+(i-(lines.length-1)/2)*15+4.5,'text-anchor':'middle','font-size':12.5,'font-weight':600,fill:'var(--ink)'},l)));
+    g.addEventListener('click',()=>sel(n.id));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sel(n.id)}});
+    gN.appendChild(g);return{id:n.id,g}});
+  function sel(id){const on=new Set([id]);edges.forEach(e=>{const hit=e.f===id||e.t===id;if(hit){on.add(e.f);on.add(e.t)}e.g.classList.toggle('gdim',!hit);e.ln.classList.toggle('flow',hit)});
+    nodes.forEach(n=>{n.g.classList.toggle('gdim',!on.has(n.id));n.g.classList.toggle('sel',n.id===id)});
+    if(info){const n=N[id];info.style.borderLeftColor=`var(--${n.c||'blue'})`;info.innerHTML=`<span class="eyebrow">${spec.kind||'Construct'}</span><h3 style="color:var(--${n.c||'blue'})">${n.t.replace(/\n/g,' ')}</h3><p>${(spec.info||{})[id]||''}</p>`}}
+  function clear(){edges.forEach(e=>{e.g.classList.remove('gdim');e.ln.classList.remove('flow')});nodes.forEach(n=>n.g.classList.remove('gdim','sel'))}
+  if(spec.start)sel(spec.start);return{sel,clear};
+}
+function fmtPct(v){return Math.round(v)+'%'}
+/* theme toggle: follows the system until the reader picks one */
+(function(){const r=document.documentElement,b=document.getElementById('themeBtn');const t=store.get('theme',null);if(t)r.setAttribute('data-theme',t);
+  function cur(){return r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light')}
+  function lab(){if(b)b.textContent=cur()==='dark'?'Light theme':'Dark theme'}
+  if(b)b.addEventListener('click',()=>{const n=cur()==='dark'?'light':'dark';r.setAttribute('data-theme',n);store.set('theme',n);lab()});lab()})();
+/* star / dot rating: n of max */
+function rateDots(n,max){max=max||5;let s='';for(let i=0;i<max;i++)s+=`<i class="dot${i<n?' on':''}"></i>`;return `<span class="rate" aria-label="${n} of ${max}">${s}</span>`}
+
+
+/* drivers balance */
+const DRV=[['dis','Change control','How many services break on a table change?'],['dis','Connection management','Can the DB serve every service\'s pool?'],['dis','Scalability','Can the DB keep up as services scale?'],['dis','Fault tolerance','How many services die with the DB?'],['dis','Architectural quantum','Is one DB forcing one quantum?'],['dis','Database type optimization','Would some data fit another type better?'],['int','Data relationships','FKs, views and triggers tie tables together'],['int','Database transactions','Need one ACID unit of work?']];
+const on=new Set([0,1,6]);
+$('#drv').innerHTML=DRV.map((d,i)=>`<button class="${d[0]}" data-i="${i}" aria-pressed="${on.has(i)}"><b>${d[0]==='dis'?'Break apart':'Keep together'}: ${d[1]}</b><i>${d[2]}</i></button>`).join('');
+$$('#drv button').forEach(b=>b.addEventListener('click',()=>{const i=+b.dataset.i;on.has(i)?on.delete(i):on.add(i);b.setAttribute('aria-pressed',on.has(i));rBal()}));
+function rBal(){const d=[...on].filter(i=>DRV[i][0]==='dis').length,g=[...on].filter(i=>DRV[i][0]==='int').length*2;const ang=Math.max(-16,Math.min(16,(g-d)*4));const s=$('#balSvg');s.innerHTML='';
+  s.appendChild(el('polygon',{points:'320,178 296,190 344,190',fill:'var(--muted)'}));s.appendChild(el('line',{x1:320,y1:50,x2:320,y2:178,stroke:'var(--muted)','stroke-width':4}));
+  const gr=el('g',{transform:`rotate(${ang} 320 50)`});gr.appendChild(el('line',{x1:110,y1:50,x2:530,y2:50,stroke:'var(--ink)','stroke-width':4}));
+  [[110,d,'blue','Break apart'],[530,g/2,'pencil','Keep together']].forEach(([x,n,c,t])=>{gr.appendChild(el('rect',{x:x-70,y:104,width:140,height:12,rx:4,fill:`var(--${c})`}));gr.appendChild(el('line',{x1:x,y1:50,x2:x-50,y2:104,stroke:'var(--muted)'}));gr.appendChild(el('line',{x1:x,y1:50,x2:x+50,y2:104,stroke:'var(--muted)'}));
+    for(let k=0;k<n;k++)gr.appendChild(el('rect',{x:x-60+k*(c==='pencil'?44:20),y:c==='pencil'?62:84,width:c==='pencil'?40:18,height:c==='pencil'?40:18,rx:3,fill:`var(--${c})`,opacity:.75}));gr.appendChild(el('text',{x,y:140,'text-anchor':'middle','font-size':12.5,'font-weight':700,fill:`var(--${c})`},t))});s.appendChild(gr);
+  $('#balTxt').textContent=d>g?'The disintegrators win here: there is a case for splitting the data, at least into a few domains.':g>d?'The integrators win: keep these tables together, or combine their domains (Chapter 9 covers shared ownership).':'Balanced: look for a middle granularity, for instance a few coarse data domains rather than one per service.';}
+rBal();
+$('#balTxt').insertAdjacentHTML('afterend','<p class="small">Integrators are drawn heavier on purpose: losing referential integrity or atomicity is costly, so each one outweighs a single disintegrator.</p>');
+
+/* change control */
+let chm='add';function rCh(){const n=+$('#sv').value;$('#svV').textContent=n;const s=$('#chSvg');s.innerHTML='';
+  s.appendChild(el('ellipse',{cx:300,cy:165,rx:70,ry:14,fill:'var(--surface)',stroke:'var(--ink)','stroke-width':1.5}));s.appendChild(el('text',{x:300,y:170,'text-anchor':'middle','font-size':11.5,fill:'var(--ink)'},'shared database'));
+  const users=Math.max(2,Math.round(n*.35)),forgot=Math.max(1,Math.round(users*.25));let hit=0;
+  for(let i=0;i<n;i++){const cols=Math.min(n,20),row=Math.floor(i/cols),col=i%cols,x=30+col*(540/Math.max(1,cols-1)),y=25+row*42;const uses=i%3===0&&hit<users;if(uses)hit++;
+    const broken=chm==='drop'&&uses;const forgotten=broken&&hit<=forgot;
+    s.appendChild(el('line',{x1:x,y1:y+10,x2:300,y2:152,stroke:uses?(broken?'var(--bad)':'var(--blue)'):'var(--line)','stroke-width':uses?1.6:1}));
+    s.appendChild(el('rect',{x:x-11,y:y-10,width:22,height:20,rx:4,fill:forgotten?'var(--bad)':broken?'var(--mid-soft)':'var(--surface)',stroke:broken?'var(--bad)':'var(--blue)','stroke-width':1.5,class:forgotten?'pulse':''}))}
+  $('#chTxt').innerHTML=chm==='add'?'Adding a column: existing queries keep working. Nothing to coordinate.':`Dropping a column: <b>${users}</b> services read it and must be changed, tested and deployed together with the database. Impact analysis missed <b style="color:var(--bad)">${forgot}</b> of them (flashing red): broken in production until fixed. Now imagine 400 services.`}
+$('#sv').addEventListener('input',rCh);seg('[data-ch]',b=>{chm=b.dataset.ch;rCh()});rCh();
+let dropped=false;$('#dropBtn').addEventListener('click',()=>{dropped=!dropped;$('#dropCol').style.textDecoration=dropped?'line-through':'none';$('#dropCol').style.color=dropped?'var(--bad)':'';$('#cv').textContent=dropped?'0  /* never expires */':'1767139200000';
+  $('#dropTxt').textContent=dropped?'Only the owning service changes. The contract field stays; the owner fills it with 0 until consumers migrate.':'';$('#dropBtn').textContent=dropped?'Undo':'Business stops expiring items: drop the column'});
+
+/* connections */
+function rC(){const a=+$('#c1').value,b=+$('#c2').value,c=+$('#c3').value;$('#c1v').textContent=a;$('#c2v').textContent=b;$('#c3v').textContent=c;const tot=a*b*c,max=200;
+  bars('#cBars',[{l:'Monolith pool',v:200,c:'blue',txt:'200'},{l:'Distributed total',v:tot,c:tot>max?'bad':'ok',txt:tot.toLocaleString()},{l:'Database limit',v:max,c:'muted',txt:'200'}],Math.max(tot,400));
+  $('#cTxt').textContent=`${a} services × ${b} connections × ${c} instances = ${tot.toLocaleString()} connections. ${tot>max?'Expect connection waits, which show up as time-outs and tripped circuit breakers. Look for connection waits first when those appear.':'Within limits, for now: wait until the services start scaling.'}`}
+['c1','c2','c3'].forEach(k=>$('#'+k).addEventListener('input',rC));rC();
+const Q=[['A',20,5],['B',20,27],['C',20,15],['D',20,25],['E',20,14]];
+function rQ(){const used=Q.reduce((s,q)=>s+q[1],0);$('#qt').innerHTML=Q.map((q,i)=>{const u=Math.min(q[1],q[2]),wait=q[2]>q[1];return `<div class="r"><b>${q[0]}</b><div class="bar2" title="quota ${q[1]}, needs ${q[2]}"><i style="width:${q[1]/30*100}%"></i><em style="width:${u/30*100}%;background:${wait?'var(--bad)':'var(--blue)'}"></em></div><span class="mono">quota ${q[1]} · used ${u}</span><span class="row" style="gap:4px"><button data-i="${i}" data-d="-1" aria-label="Less for ${q[0]}">−</button><button data-i="${i}" data-d="1" aria-label="More for ${q[0]}">+</button></span></div>`}).join('');
+  $$('#qt button').forEach(b=>b.addEventListener('click',()=>{const i=+b.dataset.i,d=+b.dataset.d;const total=Q.reduce((s,q)=>s+q[1],0);if(d>0&&total>=100)return;if(Q[i][1]+d<1)return;Q[i][1]+=d;rQ()}));
+  const waits=Q.filter(q=>q[2]>q[1]).map(q=>q[0]);$('#qtTxt').innerHTML=`Allocated ${used} of 100. ${waits.length?`Connection waits: <b style="color:var(--bad)">${waits.join(', ')}</b>. Take spare capacity from services well under quota (A uses only 5).`:'<b style="color:var(--ok)">No waits.</b> But scale each service to 2 to 4 instances and real demand jumps well past 200 again: quotas are a stopgap, splitting the data is the cure.'}`}
+rQ();
+
+/* fault tolerance */
+let dbm='one',crashed=false;function rFt(){const s=$('#ftSvg');s.innerHTML='';const S=['A','B','C','D','E'];
+  if(dbm==='one'){s.appendChild(el('rect',{x:20,y:10,width:620,height:200,rx:16,fill:'none',stroke:'var(--pencil)','stroke-dasharray':'8 5','stroke-width':2}))}
+  else{s.appendChild(el('rect',{x:20,y:10,width:250,height:200,rx:16,fill:'none',stroke:'var(--pencil)','stroke-dasharray':'8 5','stroke-width':2}));s.appendChild(el('rect',{x:290,y:10,width:350,height:200,rx:16,fill:'none',stroke:'var(--pencil)','stroke-dasharray':'8 5','stroke-width':2}))}
+  const dbs=dbm==='one'?[[330,'shared DB',[0,1,2,3,4]]]:[[145,'DB 1',[0,1]],[465,'DB 2',[2,3,4]]];const down=new Set();if(crashed){const d=dbs[dbs.length-1];d[2].forEach(i=>down.add(i))}
+  S.forEach((n,i)=>{const x=dbm==='one'?90+i*120:(i<2?80+i*130:350+(i-2)*115);const db=dbs.find(d=>d[2].includes(i));s.appendChild(el('line',{x1:x,y1:72,x2:db[0],y2:150,stroke:down.has(i)?'var(--bad)':'var(--muted)','stroke-width':1.5,'stroke-dasharray':down.has(i)?'4 4':''}));
+    s.appendChild(el('rect',{x:x-40,y:36,width:80,height:36,rx:8,fill:down.has(i)?'var(--bad-soft)':'var(--surface)',stroke:down.has(i)?'var(--bad)':'var(--blue)','stroke-width':2}));s.appendChild(el('text',{x,y:59,'text-anchor':'middle','font-size':13,'font-weight':700,fill:down.has(i)?'var(--bad)':'var(--ink)'},'Service '+n))});
+  dbs.forEach((d,k)=>{const dead=crashed&&k===dbs.length-1;s.appendChild(el('ellipse',{cx:d[0],cy:165,rx:60,ry:14,fill:dead?'var(--bad-soft)':'var(--surface)',stroke:dead?'var(--bad)':'var(--ink)','stroke-width':1.6}));s.appendChild(el('text',{x:d[0],y:170,'text-anchor':'middle','font-size':12,fill:dead?'var(--bad)':'var(--ink)'},dead?d[1]+': down':d[1]))});
+  const alive=5-down.size;$('#ftTxt').textContent=dbm==='one'?(crashed?'The single database is down, so every service is down. One quantum, one point of failure.':'One shared database: all five services and the database form a single quantum, whatever characteristics A and B need.'):(crashed?`DB 2 is down. Services A and B, in their own quantum, keep running: ${alive} of 5 still up.`:'A and B now have their own data and form their own quantum, so they can get different scalability or availability from C, D and E.');$('#crash').textContent=crashed?'Restore':'Crash a database'}
+seg('[data-db]',b=>{dbm=b.dataset.db;crashed=false;rFt()});$('#crash').addEventListener('click',()=>{crashed=!crashed;rFt()});rFt();
+
+/* integrators stepper */
+$('#ig').insertAdjacentHTML('beforeend',stepHTML());
+stepper('#ig',['One database: ticket, ticket_type and sysops_user are linked by foreign keys, and a view joins them for reports. Integrity is guaranteed by the database.','Split ticket data from profile data. The foreign key to sysops_user and the cross-domain view must be dropped. Integrity is now the application\'s job.','A workflow writes a ticket and updates the expert\'s workload. In one database that is a single ACID transaction: both commit or neither.','Across two databases, the first write commits and the second fails. Without a single unit of work, the data is now inconsistent: the problem Chapters 9 and 12 tackle.'],i=>{const s=$('#igSvg');s.innerHTML='';
+  const T=[['ticket',90,60],['ticket_type',90,140],['sysops_user',430,60],['expertise',430,140]];const split=i>=1;
+  if(split){s.appendChild(el('line',{x1:310,y1:10,x2:310,y2:195,stroke:'var(--pencil)','stroke-width':2,'stroke-dasharray':'6 5'}));s.appendChild(el('text',{x:150,y:194,'text-anchor':'middle','font-size':11,class:'t-mono',fill:'var(--muted)'},'ticket DB'));s.appendChild(el('text',{x:490,y:194,'text-anchor':'middle','font-size':11,class:'t-mono',fill:'var(--muted)'},'profile DB'))}
+  const fk=(a,b,cross)=>{const A=T[a],B=T[b];const ln=el('line',{x1:A[1]+120,y1:A[2]+15,x2:B[1],y2:B[2]+15,stroke:cross&&split?'var(--bad)':'var(--ok)','stroke-width':2,'stroke-dasharray':cross&&split?'5 4':''});s.appendChild(ln);if(cross&&split){const mx=(A[1]+120+B[1])/2,my=(A[2]+B[2])/2+15;s.appendChild(el('text',{x:mx,y:my-6,'text-anchor':'middle','font-size':16,'font-weight':800,fill:'var(--bad)'},'✕'))}};
+  s.appendChild(el('line',{x1:150,y1:90,x2:150,y2:140,stroke:'var(--ok)','stroke-width':2}));fk(0,2,true);s.appendChild(el('line',{x1:490,y1:90,x2:490,y2:140,stroke:'var(--ok)','stroke-width':2}));
+  T.forEach((t,k)=>{let st='var(--blue)',fill='var(--surface)';if(i===2&&(k===0||k===2)){fill='var(--ok-soft)';st='var(--ok)'}if(i===3&&k===0){fill='var(--ok-soft)';st='var(--ok)'}if(i===3&&k===2){fill='var(--bad-soft)';st='var(--bad)'}
+    s.appendChild(el('rect',{x:t[1],y:t[2],width:120,height:30,rx:5,fill,stroke:st,'stroke-width':2}));s.appendChild(el('text',{x:t[1]+60,y:t[2]+20,'text-anchor':'middle','font-size':11.5,class:'t-mono',fill:'var(--ink)'},t[0]))});
+  if(i===2)s.appendChild(el('text',{x:310,y:28,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--ok)'},'BEGIN … COMMIT (both)'));
+  if(i===3){s.appendChild(el('text',{x:150,y:40,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--ok)'},'committed'));s.appendChild(el('text',{x:490,y:40,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--bad)'},'failed'))}});
+
+/* five steps */
+const FS5=[['Analyze the database and create data domains','All services can reach all tables (shared database integration). Group related tables into candidate domains.'],['Assign tables to data domains','Create a schema per domain and move tables in (for example ALTER SCHEMA … TRANSFER). Synonyms can bridge cross-schema queries for now, but they are coupling points to remove later.'],['Separate database connections to data domains','The hardest step: each service connects only to its own schema; cross-domain data comes via the owning service, never the other schema. Synonyms go. Result: data sovereignty per service.'],['Move schemas to separate database servers','Still one server means still one quantum. Copy schemas to new servers by backup-and-restore (needs downtime) or replication (no downtime, more work).'],['Switch over to independent database servers','Point services at the new servers, drop the old schemas and connections. Now each server can be tuned, or even replaced with a different database type.']];
+$('#fs').insertAdjacentHTML('beforeend',stepHTML());
+stepper('#fs',FS5.map(f=>`<b>${f[0]}.</b> ${f[1]}`),i=>{const s=$('#fsSvg');s.innerHTML='';const D=[['Ticket','d1'],['Customer','d2'],['Survey','d3']];
+  D.forEach((d,k)=>{const x=120+k*210;s.appendChild(el('rect',{x:x-50,y:16,width:100,height:34,rx:7,fill:'var(--surface)',stroke:'var(--blue)','stroke-width':2}));s.appendChild(el('text',{x,y:38,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--ink)'},d[0]+' svc'))});
+  const servers=i>=3?3:1;
+  if(servers===1){s.appendChild(el('rect',{x:30,y:120,width:600,height:115,rx:14,fill:'var(--paper)',stroke:'var(--ink)','stroke-width':1.5}));s.appendChild(el('text',{x:40,y:136,'font-size':10.5,class:'t-mono',fill:'var(--muted)'},'one database server'))}
+  D.forEach((d,k)=>{const x=120+k*210;const sx=servers===1?x:x;const box=i>=1;if(servers===3){s.appendChild(el('rect',{x:x-80,y:120,width:160,height:115,rx:14,fill:'var(--paper)',stroke:i===3?'var(--mid)':'var(--ink)','stroke-width':1.5,'stroke-dasharray':i===3?'5 4':''}));s.appendChild(el('text',{x:x-70,y:136,'font-size':10,class:'t-mono',fill:'var(--muted)'},i===3?'replicating…':'own server'))}
+    if(box){s.appendChild(el('rect',{x:x-62,y:146,width:124,height:80,rx:8,fill:`var(--${d[1]})`,opacity:.15}));s.appendChild(el('rect',{x:x-62,y:146,width:124,height:80,rx:8,fill:'none',stroke:`var(--${d[1]})`,'stroke-width':1.5}));s.appendChild(el('text',{x,y:162,'text-anchor':'middle','font-size':10.5,class:'t-mono',fill:`var(--${d[1]})`},'schema '+d[0].toLowerCase()))}
+    for(let t=0;t<3;t++){s.appendChild(el('rect',{x:x-45+t*32,y:180,width:26,height:22,rx:3,fill:i===0?'var(--surface)':`var(--${d[1]})`,opacity:i===0?1:.6,stroke:`var(--${d[1]})`}))}
+    // connections
+    if(i<=1){D.forEach((_,j)=>s.appendChild(el('line',{x1:x,y1:50,x2:120+j*210,y2:146,stroke:j===k?'var(--blue)':'var(--bad)','stroke-width':1.3,opacity:j===k?1:.6})))}
+    else s.appendChild(el('line',{x1:x,y1:50,x2:x,y2:146,stroke:'var(--blue)','stroke-width':2}));
+    if(i>=2&&k<2)s.appendChild(el('line',{x1:x+50,y1:33,x2:x+170,y2:33,stroke:'var(--ok)','stroke-width':1.6,'stroke-dasharray':'4 4',class:'flow'}))});
+  if(i<=1)s.appendChild(el('text',{x:330,y:258,'text-anchor':'middle','font-size':11,fill:'var(--bad)'},'red: cross-domain access still possible'));
+  if(i>=2)s.appendChild(el('text',{x:330,y:258,'text-anchor':'middle','font-size':11,fill:'var(--ok)'},'other domains\' data via service calls (green dashes)'))});
+
+/* table assignment */
+const TB=[['customer','Customer'],['customer_notification','Customer'],['survey','Survey'],['question','Survey'],['survey_response','Survey'],['billing','Payment'],['contract','Payment'],['payment','Payment'],['sysops_user','Profile'],['expert_profile','Profile'],['expertise','Profile'],['location','Profile'],['article','Knowledge Base'],['tag','Knowledge Base'],['keyword','Knowledge Base'],['ticket','Ticketing'],['ticket_type','Ticketing'],['ticket_history','Ticketing']];
+const DZ=[['Customer','d2'],['Survey','d3'],['Payment','d4'],['Profile','d5'],['Knowledge Base','pencil'],['Ticketing','d1']];const placed={};let pick=null;
+function rDz(){$('#tch').innerHTML=TB.map((t,i)=>placed[i]?'':`<button data-i="${i}" class="${pick===i?'sel':''}">${t[0]}</button>`).join('')||'<span class="small okc">All tables placed.</span>';
+  $('#dz').innerHTML=DZ.map((d,k)=>`<button data-k="${k}" style="border-color:var(--${d[1]})"><b style="color:var(--${d[1]})">${d[0]}</b><span class="mono" style="font-size:.72rem">${Object.keys(placed).filter(i=>placed[i]===d[0]).map(i=>TB[i][0]).join(' ')}</span></button>`).join('');
+  $$('#tch button').forEach(b=>b.addEventListener('click',()=>{pick=+b.dataset.i;$('#dzTxt').textContent=`Where does ${TB[pick][0]} go?`;rDz()}));
+  $$('#dz button').forEach(b=>b.addEventListener('click',()=>{if(pick===null)return;const d=DZ[+b.dataset.k][0];if(TB[pick][1]===d){placed[pick]=d;$('#dzTxt').textContent=`Yes: ${TB[pick][0]} belongs to ${d}.`;pick=null}else{$('#dzTxt').textContent=`Not ${d}: think about which tables ${TB[pick][0]} is used with.`}rDz()}));
+  $('#dzScore').textContent=`${Object.keys(placed).length} / ${TB.length}`}
+rDz();
+
+/* database types */
+const DB=[['Relational','PostgreSQL, Oracle, SQL Server','SQL and ACID; the default for three decades. Flexible modeling of rows and tables, easy to learn, huge ecosystem. Usually scales vertically; replication and failover are complex. Favors consistency over availability. Balanced reads and writes.','Easy to learn · strong consistency · mature','Harder horizontal scaling'],
+ ['Key-value','Riak KV, DynamoDB, Redis','A hash table: get, put, delete by key, nothing else. No joins or "give me all keys". Very fast lookups and easy scaling. Tunable quorum for availability and consistency per operation. Read-leaning; great for sessions, caches and preferences.','Simple · very scalable · tunable','Query only by key; aggregate design is crucial'],
+ ['Document','MongoDB, Couchbase, DocumentDB','Key-value where the value is a readable JSON or XML tree, with indexes on its fields. Most popular NoSQL family. Forgiving aggregate design; sharding adds complexity and needs a shard key. Some support ACID within a collection. Read-leaning.','Easy learning · flexible model · big community','Sharding complexity; limited multi-document transactions'],
+ ['Column family','Cassandra, Scylla','Rows with varying sets of name-value columns, keyed by a row key. Hard to learn and to design row keys, though CQL helps. Scales horizontally for reads and writes; replication factor 3 by default; tunable consistency (ANY to ALL). Handles sparse data; ideal for very high write volumes.','Massive write throughput · availability','Steep learning; modeling takes iterations'],
+ ['Graph','Neo4j, TigerGraph','Nodes and explicit, directed edges. Traversals are fast because relationships are stored, not computed at query time. Steep learning curve; changing a relationship type is expensive. Many support ACID. Hard to shard, so write scale is limited. Read-heavy.','Relationship queries · built-in algorithms','Hard to model and to scale writes'],
+ ['NewSQL','VoltDB, ClustrixDB, MemSQL','SQL and ACID with automatic sharding and multiple active nodes, so horizontal scale and high availability without giving up familiar relational habits. Some offer wire compatibility with existing relational databases.','Familiar SQL · scale · consistency','Sharding design; some only as a service'],
+ ['Cloud native','Snowflake, Redshift, Datomic','Low operational burden, pay as you go, easy to experiment with. Learning curve varies wildly (Datomic stores immutable facts). Scaling is mostly a question of price. Snowflake and Redshift lean toward warehouse-style reads.','Low ops · elastic · cost transparency','Cloud-only; scarce expertise'],
+ ['Time-series','InfluxDB, kdb+, Timestream','Append-only points with timestamps and tags, queried by time windows. Easy to grasp, though "never update" takes unlearning. Use one fact per tag. Built for IoT, observability and tracking change over time; not general purpose.','Time-window analysis · append-only speed','Not a general-purpose store']];
+$('#dbt').innerHTML=DB.map((d,i)=>`<button data-i="${i}" aria-pressed="${i===0}">${d[0]}</button>`).join('');
+function rDb(i){const d=DB[i];$('#dbInfo').innerHTML=`<span class="eyebrow">e.g. ${d[1]}</span><h3>${d[0]}</h3><p>${d[2]}</p><div class="row"><span class="chip" style="background:var(--ok-soft);border-color:var(--ok)">+ ${d[3]}</span><span class="chip" style="background:var(--bad-soft);border-color:var(--bad)">− ${d[4]}</span></div>`}
+seg('#dbt button',b=>rDb(+b.dataset.i));rDb(0);
+quiz('#tyQuiz','#tyScore',[
+ {q:'User session data looked up by session id',o:['Key-value','Graph','Time-series'],a:0,why:'Pure lookup by key, read-heavy.'},
+ {q:'"Which experts have fixed problems similar to this one?" across many links',o:['Column family','Graph','Key-value'],a:1,why:'Relationship traversal is what graphs are for.'},
+ {q:'Ticket status changes recorded for trend analysis by time window',o:['Time-series','Document','NewSQL'],a:0,why:'Append-only timestamped facts.'},
+ {q:'Surveys whose questions change often and render straight to a web page',o:['Relational','Document','Column family'],a:1,why:'Self-describing JSON aggregates, as the Sysops Squad chose.'},
+ {q:'Billions of sensor writes per day across data centers',o:['Column family','Graph','Relational'],a:0,why:'Horizontal write scale and high availability.'}]);
+
+/* survey aggregate */
+const AG={one:`<span class="c">// one document per survey: a single get renders it</span>
+{ "surveyId": "S-12",
+  "title": "How did we do?",
+  "questions": [
+    { "text": "Was the problem fixed?", "type": "yesno",  "order": 1 },
+    { "text": "Rate your expert",       "type": "scale5", "order": 2 }
+  ] }`,split:`<span class="c">// survey references reusable question documents</span>
+{ "surveyId": "S-12", "title": "How did we do?",
+  "questions": [ { "ref": "Q-7", "order": 1 }, { "ref": "Q-9", "order": 2 } ] }
+
+{ "questionId": "Q-7", "text": "Was the problem fixed?", "type": "yesno" }
+{ "questionId": "Q-9", "text": "Rate your expert",       "type": "scale5" }`};
+const AGT={one:'Simplest for the UI: one read, render, done. The cost: a shared question is duplicated in every survey, so changing it means updating several documents. With only five survey types and mostly add or remove changes, the team accepted this.',split:'No duplication: a question can be reused across surveys and changed in one place. The cost: more reads and more assembly work in the UI, where most of the pain already was.'};
+seg('[data-ag]',b=>{$('#agCode').innerHTML=AG[b.dataset.ag];$('#agTxt').textContent=AGT[b.dataset.ag]});$('#agCode').innerHTML=AG.one;$('#agTxt').textContent=AGT.one;
+
+quiz('#qQuiz','#qScore',[
+ {q:'Which is a data integrator?',o:['Fault tolerance','Database transactions','Connection management'],a:1,why:'The need for one ACID unit of work pulls data together.'},
+ {q:'Which step of the five is usually hardest?',o:['Creating data domains','Separating connections so services only reach their own schema','Backing up schemas'],a:1,why:'All cross-schema access must be resolved in the services.'},
+ {q:'Why are synonyms only a temporary measure?',o:['They are slow','They remain coupling points between domains'],a:1,why:'They ease analysis, but the coupling must move to the application layer.'},
+ {q:'A service needs data from another domain. It should…',o:['Read the other schema directly','Ask the service that owns that data'],a:1,why:'Never reach into another domain\'s database.'},
+ {q:'Dropping a column is a…',o:['Breaking change','Non-breaking change'],a:0,why:'Any SQL that references it breaks.'}]);
+
+})();
+</script>
+</body>
+</html>
