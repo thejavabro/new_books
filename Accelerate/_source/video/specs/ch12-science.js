@@ -1,0 +1,31 @@
+CH({slug:'ch12-science',n:'12',part:'Part II · The research',sub:'What kind of research this is, and what it can and cannot claim.',end:'Theory first, then data.',scenes:[
+{type:'points',title:'Who collected it, and in what form?',items:[
+ {t:'Primary, quantitative',c:'green',d:'<b>This book.</b> New data, collected as numbers.'},
+ {t:'Primary, qualitative',c:'blue',d:'New interviews and field observation. Rich, but costly to analyse.'},
+ {t:'Secondary, quantitative',c:'amber',d:'Someone else’s numbers. Faster, but you are stuck with what exists.'},
+ {t:'Secondary, qualitative',c:'violet',d:'Book reports, case studies and literature summaries.'}],
+ cap:['Surveys can be quantitative: a Likert-type item records a <b>number</b>.','That consistency makes statistical analysis possible.']},
+{type:'stack',title:'Six types of analysis, from easy to hard',up:1,levels:[
+ {t:'Mechanistic',c:'muted',w:.42,d:'The exact changes that cause exact outcomes. Not done here.'},
+ {t:'Causal',c:'muted',w:.52,d:'Usually needs randomized studies, like an A/B test. Not done here.'},
+ {t:'Predictive',c:'muted',w:.62,d:'Forecasting future events. Not done here.'},
+ {t:'Inferential predictive',c:'green',w:.76,d:'Tests theory-based hypotheses in real organizations. <b>Every “drives” in the book.</b>'},
+ {t:'Exploratory',c:'blue',w:.88,d:'Looks for relationships: which variables move together.'},
+ {t:'Descriptive',c:'blue',w:1,d:'Summarizes the data, such as respondents per industry.'}],
+ cap:['Jeffrey Leek orders analysis by the knowledge, cost and time it demands.','The book’s claims sit on the <b>first three rungs</b>, plus classification.']},
+{type:'units',title:'Population and sample',cols:16,groups:[{n:96,l:'Population',d:'everyone you care about',c:'muted',show:120},{n:24,l:'Sample',d:'carefully defined and selected',c:'green'}],
+ cap:['You usually cannot ask everyone, so you study a sample.','Good sampling is what lets conclusions <b>carry over</b> to the population.']},
+{type:'scatter',title:'Correlation: how closely two things move together',xl:'variable A →',yl:'variable B →',seed:5,r:9,groups:[{n:110,cx:.5,cy:.5,sx:.17,sy:.17,r:.9,c:'blue'}],
+ side:'Pearson’s r<br><br>+1 &nbsp; perfect lockstep<br>0 &nbsp;&nbsp; no relationship<br>−1 &nbsp; perfect opposition',
+ cap:['Random noise…','…against a strong correlation, r around 0.9.']},
+{type:'stats',title:'Why correlation <b>isn’t enough</b>',items:[{v:.95,dec:2,pre:'r≈',l:'US cheese consumption vs. deaths by bedsheet entanglement',c:'red'},{v:200,l:'random series are plenty to find a “great” match by chance',c:'amber'}],
+ cap:['Correlation can come from a hidden third variable, or from pure chance.','Go fishing in enough data and you will <b>always catch something</b>.']},
+{type:'versus',title:'Inferential prediction: theory first',
+ a:{h:'Fishing in the data',c:'red',items:['Collect everything','Hunt for anything that correlates','Explain it afterwards']},
+ b:{h:'Theory-driven',c:'green',items:['Hypothesis from theory and prior evidence','Then collect the data','Test with regression or partial least squares']},
+ cap:['Randomized experiments are not possible here: no business will be the control group.','So the hypotheses come <b>before</b> the data.']},
+{type:'pipeline',title:'Classification: how the groups were found',stages:[{t:'Every response alone',d:'Each starts as its own group.'},{t:'Merge the two closest',d:'On the four delivery metrics.'},{t:'Repeat',d:'The merges build a tree.'},{t:'Read the tree',c:'green',d:'High, medium and low performers.'}],
+ note:'Hierarchical clustering: no preset number of groups.',
+ cap:['The tree shows how the groups relate, which helps interpretation.']},
+{type:'recap',title:'Chapter 12 on one screen',items:[{t:'Primary, quantitative',d:'Own numeric data from Likert-type items.'},{t:'Six analysis types',d:'The book uses the first three.'},{t:'Correlation ≠ causation',d:'Hidden causes, or chance.'},{t:'Theory first',d:'Hypotheses, then tests.'},{t:'Not causal',d:'Causal claims need randomized studies.'},{t:'Clusters from data',d:'Hierarchical clustering found the groups.'}]}
+]});

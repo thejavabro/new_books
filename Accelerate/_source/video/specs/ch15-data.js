@@ -1,0 +1,28 @@
+CH({slug:'ch15-data',n:'15',part:'Part II · The research',sub:'Who was asked, how they were found, and what that means for the findings.',end:'Know your sample, and its limits.',scenes:[
+{type:'versus',title:'Who was the population?',
+ a:{h:'Everyone in software',c:'amber',items:['Complete, in theory','Many would not know the terms','Impossible to list or reach']},
+ b:{h:'People familiar with DevOps',c:'green',items:['They understand the vocabulary and practices','A wide spread of performance','More explanatory power about what works']},
+ cap:['The trade-off was deliberate.','Teams that never heard of DevOps are probably doing <b>even worse</b> than the study’s low performers.']},
+{type:'versus',title:'Ask about practices, <b>not labels</b>',mid:'→',
+ a:{h:'A label',c:'red',items:['“Do you do continuous integration?”','Invites a yes to a buzzword']},
+ b:{h:'The practice behind it',c:'green',items:['“Are commits automatically built and tested?”','“Are tests run on every check-in?”','“Do developers merge into trunk at least daily?”']},
+ cap:['Someone who never calls it “DevOps” but does the practices still gives valid data.']},
+{type:'versus',title:'Probability vs. nonprobability sampling',
+ a:{h:'Random sample',c:'amber',items:['Everyone has a known chance of being picked','Needs a list of the whole population','Nobody has a list of everyone doing DevOps']},
+ b:{h:'Snowball sample',c:'green',items:['Invite an initial set of people','Each passes the invitation on','Works for networks that are hard to list']},
+ cap:['No complete list exists, so a <b>referral sample</b> was used.']},
+{type:'pipeline',title:'How the snowball rolled',tc:'teal',stages:[{t:'Seeds',d:'Mailing lists, online promotion, social media.'},{t:'Wave 1',d:'Each seed shares the link with peers.'},{t:'Wave 2',d:'Those people share it onward.'},{t:'Checks',d:'Every response passes bias tests.'},{t:'Result',c:'green',d:'A wide, varied sample.'}],
+ cap:['The sample grows like a snowball rolling downhill.']},
+{type:'stats',title:'What the snowball gathered',items:[{v:23000,suf:'+',l:'survey responses',c:'blue'},{v:2000,suf:'+',l:'organizations worldwide',c:'green'},{v:4,l:'years of research',c:'amber'}],
+ cap:['Practice questions, not self-labels, decided who counts as a high performer.']},
+{type:'points',title:'Its limits, and how they were reduced',items:[
+ {t:'Wide, varied seeds',c:'blue',d:'Start from many different communities, so the sample is not one network.'},
+ {t:'Bias tests',c:'green',d:'Compare early and late respondents, and groups against each other.'},
+ {t:'Checking for skew',c:'amber',d:'Look for over-represented industries, sizes and regions.'}],
+ cap:['Snowball sampling has known weaknesses. Each one has a mitigation.']},
+{type:'versus',title:'A snapshot, not a time series',mid:'≠',
+ a:{h:'Cross-sectional',c:'green',items:['A fresh sample each year','One point in time','<b>What this study is</b>']},
+ b:{h:'Longitudinal',c:'blue',items:['The same teams, followed over years','Shows change within a team','Not what this study did']},
+ cap:['Each year’s data is a snapshot, with statistical inference used carefully.']},
+{type:'recap',title:'Chapter 15 on one screen',items:[{t:'Population',d:'People familiar with DevOps.'},{t:'Wording',d:'Questions about practices, not buzzwords.'},{t:'Sampling',d:'Snowball: no complete list exists.'},{t:'Mitigations',d:'Varied seeds, bias tests, skew checks.'},{t:'Design',d:'Cross-sectional each year.'}]}
+]});

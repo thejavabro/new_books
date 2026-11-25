@@ -1,0 +1,27 @@
+CH({slug:'ch01-accelerate',n:'1',part:'Part I \u00b7 What they found',sub:'Capabilities, not maturity \u2014 and the size of the gap between the best teams and the rest.',end:'Capabilities can be measured, and improved.',scenes:[
+{type:'flow',title:'Four things to speed up, <b>one engine</b>',cols:3,rows:3,
+ nodes:[{id:'s',t:'SOFTWARE',c:'blue',col:1,row:1,big:1},{id:'a',t:'Delivering goods<br>and services',c:'amber',col:0,row:0},{id:'b',t:'Engaging with<br>the market',c:'green',col:2,row:0},{id:'c',t:'Anticipating<br>compliance changes',c:'violet',col:0,row:2},{id:'d',t:'Responding<br>to risk',c:'red',col:2,row:2}],
+ edges:[['s','a'],['s','b'],['s','c'],['s','d']],
+ cap:['Banks no longer win by guarding vaults. Shops no longer win on shelf space.','They win on <b>fast, safe software</b> \u2014 and it sits under all four kinds of acceleration.']},
+{type:'bars',title:'Leaders think they are <b>further along</b> than they are',max:100,lw:420,note:'illustrative values',
+ items:[{l:'Executives say',v:82,txt:'\u201cnearly there\u201d',c:'amber'},{l:'Practitioners say',v:34,txt:'\u201cbarely started\u201d',c:'blue'}],
+ cap:['Executives rate their DevOps progress higher than the people doing the work.','So capabilities have to be <b>measured, not guessed</b>.']},
+{type:'versus',title:'Capabilities, <b>not maturity</b>',
+ a:{h:'Maturity model',c:'red',items:['A staircase you climb once, then you are \u201cdone\u201d','The same steps for every team','Counts tools installed, not results','A fixed finish line']},
+ b:{h:'Capability model',c:'green',items:['Continuous improvement, never finished','Different dials for different teams','Measured by outcomes','The bar keeps rising as the industry moves']},
+ cap:['Maturity models picture improvement as a staircase.','Capability models picture a set of <b>dials you keep turning</b>.']},
+{type:'verdicts',title:'Does it predict delivery performance?',yes:'Predicts',no:'No effect',sw:250,items:[
+ {t:'How old the application is, mainframe or greenfield',ok:false,why:'Legacy teams can be high performers.'},
+ {t:'Whether dev or ops presses the deploy button',ok:false,why:'Who deploys predicted nothing.'},
+ {t:'Having a change approval board',ok:false,why:'It slows teams without adding stability.'},
+ {t:'Configuration kept in version control',ok:true,why:'One of the 24 capabilities.'},
+ {t:'A generative, high-trust culture',ok:true,why:'Predicts delivery and business results.'}],
+ cap:['Some popular explanations turned out to predict <b>nothing at all</b>.','Context doesn\u2019t excuse you. Capabilities do the work.']},
+{type:'lanes',title:'Same stretch of time, <b>46 deploys to 1</b>',lanes:[{l:'High performers',d:'small, safe changes',n:46,c:'green'},{l:'Low performers',d:'one big release',n:1,c:'red'}],note:'Every deploy is another chance to learn from users.',
+ cap:['In the 2017 data, while a low performer ships once\u2026','\u2026a high performer ships <b>46 times</b>.']},
+{type:'stats',title:'How far ahead the high performers are',items:[{v:46,suf:'\u00d7',l:'more frequent deploys',c:'green'},{v:440,suf:'\u00d7',l:'faster from commit to production',c:'blue'},{v:170,suf:'\u00d7',l:'faster recovery from outages',c:'amber'},{v:5,suf:'\u00d7',l:'lower change failure rate',c:'violet'}],
+ cap:['One hour for them is about <b>18 days</b> for a low performer.','Going faster did not cost stability. They have <b>both</b>.']},
+{type:'units',title:'<b>24 capabilities</b>, five families',cols:8,groups:[{n:8,l:'Continuous delivery',c:'blue'},{n:2,l:'Architecture',c:'amber'},{n:4,l:'Product and process',c:'green'},{n:5,l:'Lean management and monitoring',c:'violet'},{n:5,l:'Culture',c:'teal'}],
+ cap:['The research found 24 capabilities that measurably improve delivery.','They work for startups and enterprises, greenfield and mainframe, regulated or not.']},
+{type:'recap',title:'Chapter 1 on one screen',items:[{t:'Software is the engine',d:'Delivery, markets, compliance and risk all depend on it.'},{t:'Capabilities beat maturity',d:'Continuous, per-team and outcome-based, not a finish line.'},{t:'Measure, don\u2019t guess',d:'Executives overrate progress.'},{t:'Speed and stability',d:'High performers lead on all four.'},{t:'No excuses',d:'App age and change boards predict nothing.'},{t:'Quality makes speed safe',d:'Tempo alone means bigger failures.'}]}
+]});

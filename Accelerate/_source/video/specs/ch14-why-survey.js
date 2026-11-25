@@ -1,0 +1,35 @@
+CH({slug:'ch14-why-survey',n:'14',part:'Part II · The research',sub:'Five reasons to ask people, even when your tools already report numbers.',end:'Use surveys and system data together.',scenes:[
+{type:'points',title:'Five reasons to use a survey',items:[
+ {t:'Fast, with shared definitions',d:'Collect and analyse in weeks.'},
+ {t:'The full stack',d:'Systems don’t see everything.'},
+ {t:'Completeness',d:'A system only knows what is inside it.'},
+ {t:'Trust',d:'Survey data can be checked.'},
+ {t:'Only people know',d:'Feelings and perceptions must be asked.'}],
+ cap:['Several tools report lead time out of the box. So why survey people?']},
+{type:'bars',title:'Reason 1: <b>speed</b>',max:10,lw:520,items:[{l:'Collecting responses',v:6,txt:'4–6 weeks',c:'blue'},{l:'Analysis',v:4,txt:'3–4 weeks',c:'green'},{l:'System data from the same teams',v:10,txt:'impractical',c:'red'}],note:'thousands of people, thousands of organizations, each year',
+ cap:['Imagine extracting system data from thousands of organizations instead.']},
+{type:'versus',title:'Same label, <b>different measure</b>',mid:'≠',
+ a:{h:'Team A’s “lead time”',c:'blue',items:['Commit to deployable','The book’s definition']},
+ b:{h:'Team B’s “lead time”',c:'amber',items:['Work started to deployable','What many call cycle time']},
+ cap:['Pool both into one analysis and the results are meaningless.','A carefully worded survey gives everyone <b>the same definitions</b>.']},
+{type:'pipeline',title:'Reason 2: systems don’t see everything',acc:'amber',stages:[{t:'Every level instrumented',d:'Reads, writes, cache, rebuilds. All metrics excellent.'},{t:'Customers say: slow',d:'The logs disagree, so the reports are dismissed.'},{t:'The reports share a pattern',d:'Less precise than logs, but they point somewhere.'},{t:'The culprit',c:'green',d:'The customer interface, which nobody had instrumented.'}],
+ note:'Without asking people, they would never have found it.',
+ cap:['A story from enterprise disk storage.']},
+{type:'units',title:'Reason 3: a system only knows what’s inside it',cols:10,groups:[{n:14,l:'In version control',d:'the system can count these',c:'blue'},{n:6,l:'Not in version control',d:'only the team knows they exist',c:'red'}],
+ cap:['A system can count the files it holds. It cannot count the ones it doesn’t. (Illustrative.)','So it cannot give you a percentage. <b>People can.</b>']},
+{type:'versus',title:'Reason 4: you can trust survey data',
+ a:{h:'One system log',c:'red',items:['One person with access, or one bug','Corrupts the single number everyone watches','Possibly for months']},
+ b:{h:'A survey of 23,000 people',c:'green',items:['Liars would have to coordinate by the hundreds','And skew every item the same way','Anonymity helps people answer honestly']},
+ cap:['Both kinds of data can be bad.','Constructs, statistical checks and big samples <b>resist bad actors</b>.']},
+{type:'points',title:'Reason 5: turnover is a poor proxy for culture',items:[
+ {t:'A big pay rise',c:'amber',d:'Someone leaves for more money. Nothing to do with culture.'},
+ {t:'A career change',c:'green',d:'A great culture can even encourage people to chase something new.'},
+ {t:'Gamed numbers',c:'red',d:'Transfers blocked to keep retention up, while the team is unhappy.'}],
+ cap:['To know how people feel about taking risks and sharing information…','…you have to <b>ask them</b>, systematically and repeatably.']},
+{type:'verdicts',title:'Survey or system data?',sw:260,items:[
+ {t:'Do people feel safe raising bad news on this team?',ok:true,lab:'Survey',c:'blue',why:'Only people can tell you.'},
+ {t:'What share of production config is in version control?',ok:true,lab:'Survey',c:'blue',why:'The system can’t see what’s missing.'},
+ {t:'Lead time across 2,000 organizations in one month',ok:true,lab:'Survey',c:'blue',why:'Fast, with one definition.'},
+ {t:'Ongoing deploy frequency on your own pipeline',ok:true,lab:'System',c:'amber',why:'Continuous and precise.'}]},
+{type:'recap',title:'Chapter 14 on one screen',items:[{t:'Fast',d:'Weeks, not years, with shared definitions.'},{t:'Full picture',d:'Systems miss what is outside their boundaries.'},{t:'Complete',d:'People report the denominator.'},{t:'Trustworthy',d:'Checks and big samples resist bad actors.'},{t:'Unique',d:'Feelings can only be asked about.'},{t:'Use both',d:'Surveys alongside system data.'}]}
+]});

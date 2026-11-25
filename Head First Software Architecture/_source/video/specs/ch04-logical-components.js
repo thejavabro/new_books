@@ -1,0 +1,36 @@
+CH({slug:'ch04-logical-components',n:'4',sub:'Finding the building blocks of a system, and keeping them cohesive and loosely coupled.',end:'Identify, assign, analyse. Repeat forever.',scenes:[
+{type:'versus',title:'Logical vs. physical architecture',mid:'→',
+ a:{h:'Logical',c:'violet',items:['Functional building blocks','How they depend on each other','No technology anywhere']},
+ b:{h:'Physical',c:'blue',items:['Services and databases','Gateways and user interfaces','Protocols between them']},
+ cap:['Adventurous Auctions sells rare trips in auction rooms, and now online too.','Same system, <b>two views</b>.']},
+{type:'cycle',title:'The four-step loop',center:'repeat<br>forever',items:[
+ {t:'Identify',d:'Find the initial core components.'},
+ {t:'Assign',d:'Give each requirement to a component.'},
+ {t:'Analyse roles',d:'Check responsibilities and cohesion.'},
+ {t:'Analyse characteristics',d:'Let the “-ilities” reshape the components.'}],
+ cap:['Every new feature goes round again.','Skipping it is how a tidy system becomes <b>a mess</b>.']},
+{type:'pipeline',title:'Workflow approach: follow the journey',stages:[{t:'Register',d:'Bidder Registration'},{t:'Watch the auction',d:'Live Auction Session'},{t:'Place a bid',d:'Bid Capture'},{t:'Win and pay',c:'green',d:'Payment, then Notification'}],
+ cap:['Start with a few “empty jars”, one per major thing the system does.','Each step of the journey suggests a component. (Example names.)']},
+{type:'points',title:'Actor/action approach: who does what?',items:[
+ {t:'Bidder',c:'blue',d:'Registers, watches the live stream, places bids.'},
+ {t:'Auctioneer',c:'amber',d:'Runs the auction and accepts bids from the room and online.'},
+ {t:'System',c:'green',d:'Decides which bid came first, charges and notifies the winner.'}],
+ cap:['List each actor’s actions, then group the actions into components.','The system itself <b>counts as an actor</b>.']},
+{type:'verdicts',title:'Good name, or the <b>entity trap</b>?',yes:'Good',no:'Trap',items:[
+ {t:'Auction Manager',ok:false,why:'A dumping ground for anything about auctions.'},
+ {t:'Bid Capture',ok:true,why:'Says exactly what it does.'},
+ {t:'Bidder Handler',ok:false,why:'Manager, Handler, Supervisor, Controller: warning signs.'},
+ {t:'Payment Processing',ok:true,why:'One clear role.'}],
+ cap:['One component per thing becomes a junk drawer.']},
+{type:'versus',title:'Let characteristics reshape components',mid:'→',
+ a:{h:'Bid Capture does everything',c:'red',items:['Accepts the bid','Writes it to the database','Under load, bids queue up','Database down? Bidding stops']},
+ b:{h:'Split out Bid Tracker',c:'green',items:['Bid Capture only accepts bids','Bid Tracker records them separately','Fast under thousands of bids','Bidding survives a database outage']},
+ cap:['The auction needs scalability, availability and performance.']},
+{type:'flow',title:'Coupling: who depends on whom',cols:3,rows:3,nodes:[{id:'a',t:'Component A',c:'muted',col:0,row:0},{id:'b',t:'Component B',c:'muted',col:0,row:2},{id:'m',t:'ME',c:'blue',col:1,row:1,big:1},{id:'c',t:'Component C',c:'muted',col:2,row:0},{id:'d',t:'Component D',c:'muted',col:2,row:1},{id:'e',t:'Component E',c:'muted',col:2,row:2}],edges:[['a','m'],['b','m'],['m','c'],['m','d'],['m','e']],
+ cap:['<b>Afferent</b> coupling counts arrows arriving: here, 2. <b>Efferent</b> counts arrows leaving: 3.','Total coupling is the sum: CT = CA + CE = 5.']},
+{type:'versus',title:'The Law of Demeter',
+ a:{h:'Order Placement knows everything',c:'red',items:['Knows the whole process','Even what to do when stock is low','Any change elsewhere can break it']},
+ b:{h:'Least knowledge',c:'green',items:['Stock rules move to Inventory Management','Changes stay local','But the workflow is now spread out']},
+ cap:['A component should know as little as possible about the rest of the system.','Total coupling is unchanged. The knowledge <b>moved</b>; it didn’t disappear.']},
+{type:'recap',title:'Chapter 4 on one screen',items:[{t:'Components',d:'A folder of code with one role.'},{t:'Logical ≠ physical',d:'Blocks first, technology later.'},{t:'Four-step loop',d:'Identify, assign, analyse, analyse.'},{t:'Avoid the entity trap',d:'No Managers or Handlers.'},{t:'Cohesion',d:'Keep related operations together.'},{t:'Coupling',d:'CA in, CE out, CT in total.'}]}
+]});

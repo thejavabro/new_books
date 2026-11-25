@@ -1,0 +1,40 @@
+CH({slug:'ch02-architectural-characteristics',n:'2',sub:'Find the capabilities that matter, keep the list short, and make each one measurable.',end:'Pick few. Make them measurable.',scenes:[
+{type:'points',title:'The three-part test',items:[
+ {t:'Not about the domain',c:'blue',d:'It is a design consideration beyond what the system does.'},
+ {t:'Shapes the structure',c:'amber',d:'Supporting it changes how the system is built.'},
+ {t:'Critical to success',c:'green',d:'The application fails without it.'}],
+ cap:['Lafter is a social network for a company running tech conferences with comedy.','Its requirements never say how fast, how available or how secure.']},
+{type:'versus',title:'Characteristics <b>shape the structure</b>',
+ a:{h:'One deployment',c:'amber',items:['Promotion rules change often','Every change redeploys everything','Simple, but poor deployability']},
+ b:{h:'Promotions deployed separately',c:'green',items:['Change the rules, redeploy one part','Wins on deployability','Costs more moving parts and network calls']},
+ cap:['If deployability of the promotion rules matters, the structure changes.','Every structural choice is <b>a trade-off</b>.']},
+{type:'points',title:'Why you keep the list <b>short</b>',items:[
+ {t:'Impossible to standardise',c:'blue',d:'“Performance” to one team is “responsiveness” to another.'},
+ {t:'Synergistic',c:'amber',d:'They pull on each other. More security usually costs performance.'},
+ {t:'Overabundant',c:'violet',d:'New ones keep appearing. Elasticity barely existed a few years ago.'}],
+ cap:['Every characteristic you commit to adds complexity.','Watch out for <b>resume-driven development</b>.']},
+{type:'versus',title:'Explicit and implicit',mid:'+',
+ a:{h:'Explicit',c:'blue',items:['Written in the requirements','“Thousands of users”','“Must work on mobile”']},
+ b:{h:'Implicit',c:'violet',items:['Never written down, but it matters','Security is the classic one','So is a clean internal structure']},
+ cap:['Mail piling up at a front door tells you nobody is home.','No requirements list says “please don’t make the code a mess”.']},
+{type:'points',title:'The zoo of “-ilities”',items:[
+ {t:'Process',c:'blue',d:'How you build it: testability, deployability, agility.'},
+ {t:'Structural',c:'amber',d:'Inside the code: maintainability, portability, extensibility.'},
+ {t:'Operational',c:'green',d:'How it runs: availability, scalability, performance.'},
+ {t:'Cross-cutting',c:'violet',d:'Everywhere at once: security, accessibility, privacy.'}],
+ cap:['There is no official list, so group them like enclosures at a zoo.','The cross-cutting ones are the <b>platypuses</b>.']},
+{type:'stack',title:'“Thousands of users” is three questions',levels:[
+ {t:'How many in total?',c:'blue',w:1,d:'<b>Scalability</b>'},
+ {t:'How many at the same moment?',c:'amber',w:1,d:'<b>Concurrency</b>'},
+ {t:'How fast do they arrive?',c:'green',w:1,d:'<b>Elasticity</b>'}],
+ cap:['Characteristics come from the domain, your environment and wider knowledge.']},
+{type:'pipeline',title:'Solutions in disguise: keep asking <b>why?</b>',tc:'amber',stages:[{t:'“Must fly at Mach 2.5”',d:'A solution, presented as a requirement.'},{t:'Why?',d:'To get away fast.'},{t:'Why?',d:'To escape from a fight.'},{t:'The real need',c:'green',d:'Agility. The jet built was slower on paper but far more agile.'}],
+ cap:['People often bring you a solution and call it a requirement.','Ask why, like a curious toddler, until the <b>real need</b> appears.']},
+{type:'flow',title:'Composites: “reliable” is not one thing',cols:2,rows:3,nodes:[{id:'r',t:'“Reliable”',c:'red',col:0,row:1,big:1},{id:'a',t:'Availability',c:'green',col:1,row:0},{id:'b',t:'Data integrity',c:'green',col:1,row:1},{id:'c',t:'Recoverability',c:'green',col:1,row:2}],edges:[['r','a'],['r','b'],['r','c']],
+ cap:['Test: can you measure it objectively? If not, it is a composite.','Break it apart until <b>each piece has a number</b>. (Example split.)']},
+{type:'flow',title:'Translate business speak',cols:2,rows:3,nodes:[{id:'r',t:'“Beat competitors<br>to market”',c:'amber',col:0,row:1,big:1},{id:'a',t:'Agility',c:'blue',col:1,row:0},{id:'b',t:'Testability',c:'blue',col:1,row:1},{id:'c',t:'Deployability',c:'blue',col:1,row:2}],edges:[['r','a'],['r','b'],['r','c']],
+ cap:['Business people rarely say “elasticity”.','Turning their phrases into measurable characteristics is <b>your job</b>.']},
+{type:'units',title:'Balance, and the magic number <b>seven</b>',cols:7,groups:[{n:3,l:'top priorities',d:'starred',c:'amber'},{n:4,l:'other driving characteristics',c:'blue'}],
+ cap:['Ask stakeholders which they want and they say “all of them”.','Too few and you rebuild later. Too many and you overengineer.']},
+{type:'recap',title:'Chapter 2 on one screen',items:[{t:'Capabilities, not behaviour',d:'What the system must be good at.'},{t:'Three-part test',d:'Non-domain, structural, critical.'},{t:'Fewer is better',d:'About seven, top three starred.'},{t:'Hunt for implicit ones',d:'Security, maintainability.'},{t:'Ask why',d:'Peel solutions back to the need.'},{t:'Break up composites',d:'Until you can measure them.'}]}
+]});

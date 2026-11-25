@@ -1,0 +1,30 @@
+CH({slug:'ch07-modular-monolith',n:'7',sub:'One deployment, sliced vertically by business area.',end:'Slice by domain. Guard the boundaries.',scenes:[
+{type:'versus',title:'Naan & Pop wants <b>pizza</b>',mid:'→',
+ a:{h:'Layered monolith',c:'amber',items:['The change touches every layer','Every specialist team is in the meeting','Got the shop online quickly']},
+ b:{h:'Modular monolith',c:'green',items:['The change stays in one module','One team owns it end to end','A very common next step']},
+ cap:['The layered site launched fast. Now the owners want pizza with custom toppings.','Choosing layered first was <b>not a mistake</b>.']},
+{type:'points',title:'Take a vertical bite',items:[
+ {t:'Ordering',c:'blue',d:'Its own entry point, business logic and data access.'},
+ {t:'Menu',c:'amber',d:'Its own entry point, business logic and data access.'},
+ {t:'Inventory',c:'green',d:'Its own entry point, business logic and data access.'},
+ {t:'Delivery',c:'violet',d:'Its own entry point, business logic and data access.'}],
+ cap:['Nobody eats a burger one layer at a time. You bite straight down.','Each module is a vertical slice for one subdomain. (Example modules.)']},
+{type:'versus',title:'Keeping modules modular',
+ a:{h:'Reach into internals',c:'red',items:['Auto-import makes it dangerously easy','Inventory refactors, Ordering breaks','Enough of this and it’s a ball of mud again']},
+ b:{h:'Go through public APIs',c:'green',items:['Each module is treated like a service','Internals can change freely','Callers never notice']},
+ cap:['Ordering needs to know if there are mushrooms in stock, so modules must talk.']},
+{type:'points',title:'Tools that defend the boundaries',items:[
+ {t:'Language modules',c:'blue',d:'The compiler refuses access to anything a module doesn’t export.'},
+ {t:'Subprojects',c:'amber',d:'Each module is its own project, stitched together at build time.'},
+ {t:'Architecture tests',c:'green',d:'Tests in CI fail when one module imports another’s internals.'}],
+ cap:['A monolithic deployment doesn’t require a monolithic codebase.']},
+{type:'versus',title:'Take modularity to the <b>database</b>',
+ a:{h:'Cross-module join',c:'red',items:['Tables shared between modules','Joins and foreign keys across them','Modular code over a tangled database']},
+ b:{h:'ID + API call',c:'green',items:['Each module touches only its own tables','Ideally its own schema','Store the other module’s ID, then ask its API']},
+ cap:['Modular code over a tangled database just <b>moves the mud</b>.']},
+{type:'versus',title:'Superpowers and kryptonite',
+ a:{h:'Superpowers',c:'green',items:['Code and teams line up with the business','Cross-functional teams, fewer meetings','No network calls between modules','Easier to maintain and test']},
+ b:{h:'Kryptonite',c:'red',items:['Sharing code adds coupling','One set of characteristics for all modules','Boundaries erode without governance','Still a monolith: limited elasticity']},
+ cap:['Process characteristics improve over layered. Operational ones barely change.']},
+{type:'recap',title:'Chapter 7 on one screen',items:[{t:'Domain + monolithic',d:'One deployment, modules by subdomain.'},{t:'Vertical slices',d:'Everything for one business area.'},{t:'Public APIs',d:'Never touch another module’s internals.'},{t:'Governance',d:'Language modules, subprojects, tests.'},{t:'Modular data',d:'Own schema. Store IDs, never join.'},{t:'Trade-off',d:'Easy domain change, constant vigilance.'}]}
+]});

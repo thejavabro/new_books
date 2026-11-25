@@ -1,0 +1,35 @@
+CH({slug:'ch05-architectural-styles',n:'5',sub:'Two questions place every style: how is it partitioned, and how is it deployed?',end:'No quadrant is “better”. Choose by characteristics.',scenes:[
+{type:'points',title:'The style map',items:[
+ {t:'Technical + monolithic',c:'blue',d:'Layered. Often microkernel too.'},
+ {t:'Domain + monolithic',c:'green',d:'Modular monolith.'},
+ {t:'Technical + distributed',c:'amber',d:'Event-driven, in many cases.'},
+ {t:'Domain + distributed',c:'violet',d:'Microservices.'}],
+ cap:['Place each style on two axes: <b>partitioning</b> and <b>deployment</b>.','Learn the categories and you can place any new style.']},
+{type:'versus',title:'Partitioning: technical vs. domain',
+ a:{h:'Technical: a restaurant',c:'blue',items:['Host, server, chef, busser','Split by role','In software: presentation, services, persistence']},
+ b:{h:'Domain: a food court',c:'green',items:['Pizza place, salad bar, burger joint','Each does its own serving and cleaning','In software: split by business area']},
+ cap:['Software can be split either way.']},
+{type:'versus',title:'Deployment: one unit or many',
+ a:{h:'Monolith: your smartphone',c:'amber',items:['Camera, browser, GPS and phone in one box','Cheap, simple, always together','One dead battery takes out everything']},
+ b:{h:'Distributed: separate gadgets',c:'violet',items:['A phone, a camera, a GPS, a fitness band','Each can be replaced alone','More cost, and they have to talk to each other']},
+ cap:['A monolith runs every component in one process.','A distributed system spreads them out, <b>talking over the network</b>.']},
+{type:'verdicts',title:'Four everyday events',sw:300,items:[
+ {t:'Ship a small change',ok:true,lab:'Distributed',c:'violet',why:'Redeploy one unit, not everything.'},
+ {t:'Traffic spike on Search',ok:true,lab:'Distributed',c:'violet',why:'Scale only the busy part.'},
+ {t:'A bug crashes Reviews',ok:true,lab:'Distributed',c:'violet',why:'The rest keeps running.'},
+ {t:'A network hiccup',ok:true,lab:'Monolith',c:'amber',why:'No network between its parts.'}],
+ cap:['Which deployment model handles each one better?']},
+{type:'versus',title:'Scorecard',
+ a:{h:'Monolithic',c:'amber',items:['Easier to start, understand and debug','Cheaper at first, quick to market','Scales all-or-nothing','One bug can sink it']},
+ b:{h:'Distributed',c:'violet',items:['Scalable and fault tolerant','Stays modular as things grow','Expensive and complex','At the mercy of the network']},
+ cap:['Every quadrant has pros and cons.']},
+{type:'points',title:'Fallacies of distributed computing',items:[
+ {t:'The network is reliable',d:'It isn’t. Calls fail.'},
+ {t:'Latency is zero',d:'Every hop takes time.'},
+ {t:'Bandwidth is infinite',d:'Chatty services add up.'},
+ {t:'The network is secure',d:'Every endpoint is a target.'},
+ {t:'The topology never changes',d:'It changes all the time.'},
+ {t:'There is one administrator',d:'There are many.'}],
+ cap:['In the 1990s, L. Peter Deutsch and colleagues at Sun listed the false assumptions people make.','Architects routinely <b>underestimate the network</b>.']},
+{type:'recap',title:'Chapter 5 on one screen',items:[{t:'Too many styles to count',d:'Learn the categories.'},{t:'Technical partitioning',d:'Layers by role.'},{t:'Domain partitioning',d:'Split by business area.'},{t:'Monolithic',d:'Simple, cheap, quick to market.'},{t:'Distributed',d:'Scalable, fault tolerant, complex.'},{t:'No “better”',d:'Choose by characteristics.'}]}
+]});

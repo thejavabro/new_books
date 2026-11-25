@@ -1,0 +1,28 @@
+CH({slug:'ch03-modularity',n:'3',part:P1,sub:'Cohesion, coupling and connascence: a vocabulary for how code hangs together.',end:'Group what belongs together. Measure the rest.',scenes:[
+{type:'versus',title:'Modularity is not granularity',mid:'≠',
+ a:{h:'Modularity',c:'blue',items:['Breaking a system into logical parts','Grouping related code','Each module hides its internals']},
+ b:{h:'Granularity',c:'amber',items:['The size of those parts','How big should each piece be?','Too fine, and you pay in coordination']},
+ cap:['You can be well modularised and still have the wrong granularity.']},
+{type:'stack',title:'Cohesion, from best to worst',levels:[
+ {t:'Functional',c:'green',w:1,d:'Everything needed, and every part related. Best.'},
+ {t:'Sequential',c:'green',w:.92,d:'One part’s output is the next part’s input.'},
+ {t:'Communicational',c:'blue',w:.84,d:'A chain working on the same data.'},
+ {t:'Procedural',c:'blue',w:.76,d:'Parts must run in a particular order.'},
+ {t:'Temporal',c:'amber',w:.68,d:'Grouped by timing, like startup tasks.'},
+ {t:'Logical',c:'amber',w:.6,d:'Related in name only, like a StringUtils class.'},
+ {t:'Coincidental',c:'red',w:.52,d:'Together by accident. Worst.'}],
+ cap:['Cohesion measures how related the parts inside a module are.']},
+{type:'units',title:'LCOM: islands inside a class',cols:4,groups:[{n:2,l:'m1 and m2 share field a',c:'blue'},{n:1,l:'m3 uses only field b',c:'amber'},{n:1,l:'m4 uses only field c',c:'red'}],
+ cap:['Lack of Cohesion in Methods counts sets of methods that share no fields.','Three islands: this class is really <b>three classes</b> wearing one name.']},
+{type:'flow',title:'Coupling: in and out',cols:3,rows:3,nodes:[{id:'a',t:'caller',c:'muted',col:0,row:0},{id:'b',t:'caller',c:'muted',col:0,row:2},{id:'m',t:'MODULE',c:'blue',col:1,row:1,big:1},{id:'c',t:'dependency',c:'muted',col:2,row:0},{id:'d',t:'dependency',c:'muted',col:2,row:1},{id:'e',t:'dependency',c:'muted',col:2,row:2}],edges:[['a','m'],['b','m'],['m','c'],['m','d'],['m','e']],
+ cap:['Afferent coupling counts incoming dependencies: 2. Efferent counts outgoing: 3.','Instability = Ce / (Ca + Ce) = 3 / 5 = <b>0.6</b>.']},
+{type:'curve',title:'The main sequence',xl:'instability →',yl:'abstractness →',legend:false,
+ series:[{c:'green',pts:line(20,x=>1-x)}],
+ marks:[{x:.08,y:.08,t:'Zone of pain: concrete, and everyone depends on it',c:'red',at:.45,dx:30,dy:-70,w:620},{x:.92,y:.92,t:'Zone of uselessness: abstract, and nobody uses it',c:'amber',at:.7,dx:-640,dy:10,w:620}],
+ cap:['Plot each module by abstractness and instability.','Healthy modules sit near the line <b>A + I = 1</b>.']},
+{type:'versus',title:'Connascence: a finer language for coupling',
+ a:{h:'Static: visible in the source',c:'blue',items:['Name','Type','Meaning','Position','Algorithm']},
+ b:{h:'Dynamic: only at runtime',c:'red',items:['Execution order','Timing','Values','Identity']},
+ cap:['Two components are connascent if changing one forces a change in the other.','Weaker forms are <b>easier to refactor</b>. Prefer static over dynamic.']},
+RC(3,[['Modularity vs. granularity','Grouping, against size.'],['Cohesion','Seven kinds, functional is best.'],['LCOM','Islands mean hidden classes.'],['Coupling','Afferent in, efferent out.'],['Main sequence','Stay near A + I = 1.'],['Connascence','Static is weaker than dynamic.']])
+]});

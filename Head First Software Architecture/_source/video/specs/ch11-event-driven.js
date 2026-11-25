@@ -1,0 +1,32 @@
+CH({slug:'ch11-event-driven',n:'11',sub:'Services that react to what just happened, working at the same time.',end:'Fire the event and move on.',scenes:[
+{type:'bars',title:'One cook or four?',max:9,lw:520,note:'illustrative: grilled cheese, fries, milkshake',items:[{l:'One worker, one item at a time',v:9,suf:' min',c:'red'},{l:'A cook per item, in parallel',v:4,suf:' min',c:'green'}],
+ cap:['In turn, you wait for the <b>sum</b> of every item.','In parallel, you wait only for the <b>slowest</b>.']},
+{type:'versus',title:'Events are not messages',mid:'≠',
+ a:{h:'Event',c:'green',items:['“Something <b>has happened</b>”','Broadcast on a topic','The sender never waits','Example: order placed']},
+ b:{h:'Message',c:'blue',items:['“Please <b>do</b> this”','Sent on a queue to one receiver','The sender may wait for a reply','Example: apply payment for order 42']},
+ cap:['The data an event carries is its payload.']},
+{type:'flow',title:'Initiating and derived events',cols:3,rows:3,nodes:[{id:'o',t:'order placed',c:'amber',col:0,row:1,big:1},{id:'p',t:'Payment',c:'blue',col:1,row:0},{id:'i',t:'Inventory',c:'blue',col:1,row:1},{id:'n',t:'Notification',c:'blue',col:1,row:2},{id:'pa',t:'payment applied',c:'green',col:2,row:0},{id:'ia',t:'inventory adjusted',c:'green',col:2,row:1},{id:'ns',t:'email sent',c:'green',col:2,row:2}],edges:[['o','p'],['o','i'],['o','n'],['p','pa'],['i','ia'],['n','ns']],
+ cap:['An initiating event comes from the outside world and starts the process.','Each service that reacts announces what it did as a <b>derived event</b>.']},
+{type:'flow',title:'Is anyone listening?',cols:3,rows:2,nodes:[{id:'n',t:'Notification',c:'blue',col:0,row:0},{id:'e',t:'email sent',c:'green',col:1,row:0,big:1},{id:'a',t:'Notification<br>Analytics (new)',c:'amber',col:2,row:0},{id:'x',t:'No existing service<br>had to change',c:'teal',col:2,row:1}],edges:[['n','e'],['e','a']],
+ cap:['Publish a derived event for everything, even when nobody listens yet.','That is what makes the style <b>extensible</b>: new features just subscribe.']},
+{type:'bars',title:'Asynchronous vs. synchronous',max:1800,lw:520,note:'place order 600 ms + apply payment 1,200 ms',items:[{l:'Synchronous: customer waits for both',v:1800,suf:' ms',c:'red'},{l:'Asynchronous: customer waits for one',v:600,suf:' ms',c:'green'}],
+ cap:['Synchronous is a phone call. Asynchronous is a text.','Faster and more available, but <b>error handling gets harder</b>.']},
+{type:'points',title:'Where does the data live?',items:[
+ {t:'Monolithic database',c:'amber',d:'Simple. But every service is coupled to it.'},
+ {t:'Domain-partitioned',c:'blue',d:'A database per business area. A middle ground.'},
+ {t:'Database per service',c:'green',d:'Fully separate. Services must call each other for data.'}],
+ cap:['Async keeps services decoupled, but data drags coupling back in.','Every topology <b>couples something</b>.']},
+{type:'points',title:'EDA vs. microservices',items:[
+ {t:'Communication',d:'Mostly async, against mostly sync.'},
+ {t:'Events vs. requests',d:'What happened, against what must happen.'},
+ {t:'Service granularity',d:'Any size, against single-purpose.'},
+ {t:'Data granularity',d:'Any topology, against split per service.'},
+ {t:'Bounded contexts',d:'Nice to have, against essential.'},
+ {t:'Performance',d:'Parallel and fast, against latency piling up.'}],
+ cap:['Both are distributed and both scale well, but they are built on different ideas.']},
+{type:'versus',title:'Superpowers and kryptonite',
+ a:{h:'Superpowers',c:'green',items:['Performance: async plus parallel','Channels absorb bursts','New features just subscribe','One service down doesn’t stop the rest']},
+ b:{h:'Kryptonite',c:'red',items:['Complexity adds up','Async, parallel flows are hard to test','A poor fit for step-by-step answers','Every data topology couples something']},
+ cap:['Combine both ideas and you get event-driven microservices.']},
+{type:'recap',title:'Chapter 11 on one screen',items:[{t:'Events',d:'Something happened. Fire and forget.'},{t:'Messages',d:'Do this. One receiver.'},{t:'Derived events',d:'Publish everything.'},{t:'Async',d:'Faster; errors get harder.'},{t:'Data',d:'Three topologies.'},{t:'Not microservices',d:'But they can be combined.'}]}
+]});

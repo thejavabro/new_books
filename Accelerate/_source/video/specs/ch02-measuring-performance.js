@@ -1,0 +1,36 @@
+CH({slug:'ch02-measuring-performance',n:'2',part:'Part I · What they found',sub:'Four key metrics, three clusters, and no trade-off between speed and stability.',end:'Measure outcomes, and put culture first.',scenes:[
+{type:'points',title:'Why the usual productivity metrics <b>fail</b>',items:[
+ {t:'Lines of code',c:'red',d:'Rewarding volume breeds bloated, costly code. A 10-line fix beats a 1,000-line one.'},
+ {t:'Velocity',c:'amber',d:'Story points are a planning tool. Used as a score, teams inflate estimates and stop helping each other.'},
+ {t:'Utilization',c:'violet',d:'With no slack there is no room for unplanned work or improvement, and lead times explode.'}],
+ cap:['Most metrics measure <b>output instead of outcomes</b>…','…and <b>individuals</b> instead of the whole team.']},
+{type:'curve',title:'Busier is not faster',xl:'team utilization →',yl:'time work waits →',series:[{l:'Waiting time',d:'Queueing theory, simplified: waiting grows much faster than utilization.',c:'red',pts:line(60,x=>Math.min(1,(x*.95/(1-x*.95))/14))}],
+ marks:[{x:.526,y:.08,t:'50% busy: plenty of slack',c:'green',at:.4,dy:-90},{x:.947,y:.64,t:'90% busy: 9× the wait',c:'amber',at:.72,dx:-440,dy:-50}],
+ cap:['As a team gets busier, new work waits longer and longer.','Near 100% utilization, lead time <b>explodes</b>.']},
+{type:'versus',title:'Two halves of lead time',mid:'+',
+ a:{h:'Design and development',c:'amber',items:['New features, never built before','Estimates are very uncertain','When does the clock even start?','The “fuzzy front end”']},
+ b:{h:'Delivery: build, test, deploy',c:'blue',items:['Commit to running in production','Should be fast and predictable','Low variability, easy to measure','<b>This is the half the book measures</b>']},
+ cap:['Lead time has two parts that behave very differently.','The research measures the second: <b>delivery</b>.']},
+{type:'points',title:'The <b>four key metrics</b>',items:[
+ {t:'Lead time for changes',c:'blue',n:'T',d:'Commit to running in production. Faster feedback, faster fixes.'},
+ {t:'Deployment frequency',c:'blue',n:'T',d:'A stand-in for batch size, which is invisible in software.'},
+ {t:'Time to restore service',c:'amber',n:'S',d:'Failure is inevitable. How fast do you recover?'},
+ {t:'Change fail rate',c:'amber',n:'S',d:'Share of changes needing a hotfix, rollback or patch.'}],
+ cap:['Two measure <b>tempo</b>. Two measure <b>stability</b>.','All four are global outcomes, so dev and ops pull the same way.']},
+{type:'scatter',title:'Letting the data find the groups',xl:'tempo (deploy frequency, lead time) →',yl:'stability →',seed:11,
+ groups:[{n:34,cx:.82,cy:.82,sx:.045,sy:.05,c:'green',l:'High'},{n:40,cx:.47,cy:.5,sx:.05,sy:.055,c:'amber',l:'Medium'},{n:36,cx:.2,cy:.24,sx:.045,sy:.05,c:'red',l:'Low'}],
+ cap:['Each dot is one survey response. Nobody told the algorithm what “good” is.','Every year, cluster analysis found <b>three clearly separate groups</b>.']},
+{type:'curve',title:'Speed vs. stability: <b>there is no trade-off</b>',xl:'tempo →',yl:'stability →',
+ series:[{l:'What dogma predicts',d:'Go faster, break more. “Pick one.”',c:'red',dash:1,pts:line(40,x=>.92-.84*x*x)},{l:'What the data shows',d:'Low, medium and high line up on the diagonal: faster and more stable together.',c:'green',pts:line(40,x=>.1+.82*x)}],
+ marks:[{x:.2,y:.264,t:'Low',c:'red',at:.62,dx:22,dy:10,w:200},{x:.5,y:.51,t:'Medium',c:'amber',at:.7,dx:22,dy:10,w:200},{x:.86,y:.805,t:'High',c:'green',at:.78,dx:-120,dy:-70,w:200}],
+ cap:['Industry dogma: going faster means breaking more.','The data sided with Lean: <b>small, frequent changes are safer</b>.']},
+{type:'points',title:'The 2017 clusters',items:[
+ {t:'High performers',c:'green',n:'H',d:'Deploy on demand<br>Lead time under one hour<br>Restore in under one hour<br>0–15% changes fail'},
+ {t:'Medium performers',c:'amber',n:'M',d:'Deploy weekly to monthly<br>Lead time one week to one month<br>Restore in under one day<br>0–15% changes fail'},
+ {t:'Low performers',c:'red',n:'L',d:'Deploy weekly to monthly<br>Lead time one week to one month<br>Restore in a day to a week<br>31–45% changes fail'}],
+ cap:['High performers are better on <b>all four</b> measures at once.']},
+{type:'flow',title:'Does delivery performance <b>matter to the business</b>?',cols:2,rows:2,nodes:[{id:'d',t:'Software delivery<br>performance',c:'blue',col:0,row:0,big:1},{id:'o',t:'Profitability, productivity,<br>market share',c:'green',col:1,row:0},{id:'x',t:'',c:'blue',col:0,row:1},{id:'n',t:'Customer satisfaction,<br>quality, mission goals',c:'teal',col:1,row:1}].filter(n=>n.id!=='x'),edges:[['d','o'],['d','n']],
+ cap:['High performers were <b>twice as likely</b> to exceed their commercial goals.','In 2017 the same held for non-commercial goals too.']},
+{type:'quote',text:'Where there is *fear,* you get the *wrong numbers.*',by:'An idea from W. Edwards Deming. Use the four metrics to learn, never to punish.'},
+{type:'recap',title:'Chapter 2 on one screen',items:[{t:'Bad metrics',d:'Lines of code, velocity and utilization reward output and get gamed.'},{t:'Tempo',d:'Delivery lead time and deployment frequency.'},{t:'Stability',d:'Time to restore service and change fail rate.'},{t:'Data-driven groups',d:'Cluster analysis finds high, medium and low performers.'},{t:'No trade-off',d:'Speed and stability reinforce each other.'},{t:'It pays',d:'High performers are twice as likely to beat their goals.'}]}
+]});
